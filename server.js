@@ -6,7 +6,7 @@ const app = express();
 
 const PORT = 3333;
 
-// --- [ CONFIGURATION ] ---
+
 const pool = new Pool({
     user: 'postgres', host: '172.16.0.64', database: 'softwatch_iot',
     password: 'NewSoftTech^2', port: 5432,
@@ -24,13 +24,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- [ ALERT SYSTEM CONFIGURATION ] ---
+
 const LINE_TOKEN = 'c4MVrlwlqsuYusEEKxw28Dpb8p3dKx5Z1DATTuzvcMznd0na8jZzOPWIlSUCKZqMix9XllfrqG/7yK/GVAuZ2VJgFaOzMAXIgoaruW9lShiQgQGQ5XHuxL1uiYQuS/rEUxLOXzv5aOPT1xjWK4Hs4QdB04t89/1O/w1cDnyilFU=';
-const GROUP_ID = 'C02fd71d3db999dd6bc182cd88c6c33d4'; // ใส่ Group ID ของคุณที่นี่
+const GROUP_ID = 'C02fd71d3db999dd6bc182cd88c6c33d4'; 
 const deviceAlertState = {}; 
 
 async function triggerAlert(mac, bed, name, level, msg) {
-    // 1. บันทึก Log ลง Database
+    
     try {
         await pool.query(
             'INSERT INTO alert_logs (mac, bed_no, patient_name, level, message) VALUES ($1, $2, $3, $4, $5)',
@@ -38,7 +38,7 @@ async function triggerAlert(mac, bed, name, level, msg) {
         );
     } catch(e) { console.error("DB Log Error:", e.message); }
 
-    // 2. ส่งข้อมูลหา LINE (Messaging API / Bot Push)
+    
     if (LINE_TOKEN && GROUP_ID) {
         const icon = level === 'critical' ? '🔴' : '🟡';
         const lineText = `${icon} แจ้งเตือน: ${level.toUpperCase()}\nเตียง: ${bed || '-'}\nคนไข้: ${name}\nรายละเอียด: ${msg}`;
@@ -65,7 +65,7 @@ async function triggerAlert(mac, bed, name, level, msg) {
         }
     }
 }
-// --- [ UI ENGINE ] ---
+
 const ui = (active, content, script = "") => `
 <!DOCTYPE html>
 <html lang="th">
@@ -208,52 +208,69 @@ const ui = (active, content, script = "") => `
         }
 
         async function showTrend(mac, name, hn) {
-            document.getElementById('p-title').innerText = name;
-            document.getElementById('p-hn').innerText = 'HN: ' + hn;
-            document.getElementById('sidePanel').classList.add('active');
-            document.getElementById('panelOverlay').style.display = 'block';
+    document.getElementById('p-title').innerText = name;
+    document.getElementById('p-hn').innerText = 'HN: ' + hn;
+    document.getElementById('sidePanel').classList.add('active');
+    document.getElementById('panelOverlay').style.display = 'block';
 
-            const res = await fetch(\`/api/patient-trend-24h/\${mac}\`);
-            const data = await res.json();
-            
-            const labels = data.map(d => {
-                const date = new Date(d._time);
-                return date.toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
-            });
+    try {
+        // เปลี่ยนมาเรียกตาม HN และใช้ API ที่ดึงจาก Postgres
+        const res = await fetch('/api/patient-trend-24h/' + hn);
+        const data = await res.json();
+        
+        if(!data || data.length === 0) return;
 
-            const render = (id, label, color, key, min, max) => {
-                if(panelCharts[id]) panelCharts[id].destroy();
-                panelCharts[id] = new Chart(document.getElementById(id), {
-                    type: 'line',
-                    data: {
-                        labels,
-                        datasets: [{ 
-                            label, 
-                            data: data.map(d => d[key]), 
-                            borderColor: color, 
-                            backgroundColor: color + '10', 
-                            fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2
-                        }]
-                    },
-                    options: { 
-                        responsive: true, maintainAspectRatio: false, 
-                        interaction: { intersect: false, mode: 'index' },
-                        plugins: { legend: { display: false } },
-                        scales: { 
-                            y: { min, max, grid: { color: '#e2e8f0', borderDash: [5, 5] } }, 
-                            x: { 
-                                grid: { display: false },
-                                ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } 
-                            } 
-                        }
+        const labels = data.map(d => {
+            const date = new Date(d._time);
+            return date.toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
+        });
+
+        const render = (id, label, color, key, min, max) => {
+            if(panelCharts[id]) panelCharts[id].destroy();
+            panelCharts[id] = new Chart(document.getElementById(id), {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{ 
+                        label, 
+                        data: data.map(d => d[key]), 
+                        borderColor: color, 
+                        backgroundColor: color + '10', 
+                        fill: true, 
+                        tension: 0.4, 
+                        pointRadius: 0, 
+                        borderWidth: 2,
+                        // --- จุดสำคัญ: ทำให้เส้นกราฟลากเชื่อมต่อกันเสมอ ---
+                        spanGaps: true 
+                    }]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: { legend: { display: false } },
+                    scales: { 
+                        y: { 
+                            min, max, 
+                            grid: { color: '#e2e8f0', borderDash: [5, 5] } 
+                        }, 
+                        x: { 
+                            grid: { display: false },
+                            ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } 
+                        } 
                     }
-                });
-            };
+                }
+            });
+        };
 
-            render('chartHR_Panel', 'HR', '#ef4444', 'ble_heart', 40, 160);
-            render('chartSPO2_Panel', 'SpO2', '#3b82f6', 'ble_spo2', 80, 100);
-            render('chartTEMP_Panel', 'Temp', '#f97316', 'ble_temp', 34, 41);
-        }
+        render('chartHR_Panel', 'HR', '#ef4444', 'ble_heart', 40, 160);
+        render('chartSPO2_Panel', 'SpO2', '#3b82f6', 'ble_spo2', 80, 100);
+        render('chartTEMP_Panel', 'Temp', '#f97316', 'ble_temp', 34, 41);
+
+    } catch (err) {
+        console.error('Error fetching trend:', err);
+    }
+}
 
         ${script}
     </script>
@@ -265,7 +282,7 @@ const adminOnly = (req, res, next) => {
     if(userRole === 'admin') next(); else res.status(403).json({error: 'Forbidden'});
 };
 
-// --- [ API ROUTES ] ---
+
 
 app.post('/api/login', async(req,res)=>{
     const r = await pool.query('SELECT full_name, role FROM users WHERE username=$1 AND password=$2',[req.body.u,req.body.p]);
@@ -279,6 +296,8 @@ app.get('/api/live-status', async (req, res) => {
             'SELECT mac, device_no, name, hm_number, bed_no FROM nurseaid WHERE hm_number IS NOT NULL'
         );
         if (activeDevices.rows.length === 0) return res.json([]);
+
+        
         const fluxQuery = `
         from(bucket: "${influxConfig.bucket}")
             |> range(start: -5m)
@@ -286,12 +305,14 @@ app.get('/api/live-status', async (req, res) => {
                 r._measurement == "ble_heart" or
                 r._measurement == "ble_spo2" or
                 r._measurement == "ble_temp" or
-                r._measurement == "ble_status"
+                r._measurement == "ble_status" or
+                r._measurement == "ble_batt"
             )
             |> group(columns: ["mac", "_measurement"])
             |> last()
             |> pivot(rowKey:["mac"], columnKey: ["_measurement"], valueColumn: "_value")
         `;
+
         const influxData = [];
         queryApi.queryRows(fluxQuery, {
             next(row, tableMeta) {
@@ -304,9 +325,9 @@ app.get('/api/live-status', async (req, res) => {
                 const result = activeDevices.rows.map(dev => {
                     const dbMac = dev.mac?.toLowerCase().trim();
                     const sensor = influxData.find(s => s.mac === dbMac);
-                    
-                    let hr = '--', spo2 = '--', temp = '--', status = 'Offline';
-                    let alertLevel = 'normal'; // 'normal', 'warning', 'critical'
+
+                    let hr = '--', spo2 = '--', temp = '--', status = 'Offline', battery = '--';
+                    let alertLevel = 'normal';
                     let alertCauses = [];
 
                     if (sensor) {
@@ -314,14 +335,15 @@ app.get('/api/live-status', async (req, res) => {
                         const spo2Num = parseInt(sensor.ble_spo2);
                         const tempNum = parseFloat(sensor.ble_temp);
                         const statusNum = parseInt(sensor.ble_status);
-                        
+                        const battNum = parseInt(sensor.ble_batt);
+
                         hr = (!isNaN(hrNum) && hrNum > 0) ? hrNum : '--';
                         spo2 = (!isNaN(spo2Num) && spo2Num > 0) ? spo2Num : '--';
                         temp = (!isNaN(tempNum) && tempNum > 0) ? tempNum : '--';
                         status = (!isNaN(statusNum) && statusNum === 1) ? 'Online' : 'Offline';
+                        battery = (!isNaN(battNum)) ? battNum : '--';
 
                         if (status === 'Online') {
-                            // การตั้งค่าแจ้งเตือน
                             if (hr !== '--' && (hr > 120 || hr < 50)) {
                                 alertLevel = 'critical';
                                 alertCauses.push(`HR=${hr}`);
@@ -340,7 +362,6 @@ app.get('/api/live-status', async (req, res) => {
                                 }
                             }
 
-                            // ตรวจสอบและส่งแจ้งเตือนเฉพาะตอนมีการเปลี่ยนแปลงสถานะ
                             const prevState = deviceAlertState[dbMac] || 'normal';
                             if (alertLevel !== 'normal' && alertLevel !== prevState) {
                                 triggerAlert(dbMac, dev.bed_no, dev.name, alertLevel, alertCauses.join(', '));
@@ -350,7 +371,8 @@ app.get('/api/live-status', async (req, res) => {
                             deviceAlertState[dbMac] = 'offline';
                         }
                     }
-                    return { ...dev, hr, spo2, temp, status, alertLevel };
+                    
+                    return { ...dev, hr, spo2, temp, status, battery, alertLevel };
                 });
                 res.json(result);
             }
@@ -358,25 +380,29 @@ app.get('/api/live-status', async (req, res) => {
     } catch (err) { res.json([]); }
 });
 
-// API ใหม่สำหรับดึงข้อมูล 24 ชั่วโมง
-app.get('/api/patient-trend-24h/:mac', async (req, res) => {
-    const { mac } = req.params;
-    const flux = `
-        from(bucket: "${influxConfig.bucket}")
-        |> range(start: -24h)
-        |> filter(fn: (r) => r["mac"] == "${mac}")
-        |> filter(fn: (r) => r["_field"] == "value")
-        |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)
-        |> pivot(rowKey:["_time"], columnKey: ["_measurement"], valueColumn: "_value")
-        |> keep(columns: ["_time", "ble_heart", "ble_spo2", "ble_temp"])
-        |> sort(columns: ["_time"], desc: false)`;
-    
-    const results = [];
-    queryApi.queryRows(flux, {
-        next(row, tableMeta) { results.push(tableMeta.toObject(row)); },
-        error(e) { res.status(500).json([]); },
-        complete() { res.json(results); }
-    });
+
+app.get('/api/patient-trend-24h/:hn', async (req, res) => {
+    const { hn } = req.params;
+    try {
+        const queryText = `
+            SELECT 
+                -- จัดกลุ่มเวลาทีละ 5 นาทีเหมือน aggregateWindow ใน Influx
+                date_trunc('minute', recorded_at) - (CAST(extract(minute from recorded_at) AS integer) % 5) * interval '1 minute' as _time,
+                ROUND(AVG(heart_rate)) as ble_heart, 
+                ROUND(AVG(spo2), 1) as ble_spo2, 
+                ROUND(AVG(temperature), 2) as ble_temp
+            FROM vital_signs_logs
+            WHERE hm_number = $1 
+            AND recorded_at > NOW() - INTERVAL '24 hours'
+            GROUP BY 1
+            ORDER BY 1 ASC
+        `;
+        const result = await pool.query(queryText, [hn]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Postgres Trend Error:", err);
+        res.status(500).json([]);
+    }
 });
 
 app.get('/', (req, res) => res.send(ui('dash', `
@@ -470,17 +496,36 @@ app.get('/', (req, res) => res.send(ui('dash', `
                 const statusColor = isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-slate-300';
                 const hasCustom = (JSON.parse(localStorage.getItem('patient_thresholds')) || {})[p.mac];
 
+                let battColor = 'text-slate-400';
+                if (p.battery !== '--') {
+                    if (p.battery < 20) battColor = 'text-red-500 animate-pulse font-bold';
+                    else if (p.battery < 40) battColor = 'text-orange-500 font-bold';
+                }
+
+                // สังเกตการใช้ \` และ \$ เพื่อป้องกัน Node.js สับสน
                 return \`
                 <div class="card p-4 border-t-4 \${isCrit ? 'border-red-600 critical-card shadow-lg' : (isOnline ? 'border-green-500 shadow-sm' : 'border-slate-200 shadow-sm')} transition-all">
                     <div class="flex items-center justify-between mb-4 gap-2 border-b pb-2">
                         <div class="flex items-center gap-2 overflow-hidden flex-1">
                             <span class="shrink-0 bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter">\${p.bed_no || '-'}</span>
                             <div class="w-2.5 h-2.5 shrink-0 rounded-full \${statusColor}"></div>
-                            <h4 class="font-bold text-slate-800 text-sm truncate cursor-pointer hover:text-blue-600" onclick="showTrend('\${p.mac}', '\${p.name}', '\${p.hm_number}')">
-                                \${p.name}
-                            </h4>
-                            <span class="shrink-0 text-[9px] text-slate-400 font-bold border-l pl-2 leading-none uppercase">HN: \${p.hm_number}</span>
-                            \${hasCustom ? '<span class="text-[10px] shrink-0" title="ตั้งค่าเฉพาะบุคคล"></span>' : ''}
+                            <div class="flex flex-col truncate">
+                                <h4 class="font-bold text-slate-800 text-sm truncate cursor-pointer hover:text-blue-600 leading-tight" onclick="showTrend('\${p.mac}', '\${p.name}', '\${p.hm_number}')">
+                                    \${p.name}
+                                </h4>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[9px] text-slate-400 font-bold uppercase">HN: \${p.hm_number}</span>
+                                    <div class="flex items-center gap-0.5 \${battColor}">
+    <svg class="w-4 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
+        <line x1="23" y1="13" x2="23" y2="11"></line>
+        <line x1="5" y1="9" x2="\${p.battery !== '--' ? (5 + (p.battery * 0.1)) : 5}" y2="9" stroke-width="4" stroke="currentColor" opacity="0.8"></line>
+    </svg>
+    <span class="text-[10px] font-bold">\${p.battery}\${p.battery !== '--' ? '%' : ''}</span>
+</div>
+                                </div>
+                            </div>
+                            \${hasCustom ? '<span class="text-[10px] shrink-0" title="ตั้งค่าเฉพาะบุคคล">⚙️</span>' : ''}
                         </div>
                         <button onclick="openIndividualConfig('\${p.mac}', '\${p.name}', '\${p.bed_no}')" class="shrink-0 text-slate-300 hover:text-blue-600 p-1">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -521,23 +566,35 @@ app.get('/', (req, res) => res.send(ui('dash', `
 `)));
 
 app.get('/export', async (req, res) => {
-    const r = await pool.query('SELECT mac, name, hm_number, bed_no FROM nurseaid WHERE hm_number IS NOT NULL');
-    const opts = r.rows.map(p => `<option value="${p.mac}">[${p.bed_no}] ${p.name} (${p.hm_number})</option>`).join('');
     
+    const r = await pool.query('SELECT name, hm_number, bed_no FROM nurseaid WHERE hm_number IS NOT NULL');
+
+    
+    const opts = r.rows.map(p => `
+        <option value="${p.hm_number}">[${p.bed_no}] ${p.name} (${p.hm_number})</option>
+    `).join('');
+
     res.send(ui('export', `
         <h2 class="text-2xl font-black text-slate-800 uppercase mb-8">Export Data</h2>
         <div class="card p-8 shadow-xl max-w-2xl">
             <div class="space-y-4">
-                <select id="e-mac" class="w-full border p-4 rounded-2xl bg-slate-50 outline-none">${opts}</select>
+                <label class="text-xs font-bold text-slate-400">เลือกคนไข้</label>
+                <select id="e-hn" class="w-full border p-4 rounded-2xl bg-slate-50 outline-none">${opts}</select>
                 <div class="grid grid-cols-2 gap-4">
-                    <input id="e-start" type="datetime-local" class="border p-4 rounded-2xl bg-slate-50">
-                    <input id="e-stop" type="datetime-local" class="border p-4 rounded-2xl bg-slate-50">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400">เริ่มวันที่</label>
+                        <input id="e-start" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400">ถึงวันที่</label>
+                        <input id="e-stop" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
+                    </div>
                 </div>
                 <button onclick="doExp()" class="w-full bg-slate-900 text-white p-4 rounded-2xl font-bold">GENERATE CSV</button>
             </div>
         </div>
     `, `
-        // ตั้งค่าเวลาเริ่มต้น (ย้อนหลัง 1 วัน)
+        // Script ส่วนเดิม ปรับเปลี่ยนชื่อ ID เล็กน้อย
         const now = new Date();
         const tzOffset = now.getTimezoneOffset() * 60000;
         document.getElementById('e-start').value = new Date(Date.now() - 86400000 - tzOffset).toISOString().slice(0, 16);
@@ -545,34 +602,32 @@ app.get('/export', async (req, res) => {
 
         async function doExp() {
             try {
-                const el = document.getElementById('e-mac');
-                const mac = el.value;
-                // ดึงข้อความจาก Option ที่เลือก เช่น "[Bed 1] นายเอ (64001)"
+                const el = document.getElementById('e-hn');
+                const hn = el.value; // ดึงค่า HN มาแทน MAC
                 const fullText = el.options[el.selectedIndex].text;
-                // ล้างอักขระพิเศษออกให้เป็นไฟล์ name ที่ปลอดภัย
                 const sanitizedInfo = fullText.replace(/[^a-zA-Z0-9ก-๙]/g, '_');
 
                 const start = document.getElementById('e-start').value;
                 const stop = document.getElementById('e-stop').value;
 
-                if(!start || !stop) return alert('กรุณาเลือกวันที่');
-
-                const url = '/api/export-data?mac=' + mac + '&start=' + start + '&stop=' + stop;
+                if(!hn) return alert('กรุณาเลือกคนไข้');
+                
+                // ส่ง hn ไปที่ API
+                const url = '/api/export-data?hn=' + hn + '&start=' + start + '&stop=' + stop;
                 const response = await fetch(url);
                 const data = await response.json();
                 
                 if(!data || data.length === 0) {
-                    alert('ไม่พบข้อมูลในช่วงเวลานี้');
+                    alert('ไม่พบข้อมูลของคนไข้ท่านนี้ในช่วงเวลาที่เลือก');
                     return;
                 }
 
                 let csv = "\\uFEFFTime,HN,Name,HR,SpO2,Temp\\n";
                 data.forEach(i => {
-                    csv += i._time_str + ',' + i.hm_number + ',' + i.patient_name + ',' + 
+                    csv += i._time_str + ',' + (i.hm_number || '--') + ',' + (i.patient_name || '--') + ',' + 
                            (i.ble_heart || '--') + ',' + (i.ble_spo2 || '--') + ',' + (i.ble_temp || '--') + '\\n';
                 });
 
-                // สร้างชื่อไฟล์: Report_ชื่อคนไข้_วันที่.csv
                 const d = new Date();
                 const dateStr = d.getDate() + "-" + (d.getMonth() + 1) + "-" + (d.getFullYear() + 543);
                 const fileName = "Report_" + sanitizedInfo + "_" + dateStr + ".csv";
@@ -593,11 +648,10 @@ app.get('/export', async (req, res) => {
 
 
 app.get('/api/export-data', async (req, res) => {
-    const { mac, start, stop } = req.query;
+    const { hn, start, stop } = req.query; 
     try {
         const queryText = `
             SELECT 
-                -- ปัดเศษ Milliseconds ทิ้งเพื่อให้ GROUP BY รวมวินาทีเดียวกันได้
                 to_char(date_trunc('second', recorded_at), 'DD/MM/YYYY HH24:MI:SS') as _time_str, 
                 hm_number, 
                 patient_name, 
@@ -605,19 +659,20 @@ app.get('/api/export-data', async (req, res) => {
                 MAX(spo2) as ble_spo2, 
                 MAX(temperature) as ble_temp
             FROM vital_signs_logs
-            WHERE mac = $1 
-            AND recorded_at BETWEEN $2::timestamp AND $3::timestamp
-            -- ต้อง GROUP BY ด้วยวินาทีที่ตัดเศษแล้ว
+            WHERE hm_number = $1  -- กรองด้วย HN เพื่อให้ได้เฉพาะข้อมูลของคนคนนั้น
+            AND recorded_at >= $2::timestamp 
+            AND recorded_at <= $3::timestamp
             GROUP BY date_trunc('second', recorded_at), hm_number, patient_name
-            ORDER BY date_trunc('second', recorded_at) DESC
+            ORDER BY date_trunc('second', recorded_at) ASC
         `;
-        const result = await pool.query(queryText, [mac, start, stop]);
+        const result = await pool.query(queryText, [hn, start, stop]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
+        console.error("Export Error:", err);
         res.status(500).json({ error: err.message });
     }
 });
+
 app.get('/devices-mgmt', async (req, res) => {
     const r = await pool.query('SELECT * FROM nurseaid ORDER BY device_no');
     const rows = r.rows.map(d => `<tr><td class="font-bold">#${d.device_no}</td><td class="font-mono text-slate-400 text-xs">${d.mac}</td><td class="text-right admin-only"><button onclick="editD('${d.mac}','${d.device_no}')" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delD('${d.mac}')" class="text-red-400 font-bold">ลบ</button></td></tr>`).join('');
@@ -666,7 +721,7 @@ app.get('/users-mgmt', async (req, res) => {
     `));
 });
 
-// --- API ACTIONS ---
+
 app.post('/api/devices', adminOnly, async(req,res)=>{ await pool.query('INSERT INTO nurseaid (device_no, mac) VALUES ($1,$2)',[req.body.dno, req.body.mac]); res.sendStatus(200); });
 app.post('/api/devices/update', adminOnly, async(req,res)=>{ await pool.query('UPDATE nurseaid SET device_no=$1 WHERE mac=$2',[req.body.newDno, req.body.mac]); res.sendStatus(200); });
 app.delete('/api/devices/:mac', adminOnly, async(req,res)=>{ await pool.query('DELETE FROM nurseaid WHERE mac=$1',[req.params.mac]); res.sendStatus(200); });
@@ -679,13 +734,13 @@ app.delete('/api/users/:id', adminOnly, async(req,res)=>{ await pool.query('DELE
 app.post('/api/pair', adminOnly, async (req, res) => {
     const { hn, name, nurse, bed, mac } = req.body;
     try {
-        // 1. อัปเดตสถานะปัจจุบันในตารางหลัก
+        
         await pool.query(
             'UPDATE nurseaid SET hm_number=$1, name=$2, update_by=$3, lastupdate=NOW(), bed_no=$4 WHERE mac=$5',
             [hn, name, nurse, bed, mac]
         );
         
-        // 2. บันทึกลงตารางประวัติ (Device Occupancy Log)
+       
         await pool.query(
             'INSERT INTO device_history (mac, hm_number, patient_name, bed_no, assign_time, status) VALUES ($1, $2, $3, $4, NOW(), $5)',
             [mac, hn, name, bed, 'active']
@@ -699,13 +754,13 @@ app.post('/api/pair', adminOnly, async (req, res) => {
 app.post('/api/unpair', adminOnly, async (req, res) => {
     const { mac, nurse } = req.body;
     try {
-        // 1. อัปเดตตารางประวัติ: ปิดสถานะการใช้งาน (Discharge)
+        
         await pool.query(
             "UPDATE device_history SET discharge_time=NOW(), status='discharged' WHERE mac=$1 AND status='active'",
             [mac]
         );
 
-        // 2. ล้างข้อมูลในตารางหลัก
+        
         await pool.query(
             'UPDATE nurseaid SET hm_number=NULL, name=NULL, update_by=$1, lastupdate=NOW(), bed_no=NULL WHERE mac=$2',
             [nurse, mac]
@@ -726,7 +781,7 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html><html><head><meta chars
 
 async function syncData() {
     try {
-        // ดึงรายชื่อคนไข้ที่ครองเครื่องอยู่ตอนนี้
+        
         const active = await pool.query('SELECT mac, hm_number, name FROM nurseaid WHERE hm_number IS NOT NULL');
         
         for (let p of active.rows) {
@@ -737,31 +792,47 @@ async function syncData() {
 
             queryApi.queryRows(flux, {
                 next: async (row, tableMeta) => {
-    const d = tableMeta.toObject(row);
-    // ใช้เวลาจาก Influx ตรงๆ ไม่ต้องบวกเพิ่มที่นี่
-    const recordTime = new Date(d._time); 
+                    const d = tableMeta.toObject(row);
+                    const recordTime = new Date(d._time); 
 
-    try {
-        await pool.query(`
-            INSERT INTO vital_signs_logs (hm_number, patient_name, mac, heart_rate, spo2, temperature, recorded_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (mac, recorded_at) 
-            DO UPDATE SET 
-                heart_rate = COALESCE(EXCLUDED.heart_rate, vital_signs_logs.heart_rate),
-                spo2 = COALESCE(EXCLUDED.spo2, vital_signs_logs.spo2),
-                temperature = COALESCE(EXCLUDED.temperature, vital_signs_logs.temperature)
-        `, [p.hm_number, p.name, p.mac, d.ble_heart, d.ble_spo2, d.ble_temp, recordTime]);
-    } catch (err) {}
-},
-                error: (e) => {},
-                complete: () => {}
+                    try {
+                        
+                        await pool.query(`
+                            INSERT INTO vital_signs_logs (hm_number, patient_name, mac, heart_rate, spo2, temperature, battery, recorded_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                            ON CONFLICT (mac, recorded_at) 
+                            DO UPDATE SET 
+                                heart_rate = COALESCE(EXCLUDED.heart_rate, vital_signs_logs.heart_rate),
+                                spo2 = COALESCE(EXCLUDED.spo2, vital_signs_logs.spo2),
+                                temperature = COALESCE(EXCLUDED.temperature, vital_signs_logs.temperature),
+                                battery = COALESCE(EXCLUDED.battery, vital_signs_logs.battery)
+                        `, [
+                            p.hm_number, 
+                            p.name, 
+                            p.mac, 
+                            d.ble_heart, 
+                            d.ble_spo2, 
+                            d.ble_temp, 
+                            d.ble_batt,
+                            recordTime
+                        ]);
+                    } catch (err) {
+                       
+                    }
+                },
+                error: (e) => {
+                    console.error("Influx Query Error:", e);
+                },
+                complete: () => {
+                    
+                }
             });
         }
     } catch (e) {
         console.error("Sync Error:", e);
     }
 }
-setInterval(syncData, 15000); // ทำงานทุก 15 วินาที
+setInterval(syncData, 15000);
 
 
 app.listen(PORT, '0.0.0.0', () => console.log('✅ SERVER RUNNING ON PORT '+PORT));
