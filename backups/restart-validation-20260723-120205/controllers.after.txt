@@ -1,0 +1,7 @@
+Controller 18:69:45:F3:45:77 nurseaid-43f42f4b #1 [default]
+Controller 2C:CF:67:54:42:05 nurseaid-43f42f4b 
+[[0;93mCHG[0m] Device 62:33:75:C0:D5:CE RSSI: -66
+[[0;93mCHG[0m] Device 70:4F:A5:5A:E8:B4 RSSI: -76
+[[0;93mCHG[0m] Device 2C:88:2F:4E:C9:A7 RSSI: -78
+[[0;93mCHG[0m] Device 21:02:02:06:9F:20 RSSI: -72
+[[0;93mCHG[0m] Device 27:08:DF:98:98:CE RSSI: -90

@@ -1,0 +1,70 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+
+test('dashboard uses the same device number ordering as the pairing page', () => {
+    assert.match(
+        source,
+        /FROM nurseaid WHERE hm_number IS NOT NULL ORDER BY device_no ASC/
+    );
+    assert.match(source, /SELECT \* FROM nurseaid ORDER BY device_no ASC/);
+});
+
+test('pairing and dashboard use the same responsive card grid layout', () => {
+    assert.match(source, /id="monitor-grid" class="monitor-grid-auto monitor-grid-layout"/);
+    assert.match(source, /id="pairing-grid" class="monitor-grid-layout"/);
+    assert.match(source, /\.monitor-grid-layout \{[\s\S]*?repeat\(auto-fill, minmax\(285px, 1fr\)\)/);
+    assert.doesNotMatch(source, /grid grid-cols-2 md:grid-cols-4 gap-6/);
+});
+
+test('dashboard card signature excludes fields that change rapidly or only with time', () => {
+    assert.match(source, /metricAges:\s*_metricAges/);
+    assert.match(source, /lastKnownAgeSeconds:\s*_lastKnownAgeSeconds/);
+    assert.match(source, /rssi:\s*_rssi/);
+    assert.match(source, /theme, p: stablePatient/);
+});
+
+test('dashboard does not display metric ages below vital values', () => {
+    assert.doesNotMatch(source, /hrAgeText|spo2AgeText|tempAgeText/);
+    assert.doesNotMatch(source, /data-role="(?:hr|spo2|temp)-age"/);
+    assert.match(source, /'patient-status': card\.statusText/);
+});
+
+test('dashboard does not describe readings as fresh or not fresh', () => {
+    assert.doesNotMatch(source, /HR สด|HR ไม่สด|● สด|return 'สด'/);
+    assert.match(source, /if \(seconds <= 10\) return Math\.max\(0, Math\.floor\(seconds\)\) \+ 's'/);
+});
+
+test('inactive device states use gray styling and distinguish unknown from empty battery', () => {
+    assert.match(source, /const isOffWrist = dq === 'off_wrist'/);
+    assert.match(source, /const isOffline = dq === 'offline' \|\| \(!isOnline && !isRecovering\)/);
+    assert.match(source, /const isLowBattery = Number\(p\.battery\) === 0/);
+    assert.match(source, /const isAwaitingWearState = isPresentWaiting/);
+    assert.match(source, /const isInactive = isOffline \|\| isOffWrist \|\| isLowBattery \|\| isAwaitingWearState/);
+    assert.match(source, /isLowBattery \? 'แบตหมด'/);
+    assert.match(source, /p\.battery !== '--' \? p\.battery \+ '%' : 'ไม่ทราบแบต'/);
+    assert.match(source, /present_waiting: 'พบอุปกรณ์ · ยังไม่พบสถานะการสวมใส่'/);
+    assert.match(source, /data-device-state="\\\$\{isInactive \? 'inactive' : 'active'\}"/);
+    assert.match(source, /off_wrist: '--'/);
+    assert.match(source, /const canEvaluateVitals = isOnline && isWorn && !isInactive/);
+    assert.match(source, /style="\\\$\{isInactive \? 'border-color: #6b7280; ' \+ inactiveCardStyle/);
+    assert.match(source, /const bedBg = isInactive \? 'bg-gray-500'/);
+});
+
+test('critical background remains isolated to its own vital metric', () => {
+    assert.match(source, /const hrBg = isInactive \? grayBg : \(isHrCrit \? criticalVitalBg/);
+    assert.match(source, /const spo2Bg = isInactive \? grayBg : \(isSpo2Crit \? criticalVitalBg/);
+    assert.match(source, /const tempBg = isInactive \? grayBg : \(isTempCrit \? criticalVitalBg/);
+});
+
+test('restart recovery is amber and is not treated as inactive offline state', () => {
+    assert.match(source, /const isRecovering = p\.status === 'Recovering' \|\| p\.dataQuality === 'recovering'/);
+    assert.match(source, /const isOffline = dq === 'offline' \|\| \(!isOnline && !isRecovering\)/);
+    assert.match(source, /recovering: 'กำลังเชื่อมต่อใหม่'/);
+    assert.match(source, /isRecovering \|\| isRecent \|\| isPartial/);
+});

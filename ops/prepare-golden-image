@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+if [[ ${1:-} != --execute ]]; then
+  cat <<TXT
+DRY RUN ONLY. This command prepares a stopped template by deleting local secrets,
+databases, device credentials, machine identity and SSH host keys.
+Run only on a dedicated image-builder machine:
+  $0 --execute
+TXT
+  exit 0
+fi
+[[ -f /etc/nurseaid-golden-image-builder ]] || { echo 'Refusing: /etc/nurseaid-golden-image-builder marker missing' >&2; exit 1; }
+cd /root/nurseaid
+docker compose down --volumes --remove-orphans || true
+rm -f .env
+rm -rf /var/lib/nurseaid-provision
+rm -f /etc/ssh/ssh_host_*
+truncate -s 0 /etc/machine-id
+rm -f /var/lib/dbus/machine-id
+systemctl enable docker.service nurseaid-firstboot.service nurseaid-compose-collector.timer
+sync
+echo 'Golden image sanitized. Shut down and capture the image now.'

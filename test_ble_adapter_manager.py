@@ -1,0 +1,109 @@
+import unittest
+from unittest import mock
+
+from ble_adapter_manager import AdaptiveAdapterManager, AdapterRuntime, parse_hciconfig_inventory
+
+
+class AdaptiveAdapterManagerTest(unittest.TestCase):
+    A = "18:69:45:F3:45:77"
+    B = "2C:CF:67:54:42:05"
+    DEVICE = "21:02:02:06:9F:20"
+
+    def manager(self):
+        manager = AdaptiveAdapterManager([self.A, self.B], affinity_lease_seconds=1800)
+        manager.set_inventory([
+            AdapterRuntime(self.A, "hci0"), AdapterRuntime(self.B, "hci1")
+        ])
+        return manager
+
+    def add(self, manager, address, rssi):
+        return manager.record_candidate(
+            self.DEVICE, address, device=object(), seen=1000, rssi=rssi,
+            ble_address=self.DEVICE,
+        )
+
+    def test_chooses_stronger_fresh_candidate_on_cold_start(self):
+        manager = self.manager()
+        self.add(manager, self.A, -78)
+        self.add(manager, self.B, -60)
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1001)[0])
+
+    def test_successful_data_creates_sticky_affinity(self):
+        manager = self.manager()
+        self.add(manager, self.A, -65)
+        self.add(manager, self.B, -60)
+        with mock.patch("ble_adapter_manager.time.time", return_value=1000):
+            manager.record_data_result(self.DEVICE, self.A, True)
+        self.assertEqual(self.A, manager.choose(self.DEVICE, 30, now=1010)[0])
+
+    def test_repeated_empty_cycles_can_overcome_expired_affinity(self):
+        manager = self.manager()
+        manager.affinity_lease_seconds = 5
+        self.add(manager, self.A, -65)
+        self.add(manager, self.B, -66)
+        with mock.patch("ble_adapter_manager.time.time", return_value=1):
+            manager.record_data_result(self.DEVICE, self.A, True)
+            manager.record_data_result(self.DEVICE, self.A, False)
+            manager.record_data_result(self.DEVICE, self.A, False)
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1010)[0])
+
+    def test_two_empty_clinical_cycles_override_active_affinity(self):
+        manager = self.manager()
+        self.add(manager, self.A, -65)
+        self.add(manager, self.B, -66)
+        with mock.patch("ble_adapter_manager.time.time", return_value=1000):
+            manager.record_data_result(self.DEVICE, self.A, True)
+            manager.record_data_result(self.DEVICE, self.A, False)
+            manager.record_data_result(self.DEVICE, self.A, False)
+
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1001)[0])
+
+    def test_repeated_gatt_failures_override_active_affinity(self):
+        manager = self.manager()
+        self.add(manager, self.A, -65)
+        self.add(manager, self.B, -66)
+        with mock.patch("ble_adapter_manager.time.time", return_value=1000):
+            manager.record_data_result(self.DEVICE, self.A, True)
+            manager.record_gatt_result(self.DEVICE, self.A, False)
+            manager.record_gatt_result(self.DEVICE, self.A, False)
+
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1001)[0])
+
+    def test_successful_gatt_session_resets_consecutive_failures(self):
+        manager = self.manager()
+        manager.record_gatt_result(self.DEVICE, self.A, False)
+        manager.record_gatt_result(self.DEVICE, self.A, True)
+
+        stats = manager.stats[self.DEVICE][self.A]
+        self.assertEqual(1, stats.gatt_failures)
+        self.assertEqual(0, stats.consecutive_gatt_failures)
+
+    def test_unhealthy_adapter_is_not_selected(self):
+        manager = self.manager()
+        self.add(manager, self.A, -50)
+        self.add(manager, self.B, -80)
+        manager.adapters[self.A].healthy = False
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1001)[0])
+
+    def test_connection_budget_excludes_full_adapter(self):
+        manager = self.manager()
+        self.add(manager, self.A, -50)
+        self.add(manager, self.B, -80)
+        manager.adapters[self.A].active_connections = 2
+        self.assertEqual(self.B, manager.choose(self.DEVICE, 30, now=1001)[0])
+
+    def test_parses_controller_address_to_interface_mapping(self):
+        inventory = parse_hciconfig_inventory("""
+hci1: Type: Primary  Bus: UART
+    BD Address: 2C:CF:67:54:42:05  ACL MTU: 1021:8
+hci0: Type: Primary  Bus: USB
+    BD Address: 18:69:45:F3:45:77  ACL MTU: 1021:6
+""")
+        self.assertEqual(
+            [("hci1", self.B), ("hci0", self.A)],
+            [(item.interface, item.address) for item in inventory],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,305 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # === InfluxDB ===
+  influxdb:
+    logging: *default-logging
+    image: influxdb:2.7-alpine
+    container_name: nurseaid-influxdb
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8086/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # === PostgreSQL ===
+  postgres:
+    logging: *default-logging
+    image: postgres:15-alpine
+    container_name: nurseaid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Mosquitto MQTT Broker ===
+  mosquitto:
+    logging: *default-logging
+    build: ./mosquitto-config
+    container_name: nurseaid-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD-SHELL", "test -r /proc/1/cmdline && grep -aq mosquitto /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # === NurseAid Application ===
+  nurseaid:
+    logging: *default-logging
+    build: .
+    container_name: nurseaid-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - LINE_TOKEN=${LINE_TOKEN}
+      - LIVE_STATUS_CACHE_MS=${LIVE_STATUS_CACHE_MS:-3000}
+      - LIVE_STATUS_FALLBACK_SECONDS=${LIVE_STATUS_FALLBACK_SECONDS:-300}
+      - LIVE_PRESENCE_FRESHNESS_SECONDS=${LIVE_PRESENCE_FRESHNESS_SECONDS:-90}
+      - LIVE_HR_FRESHNESS_SECONDS=${LIVE_HR_FRESHNESS_SECONDS:-30}
+      - INFLUX_QUERY_TIMEOUT_MS=${INFLUX_QUERY_TIMEOUT_MS:-5000}
+      - ALERT_ENGINE_INTERVAL_MS=${ALERT_ENGINE_INTERVAL_MS:-15000}
+    ports:
+      - "3333:3333"
+    depends_on:
+      - influxdb
+      - postgres
+      - mosquitto
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # === BLE Gateway (BLE to MQTT) ===
+  # Runs on Raspberry Pi 5 to scan BLE devices and publish vitals via MQTT.
+  ble-gateway:
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: Dockerfile.ble-gateway
+    container_name: nurseaid-ble-gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - JSTYLE_ENABLE_MEASURE_COMMANDS=${JSTYLE_ENABLE_MEASURE_COMMANDS}
+      - JSTYLE_DEBUG_UNPARSED=${JSTYLE_DEBUG_UNPARSED}
+      - JSTYLE_VERBOSE_SENSOR_LOGS=${JSTYLE_VERBOSE_SENSOR_LOGS:-false}
+      - JSTYLE_PUBLISH_ADVERTISEMENT=${JSTYLE_PUBLISH_ADVERTISEMENT}
+      - JSTYLE_CONNECT_FOR_GATT=${JSTYLE_CONNECT_FOR_GATT:-false}
+      - JSTYLE_PHASE_WATCHDOG_GRACE=${JSTYLE_PHASE_WATCHDOG_GRACE:-15}
+      - JSTYLE_OFF_WRIST_CONFIRMATIONS=${JSTYLE_OFF_WRIST_CONFIRMATIONS:-3}
+      - BLE_JSTYLE_ATTEMPTS_PER_TURN=${BLE_JSTYLE_ATTEMPTS_PER_TURN:-1}
+      - BLE_RETRY_BACKOFF_BASE=${BLE_RETRY_BACKOFF_BASE:-15}
+      - BLE_RETRY_BACKOFF_MAX=${BLE_RETRY_BACKOFF_MAX:-120}
+      - BLE_SCANNER_STALE_SECONDS=${BLE_SCANNER_STALE_SECONDS:-90}
+      - BLE_HEALTH_MAX_AGE_SECONDS=${BLE_HEALTH_MAX_AGE_SECONDS:-45}
+      - BLE_OPERATIONAL_LOG_INTERVAL=${BLE_OPERATIONAL_LOG_INTERVAL:-60}
+      - BLE_MAX_GATT_CONNECTIONS=${BLE_MAX_GATT_CONNECTIONS:-3}
+      - BLE_RESERVED_WEAROS_SLOTS=${BLE_RESERVED_WEAROS_SLOTS:-1}
+      - BLE_SCAN_DURING_WEAROS=${BLE_SCAN_DURING_WEAROS}
+      - JSTYLE_CYCLES_PER_CONNECTION=${JSTYLE_CYCLES_PER_CONNECTION:-1}
+      - JSTYLE_ROTATION_COOLDOWN=${JSTYLE_ROTATION_COOLDOWN:-5}
+      - WEAROS_NOTIFICATION_INTERVAL=${WEAROS_NOTIFICATION_INTERVAL}
+      - WEAROS_RECONNECT_COOLDOWN=${WEAROS_RECONNECT_COOLDOWN:-60}
+      - PHASE_1_DURATION=${PHASE_1_DURATION:-35}
+      - PHASE_1_MIN_DURATION=${PHASE_1_MIN_DURATION:-15}
+      - PHASE_1_STABLE_SAMPLES=${PHASE_1_STABLE_SAMPLES:-3}
+      - PHASE_1_HR_TOLERANCE=${PHASE_1_HR_TOLERANCE:-6}
+      - PHASE_1_TEMP_TOLERANCE=${PHASE_1_TEMP_TOLERANCE:-0.3}
+      - PHASE_2_TIMEOUT=${PHASE_2_TIMEOUT:-45}
+      - SPO2_NO_PROGRESS_TIMEOUT=${SPO2_NO_PROGRESS_TIMEOUT:-35}
+      - DATA_RECEIVE_TIMEOUT=${DATA_RECEIVE_TIMEOUT}
+      - PYTHONUNBUFFERED=1
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    privileged: true
+    healthcheck:
+      test: ["CMD", "python", "/app/ble_healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      - mosquitto
+      - postgres
+    networks:
+      - nurseaid-network
+
+  # === MQTT Bridge (MQTT to InfluxDB) ===
+  # The host gateway publishes through port 1883; the bridge consumes directly
+  # from the same broker over the Compose network.
+  mqtt-bridge:
+    logging: *default-logging
+    build: ./mqtt-bridge
+    container_name: nurseaid-mqtt-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_TOPICS=ble/#
+      - SAVE_INTERVAL=${MQTT_BRIDGE_SAVE_INTERVAL:-5}
+      - VERBOSE_SENSOR_LOGS=${MQTT_BRIDGE_VERBOSE_LOGS:-false}
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - influxdb
+      - mosquitto
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import pathlib,sys; sys.exit(0 if b\"mqtt_bridge.py\" in pathlib.Path(\"/proc/1/cmdline\").read_bytes() else 1)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # === Central device heartbeat agent ===
+  compose-collector:
+    logging: *default-logging
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.collector
+    container_name: nurseaid-compose-collector
+    restart: unless-stopped
+    environment:
+      NURSEAID_PROJECT_NAME: nurseaid
+      NURSEAID_STATUS_FILE: /run/nurseaid-compose/status.json
+      NURSEAID_COLLECT_INTERVAL: 3
+      NURSEAID_AGENT_UID: 65532
+      NURSEAID_INITIAL_LOG_HISTORY_MINUTES: ${NURSEAID_INITIAL_LOG_HISTORY_MINUTES:-30}
+    volumes:
+      - compose_status:/run/nurseaid-compose
+      - ./ops:/host/project:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc/stat:/host/proc/stat:ro
+      - /proc/meminfo:/host/proc/meminfo:ro
+      - /proc/uptime:/host/proc/uptime:ro
+      - /sys/class/thermal/thermal_zone0/temp:/host/sys/class/thermal/thermal_zone0/temp:ro
+    networks:
+      - nurseaid-network
+    security_opt:
+      - no-new-privileges:true
+    group_add:
+      - "991"
+      - "65532"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  device-agent:
+    logging: *default-logging
+    build: ./device-agent
+    container_name: nurseaid-device-agent
+    restart: unless-stopped
+    depends_on:
+      compose-collector:
+        condition: service_healthy
+    environment:
+      CENTRAL_URL: https://nurseaid.softsquaregroup.com
+      HEARTBEAT_INTERVAL: 60
+    volumes:
+      - device_agent_data:/var/lib/nurseaid-agent
+      - /proc/cpuinfo:/host/proc/cpuinfo:ro
+      - /proc/stat:/host/proc/stat:ro
+      - /proc/meminfo:/host/proc/meminfo:ro
+      - /etc/machine-id:/host/etc/machine-id:ro
+      - /etc/hostname:/host/etc/hostname:ro
+      - /sys/class/thermal/thermal_zone0/temp:/host/sys/class/thermal/thermal_zone0/temp:ro
+      - compose_status:/run/nurseaid-compose
+    networks:
+      - nurseaid-network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  compose_status:
+    driver: local
+  device_agent_data:
+    driver: local
+  influxdb_data:
+    driver: local
+  postgres_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+  mosquitto_log:
+    driver: local
+
+networks:
+  nurseaid-network:
+    driver: bridge

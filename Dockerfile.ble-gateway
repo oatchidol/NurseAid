@@ -1,0 +1,35 @@
+FROM python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba
+
+# Set timezone to Thailand (UTC+7)
+ENV TZ=Asia/Bangkok
+
+# Keep the BLE userspace aligned with the host's BlueZ 5.66 API. Package
+# revisions differ between Debian and Raspberry Pi OS, so the image pins the
+# Debian Bookworm revision while the host healthcheck validates the Pi revision.
+ARG BLUEZ_PACKAGE_VERSION=5.66-1+deb12u2
+ARG DBUS_PACKAGE_VERSION=1.14.10-1~deb12u1
+
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        "bluez=${BLUEZ_PACKAGE_VERSION}" \
+        "dbus=${DBUS_PACKAGE_VERSION}" \
+        systemd \
+        tzdata \
+    && test "$(dpkg-query -W -f='${Version}' bluez)" = "${BLUEZ_PACKAGE_VERSION}" \
+    && test "$(bluetoothctl --version | awk '{print $NF}')" = "5.66" \
+    && command -v busctl \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-ble-gateway.txt ./
+RUN pip install --no-cache-dir -r requirements-ble-gateway.txt
+
+COPY nurseaid_ble_gateway.py ./
+COPY ble_adapter_manager.py ./
+COPY sensor_drivers.py ./
+COPY ble_healthcheck.py ./
+
+CMD ["python", "nurseaid_ble_gateway.py"]

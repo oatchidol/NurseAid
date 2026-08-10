@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect NurseAid Docker Compose service health
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nurseaid-compose-collector
+Nice=10

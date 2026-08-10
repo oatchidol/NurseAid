@@ -1,0 +1,17 @@
+[Unit]
+Description=NurseAid zero-touch first boot provisioning
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/root/nurseaid/docker-compose.yml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nurseaid-firstboot
+RemainAfterExit=yes
+TimeoutStartSec=30min
+Restart=on-failure
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target

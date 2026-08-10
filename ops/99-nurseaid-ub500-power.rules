@@ -1,0 +1,4 @@
+# Keep the NurseAid TP-Link UB500 awake across reboot and USB replug.
+# Runtime autosuspend can interrupt long-lived BLE notifications without a USB
+# disconnect being obvious in application logs.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2357", ATTR{idProduct}=="0604", TEST=="power/control", ATTR{power/control}="on"

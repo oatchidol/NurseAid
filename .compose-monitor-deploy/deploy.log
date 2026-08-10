@@ -1,0 +1,236 @@
+ Image nurseaid-device-agent Building 
+ Image nurseaid-mosquitto Building 
+ Image nurseaid-mqtt-bridge Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.41kB done
+#1 DONE 0.0s
+
+#2 [mosquitto internal] load build definition from Dockerfile
+#2 transferring dockerfile: 240B done
+#2 DONE 0.0s
+
+#3 [device-agent internal] load build definition from Dockerfile
+#3 transferring dockerfile: 633B done
+#3 DONE 0.1s
+
+#4 [mqtt-bridge internal] load build definition from Dockerfile
+#4 transferring dockerfile: 630B done
+#4 DONE 0.1s
+
+#5 [mosquitto internal] load metadata for docker.io/library/eclipse-mosquitto:2.0
+#5 DONE 0.1s
+
+#6 [mosquitto internal] load .dockerignore
+#6 transferring context: 2B done
+#6 DONE 0.0s
+
+#7 [mosquitto internal] load build context
+#7 DONE 0.0s
+
+#8 [mosquitto 1/3] FROM docker.io/library/eclipse-mosquitto:2.0@sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c
+#8 resolve docker.io/library/eclipse-mosquitto:2.0@sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c
+#8 resolve docker.io/library/eclipse-mosquitto:2.0@sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c 0.1s done
+#8 DONE 0.1s
+
+#7 [mosquitto internal] load build context
+#7 transferring context: 36B done
+#7 DONE 0.0s
+
+#9 [mosquitto 2/3] COPY mosquitto.conf /mosquitto/config/mosquitto.conf
+#9 CACHED
+
+#10 [mosquitto 3/3] RUN chmod 644 /mosquitto/config/mosquitto.conf
+#10 CACHED
+
+#11 [mosquitto] exporting to image
+#11 exporting layers done
+#11 exporting manifest sha256:3b27afe4f3c29d21b58260c79178d9fadf80ed7ebeb840302ef3252c956c2f54 done
+#11 exporting config sha256:cff2e8b3025d73962fdab4beb6df494bb7458b202188eeeeb49f687048ec3a02 done
+#11 exporting attestation manifest sha256:3ef11fcd7c967016487e326e40b6d614853dbd20709414a66894d00ccad0a8f8
+#11 exporting attestation manifest sha256:3ef11fcd7c967016487e326e40b6d614853dbd20709414a66894d00ccad0a8f8 0.2s done
+#11 exporting manifest list sha256:47346fa005521d221fc76559d0a282843bd3abdf9031a34a9f321eeb98b6f14a
+#11 exporting manifest list sha256:47346fa005521d221fc76559d0a282843bd3abdf9031a34a9f321eeb98b6f14a 0.1s done
+#11 naming to docker.io/library/nurseaid-mosquitto:latest
+#11 naming to docker.io/library/nurseaid-mosquitto:latest done
+#11 unpacking to docker.io/library/nurseaid-mosquitto:latest 0.1s done
+#11 DONE 0.6s
+
+#12 [mqtt-bridge internal] load metadata for docker.io/library/python:3.11-slim
+#12 ...
+
+#13 [device-agent internal] load metadata for docker.io/library/python:3.11-alpine
+#13 DONE 1.3s
+
+#12 [mqtt-bridge internal] load metadata for docker.io/library/python:3.11-slim
+#12 DONE 1.3s
+
+#14 [device-agent internal] load .dockerignore
+#14 transferring context: 2B done
+#14 DONE 0.1s
+
+#15 [mqtt-bridge internal] load .dockerignore
+#15 transferring context: 2B done
+#15 DONE 0.3s
+
+#16 [device-agent internal] load build context
+#16 DONE 0.0s
+
+#17 [mosquitto] resolving provenance for metadata file
+#17 DONE 0.0s
+
+#18 [device-agent 1/4] FROM docker.io/library/python:3.11-alpine@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
+#18 resolve docker.io/library/python:3.11-alpine@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
+#18 resolve docker.io/library/python:3.11-alpine@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4 0.4s done
+#18 DONE 0.5s
+
+#19 [mqtt-bridge internal] load build context
+#19 transferring context: 71B done
+#19 DONE 0.3s
+
+#20 [mqtt-bridge 1/5] FROM docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 resolve docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 resolve docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea 0.3s done
+#20 DONE 0.4s
+
+#16 [device-agent internal] load build context
+#16 transferring context: 39B done
+#16 DONE 0.1s
+
+#21 [device-agent 2/4] WORKDIR /opt/nurseaid-agent
+#21 CACHED
+
+#22 [device-agent 3/4] COPY nurseaid_agent.py ./
+#22 CACHED
+
+#23 [device-agent 4/4] RUN chmod 0555 nurseaid_agent.py && mkdir -p /var/lib/nurseaid-agent && chown -R 65532:65532 /var/lib/nurseaid-agent
+#23 CACHED
+
+#24 [device-agent] exporting to image
+#24 exporting layers done
+#24 exporting manifest sha256:763d8da2dc1ad3529de073b2baebee7b01cb2c12071c1dcb74bfe92820a076a6 0.0s done
+#24 exporting config sha256:633fdb677b517ea65cacbb1ccf4ca85c31a7020f0c602199cf6d4170a0737677 done
+#24 exporting attestation manifest sha256:0e42ca90ef96a27b3538af690d6472f797762214515a3689e4181b81fed5c062
+#24 exporting attestation manifest sha256:0e42ca90ef96a27b3538af690d6472f797762214515a3689e4181b81fed5c062 0.2s done
+#24 exporting manifest list sha256:5f88533b44a3627fa29680073f71307edd8ca0a3e82c357bddbdfe6d326dc156
+#24 exporting manifest list sha256:5f88533b44a3627fa29680073f71307edd8ca0a3e82c357bddbdfe6d326dc156 0.1s done
+#24 naming to docker.io/library/nurseaid-device-agent:latest done
+#24 unpacking to docker.io/library/nurseaid-device-agent:latest 0.0s done
+#24 DONE 0.6s
+
+#20 [mqtt-bridge 1/5] FROM docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71 12.58MB / 14.37MB 0.6s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 11.53MB / 30.14MB 0.5s
+#20 ...
+
+#25 [device-agent] resolving provenance for metadata file
+#25 DONE 0.0s
+
+#20 [mqtt-bridge 1/5] FROM docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71 13.63MB / 14.37MB 2.1s
+#20 sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71 14.37MB / 14.37MB 3.5s
+#20 sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71 14.37MB / 14.37MB 3.5s done
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 13.63MB / 30.14MB 3.8s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 15.73MB / 30.14MB 5.4s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 17.83MB / 30.14MB 7.2s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 19.92MB / 30.14MB 9.0s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 22.02MB / 30.14MB 10.8s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 24.12MB / 30.14MB 12.6s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 26.21MB / 30.14MB 14.4s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 28.31MB / 30.14MB 16.1s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 30.14MB / 30.14MB 17.6s
+#20 sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 30.14MB / 30.14MB 18.1s done
+#20 extracting sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075
+#20 extracting sha256:59f54fbcd984beca03fd8b78569fa57268ecf78d291c0b6fe1623c2467f5a075 0.7s done
+#20 DONE 19.2s
+
+#20 [mqtt-bridge 1/5] FROM docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 extracting sha256:391ef874fe2e0ae15c7ece42b9961db1260f333e9a2151e5269646d119f3e1b1 0.1s done
+#20 extracting sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71
+#20 extracting sha256:2a62bb0a4e66546f1d746670a60e4a654b876719da3c955685825d396ce70e71 0.6s done
+#20 DONE 19.9s
+
+#20 [mqtt-bridge 1/5] FROM docker.io/library/python:3.11-slim@sha256:90edbeb8e4efce8dfe102f24c5ea1c8a1d770ff3d99c9c565d89ec97145f0fea
+#20 extracting sha256:26c1f77b2e7215faf96d9764895595c2cde9a080c696241deed63b5e0cdb49d2 0.1s done
+#20 DONE 20.0s
+
+#26 [mqtt-bridge 2/5] WORKDIR /app
+#26 DONE 15.2s
+
+#27 [mqtt-bridge 3/5] COPY requirements.txt .
+#27 DONE 0.6s
+
+#28 [mqtt-bridge 4/5] RUN pip install --no-cache-dir -r requirements.txt
+#28 4.952 Collecting paho-mqtt>=1.6 (from -r requirements.txt (line 1))
+#28 5.145   Downloading paho_mqtt-2.1.0-py3-none-any.whl.metadata (23 kB)
+#28 5.456 Collecting influxdb-client>=1.30 (from -r requirements.txt (line 2))
+#28 5.505   Downloading influxdb_client-1.50.0-py3-none-any.whl.metadata (65 kB)
+#28 5.550      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 65.5/65.5 kB 1.3 MB/s eta 0:00:00
+#28 5.865 Collecting reactivex>=4.0.4 (from influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 5.924   Downloading reactivex-4.1.0-py3-none-any.whl.metadata (5.7 kB)
+#28 5.976 Collecting certifi>=14.05.14 (from influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 6.012   Downloading certifi-2026.6.17-py3-none-any.whl.metadata (2.5 kB)
+#28 6.055 Collecting python-dateutil>=2.5.3 (from influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 6.112   Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+#28 6.185 Collecting urllib3>=1.26.0 (from influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 6.227   Downloading urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+#28 6.265 Collecting six>=1.5 (from python-dateutil>=2.5.3->influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 6.308   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+#28 6.362 Collecting typing-extensions<5.0.0,>=4.1.1 (from reactivex>=4.0.4->influxdb-client>=1.30->-r requirements.txt (line 2))
+#28 6.420   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+#28 6.474 Downloading paho_mqtt-2.1.0-py3-none-any.whl (67 kB)
+#28 6.492    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 67.2/67.2 kB 5.2 MB/s eta 0:00:00
+#28 6.532 Downloading influxdb_client-1.50.0-py3-none-any.whl (746 kB)
+#28 7.070    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 746.3/746.3 kB 1.4 MB/s eta 0:00:00
+#28 7.120 Downloading certifi-2026.6.17-py3-none-any.whl (133 kB)
+#28 7.172    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 133.3/133.3 kB 2.6 MB/s eta 0:00:00
+#28 7.224 Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+#28 7.567    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 229.9/229.9 kB 646.2 kB/s eta 0:00:00
+#28 7.608 Downloading reactivex-4.1.0-py3-none-any.whl (218 kB)
+#28 7.688    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 218.6/218.6 kB 3.1 MB/s eta 0:00:00
+#28 7.728 Downloading urllib3-2.7.0-py3-none-any.whl (131 kB)
+#28 7.801    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 131.1/131.1 kB 1.9 MB/s eta 0:00:00
+#28 7.848 Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+#28 7.893 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#28 7.908    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 45.6/45.6 kB 3.8 MB/s eta 0:00:00
+#28 8.094 Installing collected packages: urllib3, typing-extensions, six, paho-mqtt, certifi, reactivex, python-dateutil, influxdb-client
+#28 10.13 Successfully installed certifi-2026.6.17 influxdb-client-1.50.0 paho-mqtt-2.1.0 python-dateutil-2.9.0.post0 reactivex-4.1.0 six-1.17.0 typing-extensions-4.16.0 urllib3-2.7.0
+#28 10.13 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+#28 10.34 
+#28 10.34 [notice] A new release of pip is available: 24.0 -> 26.1.2
+#28 10.34 [notice] To update, run: pip install --upgrade pip
+#28 DONE 13.0s
+
+#29 [mqtt-bridge 5/5] COPY mqtt_bridge.py .
+#29 DONE 0.3s
+
+#30 [mqtt-bridge] exporting to image
+#30 exporting layers
+#30 exporting layers 2.2s done
+#30 exporting manifest sha256:42ed83f47db113fff8be31620d06faec782e8c94c94cb5c502f487c0ae279dcf 0.1s done
+#30 exporting config sha256:f62f017cae5d6ec3b2fac8e134a692976f597974dd6e5c97e0e3a3e0002695da
+#30 exporting config sha256:f62f017cae5d6ec3b2fac8e134a692976f597974dd6e5c97e0e3a3e0002695da 0.1s done
+#30 exporting attestation manifest sha256:34738a987e5c46b170e7a5290cfe07c4f7e02e3f090ab8a00bad474cfe4c0ee9
+#30 exporting attestation manifest sha256:34738a987e5c46b170e7a5290cfe07c4f7e02e3f090ab8a00bad474cfe4c0ee9 0.2s done
+#30 exporting manifest list sha256:233cb4efddd14590df301120a79229cbaf3322ddf11ce03d79500eacfbbb4ca9 0.0s done
+#30 naming to docker.io/library/nurseaid-mqtt-bridge:latest done
+#30 unpacking to docker.io/library/nurseaid-mqtt-bridge:latest
+#30 unpacking to docker.io/library/nurseaid-mqtt-bridge:latest 0.8s done
+#30 DONE 3.5s
+
+#31 [mqtt-bridge] resolving provenance for metadata file
+#31 DONE 0.0s
+ Image nurseaid-device-agent Built 
+ Image nurseaid-mosquitto Built 
+ Image nurseaid-mqtt-bridge Built 
+ Container nurseaid-device-agent Recreate 
+ Container nurseaid-mosquitto Recreate 
+ Container nurseaid-mosquitto Recreated 
+ Container nurseaid-mqtt-bridge Recreate 
+ Container nurseaid-device-agent Recreated 
+ Container nurseaid-mqtt-bridge Recreated 
+ Container nurseaid-device-agent Starting 
+ Container nurseaid-mosquitto Starting 
+ Container nurseaid-device-agent Started 
+ Container nurseaid-mosquitto Started 
+ Container nurseaid-mqtt-bridge Starting 
+ Container nurseaid-mqtt-bridge Started 

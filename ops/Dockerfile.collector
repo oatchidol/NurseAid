@@ -1,0 +1,15 @@
+FROM python:3.11-alpine
+
+# Set timezone to Thailand (UTC+7)
+ENV TZ=Asia/Bangkok
+RUN apk add --no-cache docker-cli tzdata && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
+
+WORKDIR /opt/nurseaid-collector
+COPY nurseaid-compose-collector.py ./collector.py
+COPY collector-entrypoint.sh ./entrypoint.sh
+RUN chmod 0555 collector.py entrypoint.sh
+ENV PYTHONUNBUFFERED=1
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 CMD python3 -c 'import pathlib,time,sys; p=pathlib.Path("/run/nurseaid-compose/status.json"); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 15 else 1)'
+CMD ["/opt/nurseaid-collector/entrypoint.sh"]

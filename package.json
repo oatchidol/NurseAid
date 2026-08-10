@@ -1,0 +1,24 @@
+{
+  "name": "nurseaid",
+  "version": "2.14.0",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --check server.js && node --test test_live_status.js test_dashboard_stability.js && python3 -m unittest test_mqtt_bridge.py test_ble_healthcheck.py test_ble_adapter_manager.py test_ble_gateway.py",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@influxdata/influxdb-client": "^1.35.0",
+    "acorn": "^8.18.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "mqtt": "^5.15.2",
+    "nodemailer": "^9.0.1",
+    "pg": "^8.20.0"
+  },
+  "description": ""
+}

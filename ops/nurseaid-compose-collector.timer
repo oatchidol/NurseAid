@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect NurseAid Compose health and live logs every 3 seconds
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=3s
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

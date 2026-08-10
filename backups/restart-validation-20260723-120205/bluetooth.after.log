@@ -1,0 +1,106 @@
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/ldac
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/ldac
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Endpoint unregistered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Stopping SDP server
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[590]: Exit
+Jul 23 12:02:21 nurseaid-43f42f4b systemd[1]: bluetooth.service: Deactivated successfully.
+Jul 23 12:02:21 nurseaid-43f42f4b systemd[1]: Stopped bluetooth.service - Bluetooth service.
+Jul 23 12:02:21 nurseaid-43f42f4b systemd[1]: bluetooth.service: Consumed 28.854s CPU time.
+Jul 23 12:02:21 nurseaid-43f42f4b (uetoothd)[802517]: ConfigurationDirectory 'bluetooth' already exists but the mode is different. (File system: 755 ConfigurationDirectoryMode: 555)
+Jul 23 12:02:21 nurseaid-43f42f4b systemd[1]: Starting bluetooth.service - Bluetooth service...
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Bluetooth daemon 5.66
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: src/main.c:check_config() Unknown group CSIS in /etc/bluetooth/main.conf
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: src/main.c:check_config() Unknown group AVRCP in /etc/bluetooth/main.conf
+Jul 23 12:02:21 nurseaid-43f42f4b systemd[1]: Started bluetooth.service - Bluetooth service.
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Starting SDP server
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: profiles/audio/vcp.c:vcp_init() D-Bus experimental not enabled
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: src/plugin.c:plugin_init() Failed to init vcp plugin
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: profiles/audio/mcp.c:mcp_init() D-Bus experimental not enabled
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: src/plugin.c:plugin_init() Failed to init mcp plugin
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: profiles/audio/bap.c:bap_init() D-Bus experimental not enabled
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: src/plugin.c:plugin_init() Failed to init bap plugin
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Bluetooth management interface 1.23 initialized
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: profiles/sap/server.c:sap_server_register() Sap driver initialization failed.
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: sap-server: Operation not permitted (1)
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: profiles/sap/server.c:sap_server_register() Sap driver initialization failed.
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: sap-server: Operation not permitted (1)
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/ldac
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/ldac
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_hd
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_g
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/sbc
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_1
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/aptx_ll_duplex_0
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/faststream_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSink/opus_05_duplex
+Jul 23 12:02:21 nurseaid-43f42f4b bluetoothd[802517]: Endpoint registered: sender=:1.30 path=/MediaEndpoint/A2DPSource/opus_05_duplex
+Jul 23 12:02:23 nurseaid-43f42f4b bluetoothd[802517]: Failed to set mode: Authentication Failed (0x05)
+Jul 23 12:03:12 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device
+Jul 23 12:03:22 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device
+Jul 23 12:03:34 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device
+Jul 23 12:03:48 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device
+Jul 23 12:03:48 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device
+Jul 23 12:04:02 nurseaid-43f42f4b bluetoothd[802517]: No matching connection for device

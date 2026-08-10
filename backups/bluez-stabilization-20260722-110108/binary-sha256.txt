@@ -1,0 +1,2 @@
+861f7e99df4b767dc1ba5566bfd3c38547c26eb68edb93207c72f60ef674649e  /usr/bin/bluetoothctl
+2b879fdbbe063cd47aa72a995fc4a6cd722fec70cfed137860e583542f4a34be  /usr/libexec/bluetooth/bluetoothd

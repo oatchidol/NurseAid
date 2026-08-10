@@ -1,0 +1,500 @@
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:63: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:63 keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:06:A0:63: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:06:A0:63 battery: 13000000000000000000000000000013
+[BLE] Scanner stopped on hci1
+[BLE] 03:02:02:08:29:96 disconnected
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+{"event":"operational_status","registeredDevices":8,"connectedDevices":1,"discoveredDevices":7,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":1,"healthy":true}}}
+[DB] Active devices: 8
+[BLE] Connected to 03:02:02:08:29:96 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 03:02:02:08:29:96
+[BLE] 21:02:02:06:A0:63: HR/Temp stopped early for off-wrist (elapsed=14.9s)
+[BLE] 21:02:02:06:A0:63: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:63
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:63 disconnecting safely...
+[BLE] 03:02:02:08:29:96: short wear probe started (timeout=12s)
+[BLE] 03:02:02:08:29:96: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 03:02:02:08:29:96: HR/Temp command sent
+  [JStyle TX] 03:02:02:08:29:96 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 03:02:02:08:29:96 battery: 13000000000000000000000000000013
+[BLE] 21:02:02:06:A0:63 disconnected
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '21:02:02:05:F9:DD', '21:02:02:06:9F:7F', '21:02:02:06:9F:20', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:A0:F4 (BLE=21:02:02:06:A0:F4, name=J2208A 06A0F4, RSSI=-68.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:F4
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] Connected to 21:02:02:06:A0:F4 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:F4
+[BLE] 21:02:02:06:A0:F4: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:F4: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:F4: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:F4 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:06:A0:F4 battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:06:9F:7F', '21:02:02:06:9F:20', '03:02:02:08:29:96', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] 03:02:02:08:29:96: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 03:02:02:08:29:96: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 03:02:02:08:29:96
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 03:02:02:08:29:96 disconnecting safely...
+[BLE] 03:02:02:08:29:96 disconnected
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:06:9F:20', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:05:F9:DD (BLE=21:02:02:05:F9:DD, name=J2208A 05F9DD, RSSI=-73.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:F9:DD
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:06:A0:F4: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:F4: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:F4
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] 21:02:02:05:F9:DD disconnected
+[DB] Active devices: 8
+[BLE] 21:02:02:05:F9:DD disconnected
+[BLE] 21:02:02:05:F9:DD disconnected
+[BLE] Connect exception for 21:02:02:05:F9:DD (attempt 1): 
+[BLE] 21:02:02:05:F9:DD: Failed after 1 attempts, fail_count=1
+[BLE] 21:02:02:05:F9:DD: Deferring next attempt for 15s
+[BLE] Connecting to 21:02:02:06:9F:20 (BLE=21:02:02:06:9F:20, name=J2208A 069F20, RSSI=-71.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:20
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp stop: 09000000000000000000000000000009
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+    ⏳ 21:02:02:06:A0:F4 disconnecting safely...
+[BLE] 21:02:02:06:A0:F4 disconnected
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":6,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[DB] Active devices: 8
+[BLE] Connected to 21:02:02:06:9F:20 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:9F:20
+[BLE] Connecting to 21:02:02:05:FF:9A (BLE=21:02:02:05:FF:9A, name=J2208A 05FF9A, RSSI=-73.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:FF:9A
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:06:9F:20: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:9F:20: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:9F:20: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:9F:20 keepalive: 41000000000000000000000000000041
+[BLE] 21:02:02:05:FF:9A disconnected
+  [JStyle TX] 21:02:02:06:9F:20 battery: 13000000000000000000000000000013
+[BLE] Connected to 21:02:02:05:FF:9A (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:05:FF:9A
+[BLE] 21:02:02:05:FF:9A: short wear probe started (timeout=12s)
+[BLE] 21:02:02:05:FF:9A: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:05:FF:9A HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:05:FF:9A: HR/Temp command sent
+  [JStyle TX] 21:02:02:05:FF:9A keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:05:FF:9A: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:05:FF:9A battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:9F:20: HR/Temp stopped early for off-wrist (elapsed=14.2s)
+[BLE] 21:02:02:06:9F:20: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:9F:20
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:9F:20 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:9F:20 disconnected
+[BLE] 21:02:02:05:FF:9A: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:05:FF:9A: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:05:FF:9A
+  [JStyle TX] 21:02:02:05:FF:9A HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:05:FF:9A disconnecting safely...
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:05:F9:DD (BLE=21:02:02:05:F9:DD, name=J2208A 05F9DD, RSSI=-73.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:F9:DD
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:05:FF:9A disconnected
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[DB] Active devices: 8
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Connected to 21:02:02:05:F9:DD (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:05:F9:DD
+[BLE] 21:02:02:05:F9:DD: short wear probe started (timeout=12s)
+[BLE] 21:02:02:05:F9:DD: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:05:F9:DD: HR/Temp command sent
+  [JStyle TX] 21:02:02:05:F9:DD keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:05:F9:DD battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] 21:02:02:05:F9:DD: HR/Temp stopped early for off-wrist (elapsed=12.3s)
+[BLE] 21:02:02:05:F9:DD: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:05:F9:DD
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:05:F9:DD disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] 21:02:02:05:F9:DD disconnected
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":2,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":0,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":0,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[WATCHDOG] Scanner stale on hci1; restarting only this adapter
+[BLE] Scanner stopped on hci1
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Devices in range: ['21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:A0:F4', '21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:9F:7F (BLE=21:02:02:06:9F:7F, name=J2208A 069F7F, RSSI=-71.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:7F
+[BLE] Scanner stopped on hci1
+[DB] Active devices: 8
+[BLE] Connect exception for 21:02:02:06:9F:7F (attempt 1): 
+[BLE] 21:02:02:06:9F:7F: Failed after 1 attempts, fail_count=1
+[BLE] 21:02:02:06:9F:7F: Deferring next attempt for 15s
+[BLE] Connecting to 21:02:02:06:A0:63 (BLE=21:02:02:06:A0:63, name=J2208A 06A063, RSSI=-75.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:63
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Scanner stopped on hci1
+[BLE] Connected to 21:02:02:06:A0:63 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:63
+[BLE] Connecting to 03:02:02:08:29:96 (BLE=03:02:02:08:29:96, name=J2208A 082996, RSSI=-66.0 dBm)...
+[BLE] Connect attempt 1/1 for 03:02:02:08:29:96
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:06:A0:63: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:63: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:63: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:63 keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:06:A0:63: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:06:A0:63 battery: 13000000000000000000000000000013
+[BLE] 03:02:02:08:29:96 disconnected
+[BLE] Connected to 03:02:02:08:29:96 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 03:02:02:08:29:96
+[BLE] 03:02:02:08:29:96: short wear probe started (timeout=12s)
+[BLE] 03:02:02:08:29:96: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 03:02:02:08:29:96: HR/Temp command sent
+  [JStyle TX] 03:02:02:08:29:96 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 03:02:02:08:29:96 battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:63: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:63: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:63
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:63 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+{"event":"operational_status","registeredDevices":8,"connectedDevices":2,"discoveredDevices":6,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":2,"healthy":true}}}
+[BLE] 21:02:02:06:A0:63 disconnected
+[DB] Active devices: 8
+[BLE] 03:02:02:08:29:96: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 03:02:02:08:29:96: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 03:02:02:08:29:96
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 03:02:02:08:29:96 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:9F:20 (BLE=21:02:02:06:9F:20, name=J2208A 069F20, RSSI=-71.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:20
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] 03:02:02:08:29:96 disconnected
+[BLE] Scanner stopped on hci1
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Connected to 21:02:02:06:9F:20 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:9F:20
+[BLE] Connecting to 21:02:02:05:F9:DD (BLE=21:02:02:05:F9:DD, name=J2208A 05F9DD, RSSI=-74.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:F9:DD
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:06:9F:20: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:9F:20: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:9F:20: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:9F:20 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:06:9F:20 battery: 13000000000000000000000000000013
+[BLE] Connected to 21:02:02:05:F9:DD (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:05:F9:DD
+[BLE] 21:02:02:05:F9:DD: short wear probe started (timeout=12s)
+[BLE] 21:02:02:05:F9:DD: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:05:F9:DD: HR/Temp command sent
+  [JStyle TX] 21:02:02:05:F9:DD keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:05:F9:DD battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[DB] Active devices: 8
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] 21:02:02:06:9F:20: HR/Temp stopped early for off-wrist (elapsed=14.9s)
+[BLE] 21:02:02:06:9F:20: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:9F:20
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:9F:20 disconnecting safely...
+[BLE] 21:02:02:05:F9:DD: HR/Temp stopped early for off-wrist (elapsed=12.3s)
+[BLE] 21:02:02:05:F9:DD: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:05:F9:DD
+[BLE] 21:02:02:06:9F:20 disconnected
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp stop: 09000000000000000000000000000009
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+    ⏳ 21:02:02:05:F9:DD disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '21:02:02:05:F9:DD']
+[BLE] Connecting to 21:02:02:06:A0:F4 (BLE=21:02:02:06:A0:F4, name=J2208A 06A0F4, RSSI=-68.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:F4
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:05:F9:DD disconnected
+[BLE] Connected to 21:02:02:06:A0:F4 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:F4
+[BLE] 21:02:02:06:A0:F4: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:F4: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:F4: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:F4 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:06:A0:F4 battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:05:F9:DD', '21:02:02:06:A0:F4']
+[BLE] Devices in range: ['21:02:02:06:A0:F4']
+[BLE] 21:02:02:06:A0:F4: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:F4: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:F4
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:F4 disconnecting safely...
+{"event":"operational_status","registeredDevices":8,"connectedDevices":1,"discoveredDevices":1,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":1,"healthy":true}}}
+[BLE] Devices in range: ['21:02:02:06:A0:F4']
+[DB] Active devices: 8
+[BLE] 21:02:02:06:A0:F4 disconnected
+[BLE] Devices in range: ['21:02:02:06:A0:F4']
+[BLE] Devices in range: ['21:02:02:06:A0:F4']
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":0,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":0,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:A0:63 (BLE=21:02:02:06:A0:63, name=J2208A 06A063, RSSI=-75.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:63
+[BLE] Scanner stopped on hci1
+[BLE] Connected to 21:02:02:06:A0:63 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:63
+[BLE] Connecting to 03:02:02:08:29:96 (BLE=03:02:02:08:29:96, name=J2208A 082996, RSSI=-68.5 dBm)...
+[BLE] Connect attempt 1/1 for 03:02:02:08:29:96
+[BLE] 21:02:02:06:A0:63: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:63: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:63: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:63 keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:06:A0:63: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:06:A0:63 battery: 13000000000000000000000000000013
+[BLE] Connected to 03:02:02:08:29:96 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 03:02:02:08:29:96
+[BLE] 03:02:02:08:29:96: short wear probe started (timeout=12s)
+[BLE] 03:02:02:08:29:96: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 03:02:02:08:29:96: HR/Temp command sent
+  [JStyle TX] 03:02:02:08:29:96 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 03:02:02:08:29:96 battery: 13000000000000000000000000000013
+[DB] Active devices: 8
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:63: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:63: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:63
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:63 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:63 disconnected
+[BLE] 03:02:02:08:29:96: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 03:02:02:08:29:96: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 03:02:02:08:29:96
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 03:02:02:08:29:96 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:9F:20 (BLE=21:02:02:06:9F:20, name=J2208A 069F20, RSSI=-71.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:20
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] 03:02:02:08:29:96 disconnected
+[BLE] Scanner stopped on hci1
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Connected to 21:02:02:06:9F:20 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:9F:20
+[BLE] Connecting to 21:02:02:05:F9:DD (BLE=21:02:02:05:F9:DD, name=J2208A 05F9DD, RSSI=-74.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:F9:DD
+[BLE] 21:02:02:06:9F:20: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:9F:20: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:9F:20: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:9F:20 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:06:9F:20 battery: 13000000000000000000000000000013
+[BLE] Connected to 21:02:02:05:F9:DD (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:05:F9:DD
+[BLE] 21:02:02:05:F9:DD: short wear probe started (timeout=12s)
+[BLE] 21:02:02:05:F9:DD: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:05:F9:DD: HR/Temp command sent
+  [JStyle TX] 21:02:02:05:F9:DD keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:05:F9:DD battery: 13000000000000000000000000000013
+{"event":"operational_status","registeredDevices":8,"connectedDevices":2,"discoveredDevices":6,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":2,"healthy":true}}}
+[DB] Active devices: 8
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] 21:02:02:06:9F:20: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:9F:20: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:9F:20
+  [JStyle TX] 21:02:02:06:9F:20 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:9F:20 disconnecting safely...
+[BLE] 21:02:02:06:9F:20 disconnected
+[BLE] Devices in range: ['21:02:02:06:A0:F4', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:05:F9:DD']
+[BLE] Connecting to 21:02:02:06:A0:F4 (BLE=21:02:02:06:A0:F4, name=J2208A 06A0F4, RSSI=-64.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:F4
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] 21:02:02:05:F9:DD: HR/Temp stopped early for off-wrist (elapsed=12.3s)
+[BLE] 21:02:02:05:F9:DD: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:05:F9:DD
+[BLE] 21:02:02:06:A0:F4 disconnected
+[BLE] Connected to 21:02:02:06:A0:F4 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:F4
+  [JStyle TX] 21:02:02:05:F9:DD HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:05:F9:DD disconnecting safely...
+[BLE] 21:02:02:06:A0:F4: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:F4: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:F4: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:F4 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 21:02:02:06:A0:F4 battery: 13000000000000000000000000000013
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] 21:02:02:05:F9:DD disconnected
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:05:FF:9A (BLE=21:02:02:05:FF:9A, name=J2208A 05FF9A, RSSI=-73.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:05:FF:9A
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[BLE] Connected to 21:02:02:05:FF:9A (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:05:FF:9A
+[BLE] 21:02:02:05:FF:9A: short wear probe started (timeout=12s)
+[BLE] 21:02:02:05:FF:9A: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:05:FF:9A HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:05:FF:9A: HR/Temp command sent
+  [JStyle TX] 21:02:02:05:FF:9A keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:05:FF:9A: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:05:FF:9A battery: 13000000000000000000000000000013
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:F4: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:F4: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:F4
+  [JStyle TX] 21:02:02:06:A0:F4 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:F4 disconnecting safely...
+[BLE] 21:02:02:06:A0:F4 disconnected
+[DB] Active devices: 8
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:05:FF:9A: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:05:FF:9A: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:05:FF:9A
+  [JStyle TX] 21:02:02:05:FF:9A HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:05:FF:9A disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:05:FF:9A disconnected
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Devices in range: ['21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Devices in range: ['21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:9F:7F (BLE=21:02:02:06:9F:7F, name=J2208A 069F7F, RSSI=-71.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:7F
+[BLE] Scanner stopped on hci1
+{"event":"operational_status","registeredDevices":8,"connectedDevices":0,"discoveredDevices":7,"scannerActive":true,"criticalMeasurement":false,"connectionBudget":3,"adapterMode":"dual","adapters":{"hci0":{"scannerActive":true,"activeConnections":0,"healthy":true},"hci1":{"scannerActive":false,"activeConnections":0,"healthy":true}}}
+[DB] Active devices: 8
+[BLE] Connect exception for 21:02:02:06:9F:7F (attempt 1): 
+[BLE] 21:02:02:06:9F:7F: Failed after 1 attempts, fail_count=2
+[BLE] 21:02:02:06:9F:7F: Deferring next attempt for 30s
+[BLE] Connecting to 21:02:02:06:A0:63 (BLE=21:02:02:06:A0:63, name=J2208A 06A063, RSSI=-77.5 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:A0:63
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] Scanner stopped on hci1
+[WATCHDOG] Scanner stale on hci0; restarting only this adapter
+[BLE] Scanner stop error on hci0: [org.bluez.Error.InProgress] Operation already in progress
+[BLE] Persistent scanner started on hci0 (18:69:45:F3:45:77)
+[BLE] Connected to 21:02:02:06:A0:63 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 21:02:02:06:A0:63
+[BLE] Connecting to 03:02:02:08:29:96 (BLE=03:02:02:08:29:96, name=J2208A 082996, RSSI=-68.0 dBm)...
+[BLE] Connect attempt 1/1 for 03:02:02:08:29:96
+[BLE] 21:02:02:06:A0:63: short wear probe started (timeout=12s)
+[BLE] 21:02:02:06:A0:63: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 21:02:02:06:A0:63: HR/Temp command sent
+  [JStyle TX] 21:02:02:06:A0:63 keepalive: 41000000000000000000000000000041
+  [JStyle] 21:02:02:06:A0:63: off-wrist confirmation 1/2
+  [JStyle TX] 21:02:02:06:A0:63 battery: 13000000000000000000000000000013
+[BLE] Connected to 03:02:02:08:29:96 (attempt 1, adapter=hci1)
+[BLE] Starting JStyle/iStyle monitoring for 03:02:02:08:29:96
+[BLE] 03:02:02:08:29:96: short wear probe started (timeout=12s)
+[BLE] 03:02:02:08:29:96: Phase 1 — HR/Temp stream started (minimum=15s, hard_timeout=12s, probe=True)
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp start: 0901000000000000000000000000000a
+[BLE] 03:02:02:08:29:96: HR/Temp command sent
+  [JStyle TX] 03:02:02:08:29:96 keepalive: 41000000000000000000000000000041
+  [JStyle TX] 03:02:02:08:29:96 battery: 13000000000000000000000000000013
+[DB] Active devices: 8
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:63: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 21:02:02:06:A0:63: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 21:02:02:06:A0:63
+  [JStyle TX] 21:02:02:06:A0:63 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 21:02:02:06:A0:63 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] 21:02:02:06:A0:63 disconnected
+[BLE] 03:02:02:08:29:96: HR/Temp stopped early for off-wrist (elapsed=12.1s)
+[BLE] 03:02:02:08:29:96: off-wrist confirmed; ending measurement immediately
+[BLE] Monitoring ended for 03:02:02:08:29:96
+  [JStyle TX] 03:02:02:08:29:96 HR/Temp stop: 09000000000000000000000000000009
+    ⏳ 03:02:02:08:29:96 disconnecting safely...
+[BLE] Devices in range: ['21:02:02:06:9F:20', '21:02:02:05:F9:DD', '21:02:02:06:A0:F4', '21:02:02:06:9F:7F', '21:02:02:06:A0:63', '03:02:02:08:29:96', '21:02:02:05:FF:9A']
+[BLE] Connecting to 21:02:02:06:9F:20 (BLE=21:02:02:06:9F:20, name=J2208A 069F20, RSSI=-71.0 dBm)...
+[BLE] Connect attempt 1/1 for 21:02:02:06:9F:20
+[BLE] Persistent scanner started on hci1 (2C:CF:67:54:42:05)
+[BLE] 03:02:02:08:29:96 disconnected
+[BLE] Scanner stopped on hci1

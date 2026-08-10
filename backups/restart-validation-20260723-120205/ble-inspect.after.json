@@ -1,0 +1,340 @@
+[
+    {
+        "Id": "4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c",
+        "Created": "2026-07-23T04:42:54.807308739Z",
+        "Path": "python",
+        "Args": [
+            "nurseaid_ble_gateway.py"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 804046,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-07-23T05:02:41.136110578Z",
+            "FinishedAt": "2026-07-23T05:02:21.168163166Z",
+            "Health": {
+                "Status": "healthy",
+                "FailingStreak": 0,
+                "Log": [
+                    {
+                        "Start": "2026-07-23T12:01:46.749925487+07:00",
+                        "End": "2026-07-23T12:01:46.831427937+07:00",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-07-23T12:02:16.83339127+07:00",
+                        "End": "2026-07-23T12:02:16.910448216+07:00",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-07-23T12:02:46.27762768+07:00",
+                        "End": "2026-07-23T12:02:46.373407757+07:00",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-07-23T12:03:16.375485796+07:00",
+                        "End": "2026-07-23T12:03:16.471071725+07:00",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-07-23T12:03:46.474039088+07:00",
+                        "End": "2026-07-23T12:03:46.559401409+07:00",
+                        "ExitCode": 0,
+                        "Output": ""
+                    }
+                ]
+            }
+        },
+        "Image": "sha256:f50c583d99907ec03cfa75850f9a428934ff94f7044f8520875af9f97b9fa516",
+        "ResolvConfPath": "/var/lib/docker/containers/4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c/hostname",
+        "HostsPath": "/var/lib/docker/containers/4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c/hosts",
+        "LogPath": "/var/lib/docker/containers/4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c/4683a0ba8d00b5fa743a159a1325390a9aa0e0444b5da7e7c68c6a759b9fb71c-json.log",
+        "Name": "/nurseaid-ble-gateway",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "/var/run/dbus:/var/run/dbus:rw"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {
+                    "max-file": "3",
+                    "max-size": "10m"
+                }
+            },
+            "NetworkMode": "nurseaid_nurseaid-network",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "unless-stopped",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": [],
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": true,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [
+                "label=disable"
+            ],
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [
+                {
+                    "PathOnHost": "/dev/bus/usb",
+                    "PathInContainer": "/dev/bus/usb",
+                    "CgroupPermissions": "rwm"
+                }
+            ],
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": null,
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": null,
+            "ReadonlyPaths": null
+        },
+        "Storage": {
+            "RootFS": {
+                "Snapshot": {
+                    "Name": "overlayfs"
+                }
+            }
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/var/run/dbus",
+                "Destination": "/var/run/dbus",
+                "Mode": "rw",
+                "RW": true,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "4683a0ba8d00",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": true,
+            "AttachStderr": true,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "JSTYLE_OFF_WRIST_PROBE_INTERVAL=90",
+                "BLE_DUAL_ADAPTER_MODE=adaptive",
+                "LIVE_STATUS_FRESHNESS_SECONDS=180",
+                "SPO2_SAMPLE_TOLERANCE=2",
+                "BLE_SCANNER_STALE_SECONDS=90",
+                "JSTYLE_OFF_WRIST_CONFIRMATIONS=2",
+                "PYTHONUNBUFFERED=1",
+                "JSTYLE_CYCLES_PER_CONNECTION=1",
+                "BLE_HEALTH_MAX_AGE_SECONDS=45",
+                "INFLUX_URL=http://influxdb:8086",
+                "DB_NAME=softwatch_iot",
+                "DB_USER=postgres",
+                "LIVE_VITAL_FRESHNESS_SECONDS=600",
+                "PHASE_1_TEMP_TOLERANCE=0.3",
+                "BLE_OPERATIONAL_LOG_INTERVAL=60",
+                "SESSION_SECRET=94642e22915f4f33a8b28498a396be85a1db49d0112ee926cb78f9950ca4023d",
+                "SPO2_MIN_INLIERS=5",
+                "JSTYLE_PHASE_WATCHDOG_GRACE=15",
+                "INFLUX_ADMIN_PASSWORD=admin123",
+                "PORT=3333",
+                "JSTYLE_CONNECT_FOR_GATT=true",
+                "JSTYLE_DEBUG_UNPARSED=false",
+                "JSTYLE_PUBLISH_ADVERTISEMENT=true",
+                "MQTT_PASSWORD=NewSoft^2",
+                "MQTT_PORT=1883",
+                "JSTYLE_FIRST_SAMPLE_TIMEOUT=12",
+                "LIVE_PRESENCE_FRESHNESS_SECONDS=90",
+                "INFLUX_TOKEN=my-super-secret-auth-token!",
+                "PHASE_1_HR_TOLERANCE=6",
+                "BLE_SCAN_DURING_WEAROS=true",
+                "JSTYLE_SPO2_RESTART_DELAY=1",
+                "JSTYLE_VERBOSE_SENSOR_LOGS=false",
+                "BLE_ADAPTER_ADDRESSES=18:69:45:F3:45:77,2C:CF:67:54:42:05",
+                "SPO2_NO_PROGRESS_TIMEOUT=35",
+                "LIVE_BATTERY_FRESHNESS_SECONDS=1800",
+                "BLE_MAX_ACTIVE_MEASUREMENTS_PER_ADAPTER=4",
+                "JSTYLE_WEAR_PROBE_TIMEOUT=12",
+                "SPO2_SENSOR_SETTLE_SECONDS=3",
+                "PHASE_1_MIN_DURATION=15",
+                "PHASE_2_TIMEOUT=45",
+                "PHASE_1_DURATION=35",
+                "PHASE_1_STABLE_SAMPLES=3",
+                "BLE_MAX_GATT_CONNECTIONS_PER_ADAPTER=4",
+                "SPO2_SAMPLES_REQUIRED=7",
+                "DB_PASSWORD=NewSoftTech^2",
+                "DB_PORT=5432",
+                "BLE_MAX_GATT_CONNECTIONS=8",
+                "BLE_RETRY_BACKOFF_MAX=120",
+                "MQTT_BRIDGE_SAVE_INTERVAL=3",
+                "DATA_RECEIVE_TIMEOUT=45",
+                "LIVE_HR_FRESHNESS_SECONDS=30",
+                "SPO2_WARMUP_SAMPLES=3",
+                "NODE_ENV=production",
+                "DB_HOST=postgres",
+                "SPO2_HR_TOLERANCE=12",
+                "JSTYLE_OFF_WRIST_SUSPECT_RETRY=30",
+                "BLE_AFFINITY_SWITCH_MARGIN=25",
+                "LINE_TOKEN=",
+                "ALERT_INTERVAL=15000",
+                "BLE_RESERVED_WEAROS_SLOTS=1",
+                "SYNC_INTERVAL=15000",
+                "JSTYLE_ROTATION_COOLDOWN=5",
+                "WEAROS_NOTIFICATION_INTERVAL=60",
+                "BLE_JSTYLE_ATTEMPTS_PER_TURN=1",
+                "JSTYLE_ENABLE_MEASURE_COMMANDS=true",
+                "BLE_RETRY_BACKOFF_BASE=15",
+                "WEAROS_RECONNECT_COOLDOWN=60",
+                "MQTT_HOST=mosquitto",
+                "BLE_AFFINITY_LEASE_SECONDS=1800",
+                "JSTYLE_OFF_WRIST_CONFIRMATION_WINDOW=300",
+                "INFLUX_BUCKET=naret2",
+                "INFLUX_ORG=softsquaregroup",
+                "MQTT_USER=nursemon",
+                "JSTYLE_PERSISTENT_STREAMING=true",
+                "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG=C.UTF-8",
+                "GPG_KEY=A035C8C19219BA821ECEA86B64E628F8D684696D",
+                "PYTHON_VERSION=3.11.15",
+                "PYTHON_SHA256=272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625"
+            ],
+            "Cmd": [
+                "python",
+                "nurseaid_ble_gateway.py"
+            ],
+            "Healthcheck": {
+                "Test": [
+                    "CMD",
+                    "python",
+                    "/app/ble_healthcheck.py"
+                ],
+                "Interval": 30000000000,
+                "Timeout": 5000000000,
+                "StartPeriod": 20000000000,
+                "Retries": 3
+            },
+            "Image": "nurseaid-ble-gateway",
+            "Volumes": null,
+            "WorkingDir": "/app",
+            "Entrypoint": null,
+            "Labels": {
+                "com.docker.compose.config-hash": "f21b7f74130d381cc62df5d31eb54450650acafbfd89a9a89535e2136500328e",
+                "com.docker.compose.container-number": "1",
+                "com.docker.compose.depends_on": "",
+                "com.docker.compose.image": "sha256:f50c583d99907ec03cfa75850f9a428934ff94f7044f8520875af9f97b9fa516",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project": "nurseaid",
+                "com.docker.compose.project.config_files": "/root/nurseaid/docker-compose.yml",
+                "com.docker.compose.project.working_dir": "/root/nurseaid",
+                "com.docker.compose.replace": "nurseaid-ble-gateway",
+                "com.docker.compose.service": "ble-gateway",
+                "com.docker.compose.version": "5.3.1"
+            }
+        },
+        "NetworkSettings": {
+            "SandboxID": "1e6aaa6908c0a3830ce517ba5fb204fdc0a762fa7f46fcebb3d524f4e0e301ad",
+            "SandboxKey": "/var/run/docker/netns/1e6aaa6908c0",
+            "Ports": {},
+            "Networks": {
+                "nurseaid_nurseaid-network": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": [
+                        "nurseaid-ble-gateway",
+                        "ble-gateway"
+                    ],
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "4b7066ae4661fd220082414f827f5b5f6a290ca1ac70bdd2eb96879fcdfd5843",
+                    "EndpointID": "85b5f8f9fa0bfd9a4a6deafc0c8e0f5e205829cee36a124d8dd98392e2287cd7",
+                    "Gateway": "172.18.0.1",
+                    "IPAddress": "172.18.0.9",
+                    "MacAddress": "e6:58:b4:12:b9:34",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "nurseaid-ble-gateway",
+                        "ble-gateway",
+                        "4683a0ba8d00"
+                    ]
+                }
+            }
+        },
+        "ImageManifestDescriptor": {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:fdfaa08f4282b8f507e85f3d30dc925d1535aa963e3145aeb75825e230ed08c4",
+            "size": 2572,
+            "platform": {
+                "architecture": "arm64",
+                "os": "linux"
+            }
+        }
+    }
+]

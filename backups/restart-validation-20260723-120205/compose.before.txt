@@ -1,0 +1,9 @@
+NAME                         IMAGE                        COMMAND                  SERVICE             CREATED          STATUS                    PORTS
+nurseaid-app                 nurseaid-nurseaid            "docker-entrypoint.s…"   nurseaid            20 hours ago     Up 2 hours (healthy)      0.0.0.0:3333->3333/tcp, [::]:3333->3333/tcp
+nurseaid-ble-gateway         nurseaid-ble-gateway         "python nurseaid_ble…"   ble-gateway         19 minutes ago   Up 19 minutes (healthy)   
+nurseaid-compose-collector   nurseaid-compose-collector   "/opt/nurseaid-colle…"   compose-collector   22 hours ago     Up 2 hours (healthy)      
+nurseaid-device-agent        nurseaid-device-agent        "python3 /opt/nursea…"   device-agent        2 days ago       Up 2 hours (healthy)      
+nurseaid-influxdb            influxdb:2.7-alpine          "/entrypoint.sh infl…"   influxdb            3 days ago       Up 2 hours (healthy)      0.0.0.0:8086->8086/tcp, [::]:8086->8086/tcp
+nurseaid-mosquitto           nurseaid-mosquitto           "mosquitto -c /mosqu…"   mosquitto           20 hours ago     Up 2 hours (healthy)      0.0.0.0:1883->1883/tcp, [::]:1883->1883/tcp
+nurseaid-mqtt-bridge         nurseaid-mqtt-bridge         "python mqtt_bridge.…"   mqtt-bridge         20 hours ago     Up 2 hours (healthy)      
+nurseaid-postgres            postgres:15-alpine           "docker-entrypoint.s…"   postgres            3 days ago       Up 2 hours (healthy)      0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp

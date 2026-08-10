@@ -1,0 +1,16 @@
+Index list with 2 items
+hci1:	Primary controller
+	addr 2C:CF:67:54:42:05 version 9 manufacturer 305 class 0x6c0000
+	supported settings: powered connectable fast-connectable discoverable bondable link-security ssp br/edr le advertising secure-conn debug-keys privacy configuration static-addr phy-configuration 
+	current settings: powered bondable ssp br/edr le secure-conn 
+	name nurseaid-43f42f4b #2
+	short name 
+hci0:	Primary controller
+	addr 18:69:45:F3:45:77 version 10 manufacturer 93 class 0x6c0000
+	supported settings: powered connectable fast-connectable discoverable bondable link-security ssp br/edr le advertising secure-conn debug-keys privacy static-addr phy-configuration wide-band-speech 
+	current settings: powered bondable ssp br/edr le secure-conn 
+	name nurseaid-43f42f4b
+	short name 
+hci1:	Configuration options
+	supported options: public-address 
+	missing options: 
