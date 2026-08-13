@@ -3508,8 +3508,16 @@ app.post('/api/login', async (req, res) => {
     res.setHeader('Set-Cookie', sessionCookie(token));
     res.json({ success: true, name: user.full_name, role: user.role });
 
-    // Audit login
-    logAudit({ user: { id: user.id, role: user.role }, headers: req.headers, socket: req.socket }, 'login', 'user', user.id, { username }).catch(() => { });
+    // Audit login — tag with the user's ward(s) so ward_admin viewers (not just
+    // super_admin) see staff login events in their ward-scoped audit log.
+    (async () => {
+        let wards = [];
+        try {
+            const wr = await pool.query('SELECT ward_id FROM user_wards WHERE user_id=$1', [user.id]);
+            wards = wr.rows.map(row => row.ward_id);
+        } catch (e) { /* fall back to no ward tag */ }
+        await logAudit({ user: { id: user.id, role: user.role }, headers: req.headers, socket: req.socket }, 'login', 'user', user.id, { username, wards });
+    })().catch(() => { });
 });
 
 app.post('/api/logout', (req, res) => {
