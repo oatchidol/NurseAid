@@ -1,0 +1,275 @@
+#!/bin/sh
+# =============================================================================
+# bootstrap-new-machine.sh
+#
+# Stand up a fully working NurseAid instance on a brand-new machine with ONE
+# command. Idempotent: a second run recognises an existing .env and the
+# running stack, regenerates nothing, and just re-verifies health + login.
+#
+# Fully non-interactive (safe to pipe into `sh` or run in CI). No secrets are
+# hardcoded; operator-supplied integrations (LINE, AI) are read from the
+# calling shell's environment and default to disabled.
+#
+# Usage:
+#   From a checkout:
+#     scripts/bootstrap-new-machine.sh
+#   Standalone (clones the repo first):
+#     sh bootstrap-new-machine.sh
+#
+# Optional overrides (default to the plain production values below):
+#   NURSEAID_COMPOSE_PROJECT  docker compose project name (default: dir-based)
+#   NURSEAID_HOST_PORT        host port to verify/curl + show in the summary
+#                             (default: PORT from .env, i.e. 3333). Handy for CI
+#                             or when the host ports are remapped.
+# =============================================================================
+
+set -u
+
+PROG=$(basename "$0")
+
+die() {
+    # $1 = message; print to stderr and exit non-zero.
+    printf '%s: error: %s\n' "$PROG" "$1" >&2
+    exit 1
+}
+
+info() { printf '%s\n' "$*"; }
+step() { printf '\n==> %s\n' "$*"; }
+
+# -----------------------------------------------------------------------------
+# 1. Locate the repo checkout (or clone one).
+# -----------------------------------------------------------------------------
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
+    REPO_ROOT="$SCRIPT_DIR"
+elif [ -f "$(dirname -- "$SCRIPT_DIR")/docker-compose.yml" ]; then
+    # Script lives in scripts/; the checkout root is its parent.
+    REPO_ROOT="$(dirname -- "$SCRIPT_DIR")"
+else
+    info "No NurseAid checkout found here; cloning https://github.com/oatchidol/NurseAid.git into $PWD ..."
+    command -v git >/dev/null 2>&1 || die "'git' is required to clone the repo when running standalone."
+    git clone --depth 1 https://github.com/oatchidol/NurseAid.git \
+        || die "Failed to clone NurseAid. Check network access and retry."
+    REPO_ROOT="$PWD/NurseAid"
+fi
+
+cd "$REPO_ROOT" || die "Cannot cd into repo at $REPO_ROOT"
+[ -f docker-compose.yml ] || die "docker-compose.yml not found in $REPO_ROOT"
+
+info "Using checkout at: $REPO_ROOT"
+
+# -----------------------------------------------------------------------------
+# 2. Prerequisites: docker + the compose v2 plugin (invoked as `docker compose`).
+# -----------------------------------------------------------------------------
+command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH.
+  Install Docker Engine for Debian/Ubuntu, e.g.:
+    curl -fsSL https://get.docker.com | sh
+  or: sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin"
+
+docker compose version >/dev/null 2>&1 || die "the 'docker compose' plugin (Compose v2) is missing.
+  Install it for Debian/Ubuntu, e.g.:
+    sudo apt-get update && sudo apt-get install -y docker-compose-plugin"
+
+# Compose invocation (project name overridable for isolated testing / CI).
+if [ -n "${NURSEAID_COMPOSE_PROJECT:-}" ]; then
+    COMPOSE="docker compose -p $NURSEAID_COMPOSE_PROJECT"
+else
+    COMPOSE="docker compose"
+fi
+
+# -----------------------------------------------------------------------------
+# 3. Generate .env ONLY if one does not already exist (never overwrite a real
+#    .env on a re-run). Every variable docker-compose.yml consumes is written.
+# -----------------------------------------------------------------------------
+SERVICES="influxdb postgres mosquitto nurseaid mqtt-bridge compose-collector"
+
+if [ -f .env ]; then
+    info "Existing .env found; leaving it untouched (secrets unchanged)."
+    ENV_GENERATED=0
+else
+    step "Generating fresh .env"
+
+    DB_PASSWORD=$(openssl rand -base64 32 | tr -d '=/+')
+    INFLUX_TOKEN=$(openssl rand -hex 32)
+    INFLUX_ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -d '=/+')
+    MQTT_PASSWORD=$(openssl rand -base64 32 | tr -d '=/+')
+    SESSION_SECRET=$(openssl rand -hex 32)
+    # >=16 chars, alphanumeric only so it is easy to read/retype.
+    INITIAL_ADMIN_PASSWORD=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 16)
+
+    # Operator-supplied integrations come from the calling shell's environment;
+    # they default to empty/disabled so the app still boots without them.
+    LINE_TOKEN_VAL="${NURSEAID_LINE_TOKEN:-}"
+    AI_CHAT_ENABLED_VAL="${NURSEAID_AI_CHAT_ENABLED:-false}"
+    AI_BASE_URL_VAL="${NURSEAID_AI_BASE_URL:-}"
+    AI_API_KEY_VAL="${NURSEAID_AI_API_KEY:-}"
+    AI_MODEL_VAL="${NURSEAID_AI_MODEL:-}"
+
+    # Unquoted heredoc: expand the freshly generated + operator-provided values.
+    cat > .env <<ENVFILE
+# Generated by scripts/bootstrap-new-machine.sh on $(date -u +"%Y-%m-%dT%H:%M:%SZ").
+# Secrets are random per deployment. Keep this file off git and out of chat.
+
+# --- Server Configuration ---
+PORT=3333
+NODE_ENV=production
+SESSION_SECRET=$SESSION_SECRET
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=$INITIAL_ADMIN_PASSWORD
+
+# --- PostgreSQL (service name 'postgres' on the compose network) ---
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=softwatch_iot
+DB_USER=postgres
+DB_PASSWORD=$DB_PASSWORD
+
+# --- InfluxDB (service name 'influxdb') ---
+INFLUX_URL=http://influxdb:8086
+INFLUX_TOKEN=$INFLUX_TOKEN
+INFLUX_ORG=softsquaregroup
+INFLUX_BUCKET=naret2
+INFLUX_ADMIN_PASSWORD=$INFLUX_ADMIN_PASSWORD
+
+# --- MQTT (service name 'mosquitto'; broker currently allows anon, hardened later) ---
+MQTT_HOST=mosquitto
+MQTT_PORT=1883
+MQTT_USER=nursemon
+MQTT_PASSWORD=$MQTT_PASSWORD
+MQTT_TOPICS=ble/#
+MQTT_BRIDGE_SAVE_INTERVAL=3
+
+# --- LINE notifications (disabled unless NURSEAID_LINE_TOKEN was exported) ---
+LINE_TOKEN=$LINE_TOKEN_VAL
+LINE_GROUP_ID=
+LINE_RATE_LIMIT_BACKOFF_SECONDS=900
+
+# --- NurseAid AI Assistant (disabled unless NURSEAID_AI_* were exported) ---
+AI_CHAT_ENABLED=$AI_CHAT_ENABLED_VAL
+AI_BASE_URL=$AI_BASE_URL_VAL
+AI_API_KEY=$AI_API_KEY_VAL
+AI_MODEL=$AI_MODEL_VAL
+AI_TIMEOUT_MS=60000
+AI_MAX_HISTORY_MESSAGES=8
+AI_RATE_LIMIT_PER_MINUTE=10
+AI_CONVERSATION_MAX_TOKENS=4096
+
+# --- Application timing / behaviour ---
+ALERT_INTERVAL=15000
+SYNC_INTERVAL=15000
+LIVE_STATUS_CACHE_MS=3000
+LIVE_STATUS_FALLBACK_SECONDS=300
+LIVE_PRESENCE_FRESHNESS_SECONDS=90
+LIVE_HR_FRESHNESS_SECONDS=30
+INFLUX_QUERY_TIMEOUT_MS=5000
+ALERT_ENGINE_INTERVAL_MS=15000
+NURSEAID_INITIAL_LOG_HISTORY_MINUTES=30
+ENVFILE
+
+    chmod 600 .env || die "Failed to chmod .env to 600."
+    ENV_GENERATED=1
+    info ".env generated and locked to 600."
+fi
+
+# Pull the admin credentials we will verify against (from .env, parsed safely).
+get_env() { sed -n "s/^$1=//p" ./.env 2>/dev/null | head -n1; }
+ADMIN_USER=$(get_env INITIAL_ADMIN_USERNAME)
+ADMIN_PASS=$(get_env INITIAL_ADMIN_PASSWORD)
+APP_PORT=$(get_env PORT)
+[ -n "$APP_PORT" ] || APP_PORT=3333
+# Host port to verify against (defaults to the app's PORT; overridable).
+VERIFY_PORT="${NURSEAID_HOST_PORT:-$APP_PORT}"
+
+# -----------------------------------------------------------------------------
+# 4. Build and start.
+# -----------------------------------------------------------------------------
+step "Building and starting the stack"
+$COMPOSE up -d --build || die "docker compose up failed."
+
+# -----------------------------------------------------------------------------
+# 5. Wait until all services report healthy (with a timeout).
+#    compose-collector has no compose-level healthcheck, so a running container
+#    without a Health field is treated as ready; everything else must be healthy.
+# -----------------------------------------------------------------------------
+step "Waiting for services to become healthy (up to 180s)"
+start=$(date +%s)
+deadline=$((start + 180))
+while :; do
+    ps_json=$($COMPOSE ps --format json 2>/dev/null)
+    all_ok=1
+    pending=""
+    for svc in $SERVICES; do
+        line=$(printf '%s\n' "$ps_json" | grep "\"Service\":\"$svc\"" | head -n1)
+        h=$(printf '%s\n' "$line" | sed -n 's/.*"Health":"\([^"]*\)".*/\1/p')
+        if [ -z "$h" ]; then
+            st=$(printf '%s\n' "$line" | sed -n 's/.*"State":"\([^"]*\)".*/\1/p')
+            if [ "$st" != "running" ]; then all_ok=0; pending="$pending $svc"; fi
+        elif [ "$h" != "healthy" ]; then
+            all_ok=0; pending="$pending $svc"
+        fi
+    done
+
+    if [ "$all_ok" -eq 1 ]; then
+        info "All services healthy."
+        break
+    fi
+
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        printf '%s: error: timed out waiting for healthy services:%s\n' "$PROG" "$pending" >&2
+        for svc in $pending; do
+            info "----- last 30 lines of '$svc' logs -----"
+            $COMPOSE logs --tail=30 "$svc" 2>&1 | tail -n 60
+        done
+        exit 1
+    fi
+    sleep 5
+done
+
+# -----------------------------------------------------------------------------
+# 6. Verify the app is actually usable (not just trusting the healthcheck).
+# -----------------------------------------------------------------------------
+step "Verifying the app is reachable and login works"
+base="http://localhost:$VERIFY_PORT"
+
+health_code=$(curl -s -o /tmp/${PROG}.health -w '%{http_code}' "$base/health" 2>/dev/null)
+[ -n "$health_code" ] || health_code="000"
+[ "$health_code" = "200" ] || {
+    info "Raw /health response:"; cat /tmp/${PROG}.health 2>/dev/null
+    die "GET $base/health returned HTTP $health_code (expected 200)."
+}
+info "GET $base/health -> 200 OK"
+
+printf '{"u":"%s","p":"%s"}' "$ADMIN_USER" "$ADMIN_PASS" > /tmp/${PROG}.login.json
+login_resp=$(curl -s -X POST "$base/api/login" \
+    -H 'Content-Type: application/json' \
+    --data-binary @/tmp/${PROG}.login.json 2>/dev/null)
+info "POST $base/api/login response: $login_resp"
+
+case "$login_resp" in
+    *'"success":true'*) info "Login succeeded (success:true)." ;;
+    *) die "Login did not return success:true. Check INITIAL_ADMIN_USERNAME/PASSWORD in .env." ;;
+esac
+
+# -----------------------------------------------------------------------------
+# 7. Final summary.
+# -----------------------------------------------------------------------------
+host=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -n "$host" ] || host=localhost
+url="http://$host:$VERIFY_PORT"
+
+step "NurseAid is up and running"
+printf '  URL:        %s\n' "$url"
+printf '  Admin user: %s\n' "$ADMIN_USER"
+if [ "$ENV_GENERATED" -eq 1 ]; then
+    printf '  Admin pass: %s   <-- save this now; it is not recoverable later\n' "$ADMIN_PASS"
+else
+    info "Using existing .env — credentials unchanged (not printed)."
+fi
+info ""
+info "Next steps after first login:"
+info "  1. Change the admin password."
+info "  2. Create your first ward (there is no default ward)."
+info "  3. Add users / patients / devices as needed."
+info ""
+info "Done."
