@@ -7,6 +7,37 @@ and a compose-status collector. A fresh clone starts with **empty data**
 login**, created automatically the first time the app boots against an
 empty `users` table.
 
+## What's in this repo (and what isn't)
+This repo is scoped to *the deployable app only* — everything needed to
+build and run the docker-compose stack, nothing else:
+
+```
+server.js, live-status.js          the app
+Dockerfile, docker-compose.yml     how it's built/run
+mosquitto-config/, mqtt-bridge/,   the other services' build
+  ops/                             contexts
+postgres-init/, influxdb-init/     first-boot DB setup
+package.json, package-lock.json    Node deps
+.env.example                       field reference (no real secrets)
+scripts/bootstrap-new-machine.sh   one-command setup (see below)
+DEPLOY.md, README.md, CHANGELOG.md docs
+```
+
+Deliberately **not** in this repo (see `.gitignore`) — present on the
+machines that were used to develop it, but not needed to run the app and
+not shipped to a new one:
+- `.claude/`, `.codex/`, `.agents/` — AI coding-assistant tooling and
+  session data. Includes things like `.claude/skills/run-nurseaid/`, an
+  agent-driving helper useful for testing this app *from inside an agent
+  session* — genuinely handy in that context, but it's dev tooling, not
+  part of the app, so it stays local and out of the deploy repo.
+- `android-app/`, `pi-files/`, `README-Pi5.md`, and the `test_*`/`eval_*`
+  scripts — separate concerns (mobile client, legacy Pi notes, test
+  suite) kept locally, not part of this deploy.
+- `.env` itself, and anything under `.compose-*-deploy/` (ad-hoc deploy
+  logs/backups) — see the security note at the bottom of this file for
+  why that second one matters more than it looks.
+
 ## Fast path: fully automated setup (recommended)
 For a brand-new machine, you don't need to do steps 1–5 by hand. Run
 `scripts/bootstrap-new-machine.sh` and it does everything end-to-end,
@@ -99,3 +130,19 @@ non-GET requests.
   from another machine, dump/restore Postgres and InfluxDB separately.
 - LINE notifications and the AI assistant only work if `.env` carries
   valid `LINE_TOKEN` / `AI_*` credentials for those external services.
+
+## Background: why this repo's history was squashed (2026-08-20)
+An earlier commit had accidentally included the entire `.claude/`
+directory (~271MB, including a live Claude Code OAuth credential and
+old session transcripts). History was squashed to a clean, secret-free
+"app-only" baseline and force-pushed; the full old history stays on the
+`backup-master-before-cleanup-20260820` branch on the machine where the
+cleanup happened, but was intentionally not pushed anywhere else. This
+is also why `.claude/` (and its skills, however useful) stays out of
+this repo going forward — one accidental `git add -A` is all it takes
+to repeat the leak.
+If you're reading this because you're setting up a new machine from an
+old checkout that still has that leaked credential in its `.claude/`
+folder: that token should already have been rotated (revoked/regenerated
+via Claude Code login or the claude.ai account's session list) — if it
+hasn't, do that regardless of anything in this repo.
