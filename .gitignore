@@ -7,9 +7,17 @@ __pycache__/
 test_output.log
 
 # AI tooling / assistant internals — never belongs in this repo
-.claude/
+# (exception: .claude/skills/ — versioned, non-secret skill definitions
+# that are meant to travel with the repo; everything else under .claude/
+# — credentials, session logs, plugin cache, worktrees — stays ignored.
+# Git can't re-include a path whose parent dir is excluded, so this has
+# to be "ignore each child of .claude/ individually" (.claude/*) rather
+# than "ignore .claude/" — a plain !.claude/skills/ negation after a
+# .claude/ directory-exclude is silently a no-op.)
+.claude/*
 .codex/
 .agents/
+!.claude/skills
 
 # deploy-run scratch (logs, pids, ad-hoc backups)
 .compose-ui-deploy/
