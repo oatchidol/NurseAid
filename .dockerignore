@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+README-Pi5.md
+.DS_Store
+*.md
+*.log
+*.bak
+__pycache__
+*.pyc
+.vscode
+.idea

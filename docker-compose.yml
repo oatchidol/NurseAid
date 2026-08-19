@@ -1,0 +1,216 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # === InfluxDB ===
+  influxdb:
+    logging: *default-logging
+    image: influxdb:2.7-alpine
+    container_name: nurseaid-influxdb
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Bangkok
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUX_ADMIN_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUX_ORG}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUX_BUCKET}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN}
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8086/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # === PostgreSQL ===
+  postgres:
+    logging: *default-logging
+    image: postgres:15-alpine
+    container_name: nurseaid-postgres
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Bangkok
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Mosquitto MQTT Broker ===
+  mosquitto:
+    logging: *default-logging
+    build: ./mosquitto-config
+    container_name: nurseaid-mosquitto
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Bangkok
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD-SHELL", "test -r /proc/1/cmdline && grep -aq mosquitto /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # === NurseAid Application ===
+  nurseaid:
+    logging: *default-logging
+    build: .
+    container_name: nurseaid-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Bangkok
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - LINE_TOKEN=${LINE_TOKEN}
+      - LINE_GROUP_ID=${LINE_GROUP_ID:-}
+      - LINE_RATE_LIMIT_BACKOFF_SECONDS=${LINE_RATE_LIMIT_BACKOFF_SECONDS:-900}
+      - LIVE_STATUS_CACHE_MS=${LIVE_STATUS_CACHE_MS:-3000}
+      - LIVE_STATUS_FALLBACK_SECONDS=${LIVE_STATUS_FALLBACK_SECONDS:-300}
+      - LIVE_PRESENCE_FRESHNESS_SECONDS=${LIVE_PRESENCE_FRESHNESS_SECONDS:-90}
+      - LIVE_HR_FRESHNESS_SECONDS=${LIVE_HR_FRESHNESS_SECONDS:-30}
+      - INFLUX_QUERY_TIMEOUT_MS=${INFLUX_QUERY_TIMEOUT_MS:-5000}
+      - ALERT_ENGINE_INTERVAL_MS=${ALERT_ENGINE_INTERVAL_MS:-15000}
+      - AI_CHAT_ENABLED=${AI_CHAT_ENABLED:-false}
+      - AI_BASE_URL=${AI_BASE_URL:-https://sai.softsquaregroup.com/v1}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-nurseaid:latest}
+      - AI_TIMEOUT_MS=${AI_TIMEOUT_MS:-60000}
+      - AI_MAX_HISTORY_MESSAGES=${AI_MAX_HISTORY_MESSAGES:-8}
+      - AI_RATE_LIMIT_PER_MINUTE=${AI_RATE_LIMIT_PER_MINUTE:-10}
+      - AI_CONVERSATION_MAX_TOKENS=${AI_CONVERSATION_MAX_TOKENS:-4096}
+    ports:
+      - "3333:3333"
+    depends_on:
+      - influxdb
+      - postgres
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3333/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # === MQTT ingestion bridge (MQTT to InfluxDB) ===
+  # Keeps external-device telemetry ingestion independent from the web app.
+  mqtt-bridge:
+    logging: *default-logging
+    build: ./mqtt-bridge
+    container_name: nurseaid-mqtt-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Bangkok
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=${INFLUX_ORG}
+      - INFLUX_BUCKET=${INFLUX_BUCKET}
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_TOPICS=${MQTT_TOPICS:-ble/#}
+      - SAVE_INTERVAL=${MQTT_BRIDGE_SAVE_INTERVAL:-3}
+      - VERBOSE_SENSOR_LOGS=${MQTT_BRIDGE_VERBOSE_LOGS:-false}
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - influxdb
+      - mosquitto
+    networks:
+      - nurseaid-network
+    healthcheck:
+      test: ["CMD", "python", "/app/bridge_healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # === Central device heartbeat agent ===
+  compose-collector:
+    logging: *default-logging
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.collector
+    container_name: nurseaid-compose-collector
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Bangkok
+      - NURSEAID_PROJECT_NAME=nurseaid
+      - NURSEAID_STATUS_FILE=/run/nurseaid-compose/status.json
+      - NURSEAID_COLLECT_INTERVAL=3
+      - NURSEAID_AGENT_UID=65532
+      - NURSEAID_INITIAL_LOG_HISTORY_MINUTES=${NURSEAID_INITIAL_LOG_HISTORY_MINUTES:-30}
+    volumes:
+      - compose_status:/run/nurseaid-compose
+      - ./ops:/host/project:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc/stat:/host/proc/stat:ro
+      - /proc/meminfo:/host/proc/meminfo:ro
+      - /proc/uptime:/host/proc/uptime:ro
+      - /sys/class/thermal/thermal_zone0/temp:/host/sys/class/thermal/thermal_zone0/temp:ro
+    networks:
+      - nurseaid-network
+    security_opt:
+      - no-new-privileges:true
+    group_add:
+      - "991"
+      - "65532"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  compose_status:
+    driver: local
+  influxdb_data:
+    driver: local
+  postgres_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+
+networks:
+  nurseaid-network:
+    driver: bridge

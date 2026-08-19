@@ -1,0 +1,26 @@
+node_modules/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.docker-compose.yml.swp
+test_output.log
+
+# AI tooling / assistant internals — never belongs in this repo
+.claude/
+.codex/
+.agents/
+
+# deploy-run scratch (logs, pids, ad-hoc backups)
+.compose-ui-deploy/
+.compose-monitor-deploy/
+
+# not part of the deployable server app — kept locally, untracked
+android-app/
+pi-files/
+README-Pi5.md
+test_monitor_ai_chat.js
+test_wards_mgmt.js
+test_mqtt_bridge.py
+eval_monitor_ai.js
+pytest.ini
