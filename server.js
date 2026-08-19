@@ -3365,8 +3365,8 @@ function ui(user, active, content, script = "") {
             <span class="nav-icon text-sm">🚪</span><span class="sidebar-hide">Logout</span>
         </button>
 
-        <div class="app-version sidebar-hide" aria-label="v2.19" title="v2.19">
-            <span class="app-version-badge">v2.19</span>
+        <div class="app-version sidebar-hide" aria-label="v2.16" title="v2.16">
+            <span class="app-version-badge">v2.16</span>
         </div>
     </aside>
 
@@ -7916,8 +7916,8 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             <input id="p" type="password" autocomplete="current-password" placeholder="Password" class="w-full p-4 rounded-2xl bg-slate-100 outline-none focus:ring-2 focus:ring-blue-500">
             <button onclick="login()" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold active:bg-blue-700">SIGN IN</button>
         </div>
-        <div class="mt-6 flex items-center justify-center" aria-label="v2.19" title="v2.19">
-            <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-mono font-bold text-slate-500">v2.19</span>
+        <div class="mt-6 flex items-center justify-center" aria-label="v2.16" title="v2.16">
+            <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-mono font-bold text-slate-500">v2.16</span>
         </div>
     </main>
     <div id="loginNotice" hidden class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="loginNoticeTitle" aria-describedby="loginNoticeMessage"><div class="w-full max-w-sm rounded-3xl border border-red-200 bg-white p-6 shadow-2xl"><div class="flex items-start gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-xl font-black text-red-600" aria-hidden="true">!</div><div><h2 id="loginNoticeTitle" class="text-lg font-bold text-slate-900">เข้าสู่ระบบไม่สำเร็จ</h2><p id="loginNoticeMessage" class="mt-2 text-sm leading-6 text-slate-600"></p></div></div><button id="loginNoticeClose" type="button" class="mt-6 w-full rounded-2xl bg-blue-600 p-3 font-bold text-white">ลองอีกครั้ง</button></div></div>

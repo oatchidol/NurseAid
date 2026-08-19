@@ -6,73 +6,51 @@
 
 ## [Unreleased]
 
-## [2.19.0] - 2026-08-18
-
-### Changed
-- ถอด system prompt ออกจาก free conversation mode ทั้งหมด ไม่บังคับภาษา บุคลิก น้ำเสียง ความยาว รูปแบบ หัวข้อ หรือข้อจำกัดด้านเนื้อหาคำตอบ
-- ส่งให้โมเดลเฉพาะ conversation history ที่ลงลายเซ็นและข้อความผู้ใช้ โดยไม่แทรก prompt กำกับสำหรับคำถามทั่วไป
-- เพิ่มขนาดข้อความผู้ใช้จาก 1,000 เป็น 4,000 ตัวอักษร และเพิ่ม output budget สำหรับ conversation เป็น 4,096 tokens เพื่อรองรับคำตอบยาว โค้ด บทความ และหลายภาษา
-- ยกเลิกการตัดคำตอบ plain text ที่ 5,000 ตัวอักษร และเก็บ assistant history ต่อรอบได้ยาวขึ้น
-- เปลี่ยน placeholder เป็นข้อความกลาง “พิมพ์ข้อความ…” และอัปเดตเลขเวอร์ชันใน sidebar/login เป็น v2.19
-
-### Retained Data Boundaries
-- การวิเคราะห์ Monitor ยังคงใช้ structured medical harness, ward scoping และ evidence validation เฉพาะเมื่อผู้ใช้ร้องขอข้อมูลผู้ป่วยอย่างชัดเจน
-- Free conversation ยังไม่รับข้อมูลผู้ป่วยเข้า context และยังคง authentication, signed history, rate limit, timeout และ circuit breaker
-
-### Deployment Configuration
-- กำหนด OpenAI-compatible endpoint ปัจจุบันเป็น `https://sai.softsquaregroup.com/v1`
-- กำหนด model ปัจจุบันเป็น `nurseaid:latest`
-- ณ เวลา deploy endpoint `/v1/chat/completions` ตอบ HTTP 405; ฝั่ง reverse proxy/provider ต้องเปิด POST route นี้ก่อนจึงจะตอบจากโมเดลได้ โดย application จะใช้ข้อความ fallback ระหว่างที่ provider ไม่พร้อม
-
-## [2.18.0] - 2026-08-18
-
-### Changed
-- เปลี่ยนคำถามทั่วไปเป็น free conversation mode ให้ MedGemma ตอบข้อความภาษาไทยตามธรรมชาติ โดยไม่บังคับ JSON, risk badge, intent badge, observations, limitations หรือ recommended checks
-- ยกเลิก keyword blocking สำหรับเรื่องนอกสุขภาพและยกเลิก deterministic refusal สำเร็จรูป ผู้ใช้สามารถสนทนา ถามความรู้ทั่วไป ขอช่วยคิด เขียน หรือคุยเรื่องอื่นได้ตามปกติ
-- ใช้ structured evidence/risk cards เฉพาะเมื่อคำถามระบุชัดว่าให้วิเคราะห์ผู้ป่วย เตียง ค่าล่าสุด แนวโน้ม หรือข้อมูลย้อนหลังจาก Monitor
-- ปรับ welcome state และ suggested prompts ให้สื่อว่าเป็น AI สนทนาทั่วไปที่สามารถวิเคราะห์ Monitor พร้อมหลักฐานได้เมื่อร้องขอ
-- อัปเดตเลขเวอร์ชันที่แสดงใน sidebar และหน้า login เป็น v2.18
-
-### Retained Security Boundaries
-- ยังคง authentication, ward scoping, signed conversation token, rate limit, provider timeout/circuit breaker และการไม่ส่งข้อมูลผู้ป่วยเข้า conversation mode
-- การวิเคราะห์ Monitor ยังคง deterministic risk, evidence binding, numeric claim validation และ fallback เหมือนเดิม
-
-## [2.17.0] - 2026-08-18
-
-### Added
-- เพิ่ม intent router ให้ NurseAid AI Assistant รองรับ 4 ขอบเขตหลัก: วิเคราะห์ข้อมูล Monitor, ความรู้สุขภาพทั่วไป, คำแนะนำเกี่ยวกับอาการ/สัญญาณอันตราย และวิธีใช้ NurseAid
-- เพิ่ม deterministic emergency screening สำหรับข้อความที่กล่าวถึงอาการอันตราย เช่น หมดสติ หายใจไม่ออก เจ็บหน้าอกร่วมกับอาการเสี่ยง อ่อนแรงครึ่งซีก ชัก เลือดออกมาก หรือแพ้รุนแรง โดยบังคับคำแนะนำขอความช่วยเหลือฉุกเฉินและไม่รอ AI
-- เพิ่ม structured validator แยกสำหรับ health education และ symptom guidance ซึ่งยังคงป้องกันการวินิจฉัยยืนยัน คำสั่งยา และการระบุขนาดยาเฉพาะบุคคล
-- เพิ่ม workflow help context ที่จำกัดคำตอบตามความสามารถจริงของ NurseAid ได้แก่หน้า Monitor, ช่วงข้อมูลย้อนหลัง, evidence, coverage, Warning/Critical และ off-wrist
-- เพิ่มป้ายประเภทคำตอบใน UI และ suggested prompts สำหรับความรู้สุขภาพทั่วไปกับคำแนะนำเกี่ยวกับอาการ
-
-### Changed
-- คำถามสุขภาพทั่วไป เช่น “SpO₂ คืออะไร” สามารถถามได้แม้เลือกผู้ป่วยอยู่ โดยไม่ถูกบังคับให้เป็นการวิเคราะห์ผู้ป่วย
-- ปฏิเสธแบบ deterministic เฉพาะคำขอวินิจฉัยยืนยัน/สั่งยา และเรื่องที่ไม่เกี่ยวกับสุขภาพหรือ NurseAid อย่างชัดเจน ส่วนคำถามกำกวมจะเข้าสู่โหมดความรู้สุขภาพทั่วไป
-- Signed conversation token ผูกกับ intent เพิ่มเติม ป้องกันนำ history จากคำตอบ Monitor ไปใช้ปะปนกับคำถามสุขภาพทั่วไปหรือ workflow help
-- อัปเดตเลขเวอร์ชันที่แสดงใน sidebar และหน้า login เป็น v2.17
-
 ## [2.16.0] - 2026-08-18
 
+> **หมายเหตุ:** รวมงานที่เดิมบันทึกแยกเป็น 2.16.0–2.19.0 (วันเดียวกัน) เข้าเป็นรุ่นเดียว เพื่อให้เลขเวอร์ชันที่ประกาศตรงกับที่ deploy จริง
+
 ### Added
-- เพิ่ม AI Harness v2 แบบ structured JSON output พร้อม evidence registry, deterministic risk classification, evidence binding และ deterministic fallback เมื่อโมเดลหรือผล validation ไม่พร้อมใช้งาน
-- เพิ่ม output safety validator ป้องกันการลดระดับ Critical/Warning, evidence ID ที่ไม่มีจริง, ตัวเลขที่ไม่มีหลักฐาน, คำสั่งใช้ยา และการยืนยันการวินิจฉัย
-- เพิ่ม signed conversation token ที่ผูกกับผู้ใช้ ผู้ป่วย และช่วงเวลา แทนการเชื่อถือ chat history จาก browser
-- เพิ่ม provider retry, circuit breaker, per-user concurrency guard, bounded output และ cleanup ของ in-memory rate-limit buckets
-- เพิ่ม privacy-safe AI request telemetry และ feedback endpoint ที่เก็บเฉพาะ request ID/user ID/ผล helpful โดยไม่เก็บ prompt, คำตอบ หรือ vital values
-- เพิ่ม synthetic MedGemma evaluation harness ผ่านคำสั่ง `npm run ai:eval` สำหรับวัด JSON validity, critical/low-quality response และ medication safety โดยไม่ใช้ข้อมูลผู้ป่วยจริง
-- เพิ่ม modern Clinical AI Workspace พร้อม context pill, segmented period control, structured risk/summary/observation cards, recommended checks, data limitations, expandable evidence, copy summary, feedback และ new conversation action
+- AI Harness v2 แบบ structured JSON output พร้อม evidence registry, deterministic risk classification, evidence binding และ deterministic fallback เมื่อโมเดลหรือผล validation ไม่พร้อมใช้งาน
+- output safety validator ป้องกันการลดระดับ Critical/Warning, evidence ID ที่ไม่มีจริง, ตัวเลขที่ไม่มีหลักฐาน, คำสั่งใช้ยา และการยืนยันการวินิจฉัย
+- signed conversation token ที่ผูกกับผู้ใช้ ผู้ป่วย และช่วงเวลา แทนการเชื่อถือ chat history จาก browser
+- provider retry, circuit breaker, per-user concurrency guard, bounded output และ cleanup ของ in-memory rate-limit buckets
+- privacy-safe AI request telemetry และ feedback endpoint ที่เก็บเฉพาะ request ID/user ID/ผล helpful โดยไม่เก็บ prompt, คำตอบ หรือ vital values
+- synthetic MedGemma evaluation harness ผ่านคำสั่ง `npm run ai:eval` สำหรับวัด JSON validity, critical/low-quality response และ medication safety โดยไม่ใช้ข้อมูลผู้ป่วยจริง
+- modern Clinical AI Workspace พร้อม context pill, segmented period control, structured risk/summary/observation cards, recommended checks, data limitations, expandable evidence, copy summary, feedback และ new conversation action
+- intent router ให้ NurseAid AI Assistant รองรับ 4 ขอบเขตหลัก: วิเคราะห์ข้อมูล Monitor, ความรู้สุขภาพทั่วไป, คำแนะนำเกี่ยวกับอาการ/สัญญาณอันตราย และวิธีใช้ NurseAid
+- deterministic emergency screening สำหรับข้อความที่กล่าวถึงอาการอันตราย เช่น หมดสติ หายใจไม่ออก เจ็บหน้าอกร่วมกับอาการเสี่ยง อ่อนแรงครึ่งซีก ชัก เลือดออกมาก หรือแพ้รุนแรง โดยบังคับคำแนะนำขอความช่วยเหลือฉุกเฉินและไม่รอ AI
+- structured validator แยกสำหรับ health education และ symptom guidance ซึ่งยังคงป้องกันการวินิจฉัยยืนยัน คำสั่งยา และการระบุขนาดยาเฉพาะบุคคล
+- workflow help context ที่จำกัดคำตอบตามความสามารถจริงของ NurseAid ได้แก่หน้า Monitor, ช่วงข้อมูลย้อนหลัง, evidence, coverage, Warning/Critical และ off-wrist
+- ป้ายประเภทคำตอบใน UI และ suggested prompts สำหรับความรู้สุขภาพทั่วไปกับคำแนะนำเกี่ยวกับอาการ
 
 ### Changed
 - ปรับ trend analysis เป็น linear-regression slope พร้อม absolute change, confidence, largest data gap และแยก Warning episodes ไม่ให้นับซ้อน Critical episodes
 - ปรับ downsampling ให้รักษาจุด Warning/Critical, min/max และจุดก่อน-หลังเหตุการณ์สำคัญไว้ภายใต้ขนาด time-series ที่จำกัด
 - ปรับ loading, empty, error, mobile, dark mode, focus, reduced-motion และ accessibility states ของแชตให้เข้าใจง่ายและตอบสนองดีขึ้น
-- อัปเดตเลขเวอร์ชันที่แสดงใน sidebar และหน้า login เป็น v2.16
+- คำถามสุขภาพทั่วไป เช่น “SpO₂ คืออะไร” สามารถถามได้แม้เลือกผู้ป่วยอยู่ โดยไม่ถูกบังคับให้เป็นการวิเคราะห์ผู้ป่วย
+- ปฏิเสธแบบ deterministic เฉพาะคำขอวินิจฉัยยืนยัน/สั่งยา และเรื่องที่ไม่เกี่ยวกับสุขภาพหรือ NurseAid อย่างชัดเจน ส่วนคำถามกำกวมจะเข้าสู่โหมดความรู้สุขภาพทั่วไป
+- Signed conversation token ผูกกับ intent เพิ่มเติม ป้องกันนำ history จากคำตอบ Monitor ไปใช้ปะปนกับคำถามสุขภาพทั่วไปหรือ workflow help
+- เปลี่ยนคำถามทั่วไปเป็น free conversation mode ให้ MedGemma ตอบข้อความภาษาไทยตามธรรมชาติ โดยไม่บังคับ JSON, risk badge, intent badge, observations, limitations หรือ recommended checks
+- ยกเลิก keyword blocking สำหรับเรื่องนอกสุขภาพและยกเลิก deterministic refusal สำเร็จรูป ผู้ใช้สามารถสนทนา ถามความรู้ทั่วไป ขอช่วยคิด เขียน หรือคุยเรื่องอื่นได้ตามปกติ
+- ใช้ structured evidence/risk cards เฉพาะเมื่อคำถามระบุชัดว่าให้วิเคราะห์ผู้ป่วย เตียง ค่าล่าสุด แนวโน้ม หรือข้อมูลย้อนหลังจาก Monitor
+- ปรับ welcome state และ suggested prompts ให้สื่อว่าเป็น AI สนทนาทั่วไปที่สามารถวิเคราะห์ Monitor พร้อมหลักฐานได้เมื่อร้องขอ
+- ถอด system prompt ออกจาก free conversation mode ทั้งหมด ไม่บังคับภาษา บุคลิก น้ำเสียง ความยาว รูปแบบ หัวข้อ หรือข้อจำกัดด้านเนื้อหาคำตอบ ส่งให้โมเดลเฉพาะ conversation history ที่ลงลายเซ็นและข้อความผู้ใช้
+- เพิ่มขนาดข้อความผู้ใช้จาก 1,000 เป็น 4,000 ตัวอักษร และเพิ่ม output budget สำหรับ conversation เป็น 4,096 tokens เพื่อรองรับคำตอบยาว โค้ด บทความ และหลายภาษา
+- ยกเลิกการตัดคำตอบ plain text ที่ 5,000 ตัวอักษร และเก็บ assistant history ต่อรอบได้ยาวขึ้น
+- เปลี่ยน placeholder เป็นข้อความกลาง “พิมพ์ข้อความ…” และอัปเดตเลขเวอร์ชันที่แสดงใน sidebar/หน้า login เป็น v2.16
 
-### Security & Safety
-- โมเดลไม่มีสิทธิ์ลด deterministic risk ที่คำนวณโดยระบบ และคำตอบ Warning/Critical ต้องมี observation ที่อ้าง evidence จริง
+### Security & Safety (คงไว้ทุกโหมด)
+- Authentication, ward scoping, signed conversation token, rate limit, provider timeout/circuit breaker และการไม่ส่งข้อมูลผู้ป่วยเข้า conversation mode
+- โมเดลไม่มีสิทธิ์ลด deterministic risk ที่คำนวณโดยระบบ และคำตอบ Warning/Critical ต้องมี observation ที่อ้าง evidence จริงเสมอ
 - คำตอบทั้งหมด render ด้วย DOM API และ `textContent`; ไม่ render HTML/Markdown จากโมเดล
+- ห้ามวินิจฉัยยืนยันโรค ห้ามสั่งยา/ระบุขนาดยาเฉพาะบุคคล
 - เมื่อ provider ล่ม, timeout, circuit open, JSON ไม่ถูกต้อง หรือคำตอบไม่ผ่าน safety validator ระบบจะแสดง deterministic summary แทน
+
+### Deployment Configuration
+- กำหนด OpenAI-compatible endpoint ปัจจุบันเป็น `https://sai.softsquaregroup.com/v1`
+- กำหนด model ปัจจุบันเป็น `nurseaid:latest`
+- ณ เวลา deploy endpoint `/v1/chat/completions` ตอบ HTTP 405; ฝั่ง reverse proxy/provider ต้องเปิด POST route นี้ก่อนจึงจะตอบจากโมเดลได้ โดย application จะใช้ข้อความ fallback ระหว่างที่ provider ไม่พร้อม
 
 ## [2.15.0] - 2026-08-18
 
