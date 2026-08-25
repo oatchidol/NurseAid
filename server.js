@@ -236,16 +236,16 @@ const ROLES = Object.freeze(['super_admin', 'ward_admin', 'staff_nurse', 'viewer
 
 const ROLE_CAPABILITIES = {
     super_admin: new Set([
-        'patients:read','patients:write','devices:read','devices:write','pairing:write',
+        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:all','wards:manage','settings:global','audit:read:all','export:read'
     ]),
     ward_admin: new Set([
-        'patients:read','patients:write','devices:read','devices:write','pairing:write',
+        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:ward','audit:read:ward','export:read'
     ]),
-    staff_nurse: new Set(['patients:read','devices:read','alerts:read','alerts:ack','export:read']),
+    staff_nurse: new Set(['patients:read','patients:priority:write','devices:read','alerts:read','alerts:ack','export:read']),
     viewer: new Set(['patients:read','devices:read','alerts:read'])
 };
 
@@ -1220,6 +1220,22 @@ async function initDatabase() {
         `);
     } catch (e) { console.error("RBAC migration error:", e.message); }
 
+    // ─── Patient Priority & Manual Dashboard Order ──────────────────────
+    try {
+        await pool.query(`
+            ALTER TABLE patients ADD COLUMN IF NOT EXISTS priority VARCHAR(10) CHECK (priority IN ('high','medium','low'));
+            ALTER TABLE patients ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+        `);
+        // patients.hn_number has no DB-level uniqueness today (only an app-layer check in
+        // POST /api/patients) — this index is required so the LATERAL join in
+        // queryLiveStatuses() can never fan out into duplicate dashboard cards, and doubles
+        // as the missing index for it.
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_patients_hn_number_lower
+            ON patients (LOWER(hn_number)) WHERE hn_number IS NOT NULL
+        `);
+    } catch (e) { console.error("Patient priority/order migration error:", e.message); }
+
         const userCount = await pool.query('SELECT COUNT(*) FROM users');
     if (parseInt(userCount.rows[0].count) === 0) {
         const initialPassword = process.env.INITIAL_ADMIN_PASSWORD || '';
@@ -1707,6 +1723,9 @@ function ui(user, active, content, script = "") {
             --accent-yellow: #eab308;
             --accent-red: #ef4444;
             --accent-amber: #f59e0b;
+            --priority-high: #a855f7;
+            --priority-medium: #64748b;
+            --priority-low: #94a3b8;
             --accent-secondary: #8b5cf6;
             --accent-red-light: #fecaca;
             --accent-green-light: #bbf7d0;
@@ -1763,6 +1782,9 @@ function ui(user, active, content, script = "") {
             --accent-yellow: #d29922;
             --accent-red: #f85149;
             --accent-amber: #d29922;
+            --priority-high: #c084fc;
+            --priority-medium: #94a3b8;
+            --priority-low: #64748b;
             --accent-secondary: #bc8cff;
             --accent-red-light: rgba(248, 81, 73, 0.15);
             --accent-green-light: rgba(63, 185, 80, 0.15);
@@ -2031,6 +2053,8 @@ function ui(user, active, content, script = "") {
         td { padding: 12px; border-bottom: 1px solid var(--border-light); font-size: 0.85rem; }
         .admin-only { display: none !important; }
         body.is-admin .admin-only { display: block !important; }
+        .priority-editable { display: none !important; }
+        body.can-prioritize .priority-editable { display: inline-flex !important; }
 
         #sidebar {
             width: 13rem;
@@ -2461,6 +2485,21 @@ function ui(user, active, content, script = "") {
             border-left-width: 4px !important;
             border-radius: 1rem !important;
         }
+
+        .priority-badge {
+            font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
+            text-transform: uppercase; letter-spacing: .02em; white-space: nowrap;
+        }
+        .priority-badge--high   { background: color-mix(in srgb, var(--priority-high) 15%, transparent);   color: var(--priority-high);   border: 1px solid color-mix(in srgb, var(--priority-high) 45%, var(--border-color)); }
+        .priority-badge--medium { background: color-mix(in srgb, var(--priority-medium) 12%, transparent); color: var(--priority-medium); border: 1px solid color-mix(in srgb, var(--priority-medium) 40%, var(--border-color)); }
+        .priority-badge--low    { background: color-mix(in srgb, var(--priority-low) 10%, transparent);    color: var(--priority-low);    border: 1px solid color-mix(in srgb, var(--priority-low) 35%, var(--border-color)); }
+
+        .priority-ring-high {
+            box-shadow: 0 0 0 2px var(--priority-high), 0 0 16px 2px color-mix(in srgb, var(--priority-high) 35%, transparent);
+        }
+        .card.dragging { opacity: .92; position: relative; z-index: 20; box-shadow: var(--shadow-xl); cursor: grabbing; transition: none; }
+        .card.drop-before { border-top: 3px solid var(--accent-primary) !important; }
+        .card.drop-after { border-bottom: 3px solid var(--accent-primary) !important; }
 
         #monitor-grid > .card > div:first-child {
             margin-bottom: 0.55rem !important;
@@ -3475,16 +3514,16 @@ function ui(user, active, content, script = "") {
         function _roleLabel(r) { return _ROLE_LABELS[r] || ('👤 ' + (r || 'viewer')); }
         const _ROLE_CAPS = {
             super_admin: new Set([
-                'patients:read', 'patients:write', 'devices:read', 'devices:write', 'pairing:write',
+                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:all', 'users:manage:ward', 'wards:manage', 'settings:global', 'audit:read:all', 'audit:read:ward', 'export:read'
             ]),
             ward_admin: new Set([
-                'patients:read', 'patients:write', 'devices:read', 'devices:write', 'pairing:write',
+                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:ward', 'audit:read:ward', 'export:read'
             ]),
-            staff_nurse: new Set(['patients:read', 'devices:read', 'alerts:read', 'alerts:ack', 'export:read']),
+            staff_nurse: new Set(['patients:read', 'patients:priority:write', 'devices:read', 'alerts:read', 'alerts:ack', 'export:read']),
             viewer: new Set(['patients:read', 'devices:read', 'alerts:read'])
         };
         function _userCapabilities(r) { return _ROLE_CAPS[r] || new Set(); }
@@ -3514,6 +3553,9 @@ function ui(user, active, content, script = "") {
             const caps = _userCapabilities(role);
             if (caps.has('devices:write') || caps.has('patients:write') || caps.has('pairing:write')) {
                 document.body.classList.add('is-admin');
+            }
+            if (caps.has('patients:priority:write')) {
+                document.body.classList.add('can-prioritize');
             }
             // Show/hide sidebar links by capability
             document.querySelectorAll('[data-cap]').forEach(link => {
@@ -4548,9 +4590,19 @@ app.get('/api/live-status-legacy', adminOnly, async (req, res) => {
 
 async function queryLiveStatuses() {
     const [devicesResult, settingsResult] = await Promise.all([
-        pool.query(`SELECT mac, device_no, name, hm_number, bed_no, ward_id,
-                           COALESCE(device_type, 'jstyle') AS device_type
-                    FROM nurseaid WHERE hm_number IS NOT NULL ORDER BY device_no ASC`),
+        pool.query(`SELECT n.mac, n.device_no, n.name, n.hm_number, n.bed_no, n.ward_id,
+                           COALESCE(n.device_type, 'jstyle') AS device_type,
+                           p.priority, p.sort_order
+                    FROM nurseaid n
+                    LEFT JOIN LATERAL (
+                        SELECT priority, sort_order
+                        FROM patients
+                        WHERE LOWER(hn_number) = LOWER(n.hm_number)
+                        ORDER BY id DESC
+                        LIMIT 1
+                    ) p ON true
+                    WHERE n.hm_number IS NOT NULL
+                    ORDER BY p.sort_order ASC NULLS LAST, n.device_no ASC`),
         pool.query('SELECT * FROM alert_settings')
     ]);
     if (devicesResult.rows.length === 0) return [];
@@ -5416,6 +5468,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 const replacement = template.content.firstElementChild;
                 replacement.dataset.patientKey = card.key;
                 replacement.dataset.signature = card.signature;
+                replacement.dataset.hn = card.patient.hm_number || '';
                 replacement.querySelector('[data-action="show-trend"]')?.addEventListener('click', () => {
                     const p = card.patient;
                     const limit = card.limit;
@@ -5428,6 +5481,17 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 });
                 replacement.querySelector('[data-action="open-config"]')?.addEventListener('click', () => {
                     openIndividualConfig(card.patient.mac, card.patient.name, card.patient.bed_no);
+                });
+                replacement.querySelector('[data-action="set-priority"]')?.addEventListener('change', async (e) => {
+                    const value = e.target.value || null;
+                    try {
+                        const response = await fetch('/api/patients/priority', {
+                            method: 'POST', headers: {'Content-Type':'application/json'},
+                            body: JSON.stringify({ hn: card.patient.hm_number, priority: value })
+                        });
+                        if (!response.ok) showNotice(await apiErrorMessage(response, 'ไม่สามารถบันทึกความสำคัญได้'));
+                    } catch (_) { showNotice('เชื่อมต่อไม่สำเร็จ ไม่สามารถบันทึกความสำคัญได้'); }
+                    finally { updateDash(); } // reflect the new badge/ring immediately instead of waiting for the next poll
                 });
                 if (node) node.replaceWith(replacement);
                 node = replacement;
@@ -5589,9 +5653,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     spo2Quality: escapeHTML(p.spo2Quality || 'unavailable')
                 };
                 const html = \`
-                <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
+                <div class="card p-4 border-t-4 transition-all \${p.priority === 'high' ? 'priority-ring-high' : ''}" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
                     <div class="flex items-center justify-between mb-4 gap-2 pb-2" style="border-bottom-color: var(--border-color);">
                         <div class="flex min-w-0 items-center gap-2 flex-1">
+                            <button type="button" data-role="drag-handle" class="priority-editable shrink-0" aria-label="ลากเพื่อจัดเรียงลำดับ" title="ลากเพื่อจัดเรียงลำดับ" style="cursor:grab; touch-action:none; background:none; border:none; padding:2px; color:var(--text-tertiary);">⠿</button>
                             <span class="shrink-0 text-[10px] px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: white;">\${safe.bed}</span>
                             <span data-role="device-status" role="status" class="w-3 h-3 shrink-0 rounded-full \${statusColor}" aria-label="สถานะเครื่อง: \${statusLabel}" title="\${safe.dataMessage}"></span>
                             <div class="flex min-w-0 flex-col">
@@ -5608,8 +5673,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                     </div>
                                 </div>
                             </div>
+                            \${p.priority ? '<span class="priority-badge priority-badge--' + p.priority + '">' + ({high:'สูง',medium:'กลาง',low:'ต่ำ'}[p.priority]) + '</span>' : ''}
                             \${hasCustom ? '<span class="text-[10px] shrink-0" title="ตั้งค่าเฉพาะบุคคล">⚙️</span>' : ''}
                         </div>
+                        <select data-action="set-priority" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
+                            <option value="">ไม่ระบุ</option>
+                            <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
+                            <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
+                            <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
+                        </select>
                         <button type="button" data-action="open-config" class="admin-only shrink-0 p-1 transition-colors \${settingsColor}" aria-label="ตั้งค่าขีดจำกัดรายบุคคล">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                         </button>
@@ -5632,7 +5704,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 </div>\`;
                 return { key, signature, html, patient: p, limit };
             });
-            reconcilePatientCards(grid, cards);
+            if (!dragInProgress) reconcilePatientCards(grid, cards);
 
             const shouldSound = data.some(p => p.alertLevel === 'critical' && p.soundEnabled);
             if(criticalBeds.length > 0){
@@ -5665,6 +5737,71 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             scheduleDashboardUpdate();
         }
     }
+
+    // Pointer-Events-based drag reorder — unifies mouse + touch + pen in one code path,
+    // since native HTML5 drag-and-drop never fires on touch input in any mobile browser.
+    const monitorGrid = document.getElementById('monitor-grid');
+    let dragSrcNode = null;
+    let dragInProgress = false;
+    let dragStartY = 0;
+    let dropTarget = null; // { node, before }
+
+    function clearDropIndicator() {
+        monitorGrid.querySelectorAll('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
+    }
+
+    monitorGrid.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('[data-role="drag-handle"]');
+        const card = handle?.closest('[data-patient-key]');
+        if (!handle || !card) return;
+        handle.setPointerCapture(e.pointerId);
+        dragSrcNode = card;
+        dragInProgress = true;
+        dragStartY = e.clientY;
+        dropTarget = null;
+        card.classList.add('dragging');
+    });
+
+    monitorGrid.addEventListener('pointermove', (e) => {
+        if (!dragInProgress || !dragSrcNode) return;
+        e.preventDefault();
+        // Visually lift the card and have it follow the pointer vertically — without this,
+        // nothing visibly moves until a full card-height is crossed, which reads as broken.
+        dragSrcNode.style.transform = 'translateY(' + (e.clientY - dragStartY) + 'px)';
+        // Pointer capture keeps e.target locked to the handle — elementFromPoint finds
+        // whatever card is actually under the finger/cursor right now.
+        const under = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-patient-key]');
+        clearDropIndicator();
+        if (!under || under === dragSrcNode) { dropTarget = null; return; }
+        const before = (e.clientY - under.getBoundingClientRect().top) < under.offsetHeight / 2;
+        under.classList.add(before ? 'drop-before' : 'drop-after');
+        dropTarget = { node: under, before };
+    });
+
+    async function endDrag(commit) {
+        const node = dragSrcNode;
+        clearDropIndicator();
+        if (node) { node.classList.remove('dragging'); node.style.transform = ''; }
+        const target = dropTarget;
+        dragInProgress = false;
+        dragSrcNode = null;
+        dropTarget = null;
+        if (commit && node && target) {
+            monitorGrid.insertBefore(node, target.before ? target.node : target.node.nextSibling);
+        }
+        if (!commit || !node || !target) { updateDash(); return; }
+        const hns = Array.from(monitorGrid.querySelectorAll('[data-patient-key]')).map(n => n.dataset.hn).filter(Boolean);
+        try {
+            const response = await fetch('/api/patients/reorder', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ hns })
+            });
+            if (!response.ok) showNotice(await apiErrorMessage(response, 'ไม่สามารถบันทึกลำดับได้'));
+        } catch (_) { showNotice('เชื่อมต่อไม่สำเร็จ ไม่สามารถบันทึกลำดับได้'); }
+        finally { updateDash(); }
+    }
+    monitorGrid.addEventListener('pointerup', () => endDrag(true));
+    monitorGrid.addEventListener('pointercancel', () => endDrag(false));
 
     updateDash();
 `)));
@@ -6932,6 +7069,56 @@ app.post('/api/patients/update', requireCapability('patients:write'), async (req
         await client.query('ROLLBACK').catch(() => { });
         console.error('[Patient Update]', error.message);
         res.status(500).json({ error: 'Unable to update patient' });
+    } finally {
+        client.release();
+    }
+});
+
+app.post('/api/patients/priority', requireCapability('patients:priority:write'), async (req, res) => {
+    const hn = String(req.body.hn || '').trim();
+    const raw = req.body.priority;
+    const priority = (raw === null || raw === '' || raw === undefined) ? null : String(raw).trim().toLowerCase();
+    if (!hn || (priority !== null && !['high', 'medium', 'low'].includes(priority))) {
+        return res.status(400).json({ error: 'Invalid priority value' });
+    }
+    try {
+        const scope = await wardScopeSql(req, 'ward_id', 3);
+        const result = await pool.query(
+            `UPDATE patients SET priority=$1 WHERE LOWER(hn_number)=LOWER($2) ${scope.clause ? 'AND ' + scope.clause : ''} RETURNING id, ward_id`,
+            [priority, hn, ...scope.params]
+        );
+        if (!result.rows.length) return res.status(404).json({ error: 'Patient not found or access denied' });
+        logAudit(req, 'UPDATE', 'patient_priority', hn, { priority, ward_id: result.rows[0].ward_id }).catch(console.error);
+        res.json({ success: true, priority });
+    } catch (error) {
+        console.error('[Patient Priority]', error.message);
+        res.status(500).json({ error: 'Unable to update priority' });
+    }
+});
+
+app.post('/api/patients/reorder', requireCapability('patients:priority:write'), async (req, res) => {
+    const hns = Array.isArray(req.body.hns) ? req.body.hns.map(h => String(h || '').trim()).filter(Boolean) : [];
+    if (!hns.length || hns.length > 500) return res.status(400).json({ error: 'Invalid patient order list' });
+    const orders = hns.map((_, i) => (i + 1) * 10); // gapped, not 1/2/3 — cheap headroom for a future single-row move
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const scope = await wardScopeSql(req, 'ward_id', 3);
+        const result = await client.query(
+            `UPDATE patients SET sort_order = v.ord
+             FROM UNNEST($1::text[], $2::int[]) AS v(hn, ord)
+             WHERE LOWER(hn_number) = LOWER(v.hn) ${scope.clause ? 'AND ' + scope.clause : ''}
+             RETURNING id, ward_id`,
+            [hns, orders, ...scope.params]
+        );
+        await client.query('COMMIT');
+        const distinctWards = [...new Set(result.rows.map(r => r.ward_id).filter(w => w !== null))];
+        logAudit(req, 'REORDER', 'patient', 'bulk', { wards: distinctWards, count: result.rows.length }).catch(console.error);
+        res.json({ success: true, updated: result.rows.length });
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Patient Reorder]', error.message);
+        res.status(500).json({ error: 'Unable to save patient order' });
     } finally {
         client.release();
     }

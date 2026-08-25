@@ -154,6 +154,8 @@ CREATE TABLE IF NOT EXISTS patients (
     hn_number VARCHAR(50),
     name VARCHAR(200),
     ward_id INTEGER REFERENCES wards(id),
+    priority VARCHAR(10) CHECK (priority IN ('high','medium','low')),
+    sort_order INTEGER,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
