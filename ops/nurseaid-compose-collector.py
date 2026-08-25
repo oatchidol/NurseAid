@@ -6,6 +6,9 @@ import subprocess
 import tempfile
 import re
 import time
+import ssl
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,7 +24,43 @@ INITIAL_LOG_HISTORY_MINUTES = min(
     1440,
     max(1, int(os.getenv("NURSEAID_INITIAL_LOG_HISTORY_MINUTES", "30"))),
 )
+CENTRAL_URL = os.getenv("NURSEAID_CENTRAL_URL", "https://nurseaid-central.softsquaregroup.com").strip().rstrip("/")
+HEARTBEAT_INTERVAL = max(10, int(os.getenv("NURSEAID_HEARTBEAT_INTERVAL", "60")))
+CREDENTIAL_FILE = SPOOL_DIR / "central-credential.json"
 SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+def get_machine_device_id():
+    env_id = os.getenv("NURSEAID_DEVICE_ID", "").strip().upper()
+    if env_id and re.match(r"^NA-[A-F0-9]{8}$", env_id):
+        return env_id
+    
+    # Try Raspberry Pi CPU Serial Number first (to match original NA-43F42F4B)
+    try:
+        cpuinfo = Path("/proc/cpuinfo").read_text()
+        for line in cpuinfo.splitlines():
+            if line.startswith("Serial"):
+                serial = line.split(":")[1].strip()
+                if len(serial) >= 8:
+                    return f"NA-{serial[-8:].upper()}"
+    except OSError:
+        pass
+
+    # Fallback to machine-id
+    for p in ["/etc/machine-id", "/var/lib/dbus/machine-id", "/host/proc/sys/kernel/random/boot_id"]:
+        try:
+            val = Path(p).read_text().strip().replace("-", "")
+            if len(val) >= 8:
+                return f"NA-{val[:8].upper()}"
+        except OSError:
+            pass
+            
+    import hashlib
+    h = hashlib.sha256(os.uname().nodename.encode("utf-8")).hexdigest()
+    return f"NA-{h[:8].upper()}"
+
+DEVICE_ID = get_machine_device_id()
+
+
 
 
 def command(*args):
@@ -128,7 +167,15 @@ def snapshot():
         try: services[service] = inspect_service(service)
         except (subprocess.SubprocessError, json.JSONDecodeError, IndexError, OSError, ValueError) as error:
             services[service] = {"service": service, "status": "unknown", "containerState": "unknown", "reason": type(error).__name__}
-    return {"schemaVersion": 2, "collectedAt": datetime.now(timezone.utc).isoformat(), "metrics": filesystem_metrics(), "services": services}
+            
+    metrics = host_metrics()
+    metrics.update(filesystem_metrics())
+    try:
+        metrics["loadAverage"] = [round(v, 2) for v in os.getloadavg()]
+        metrics["uptimeSeconds"] = round(float((HOST_PROC_PATH / "uptime").read_text().split()[0]))
+    except Exception: pass
+
+    return {"schemaVersion": 2, "collectedAt": datetime.now(timezone.utc).isoformat(), "metrics": metrics, "services": services}
 
 
 def atomic_write(value):
@@ -148,7 +195,7 @@ def atomic_response(path, value):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(value, handle, separators=(",", ":")); handle.flush(); os.fsync(handle.fileno())
-        os.chmod(name, 0o600); os.chown(name, AGENT_UID, AGENT_UID); os.replace(name, path)
+        os.replace(name, path)
     finally:
         try: os.unlink(name)
         except FileNotFoundError: pass
@@ -263,17 +310,196 @@ def process_action_requests(now=None):
             except OSError: pass
 
 
+def http_json_request(url, method="POST", payload=None, headers=None, timeout=10):
+    headers = dict(headers or {})
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    if payload is not None and "Content-Type" not in headers:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            body = resp.read().decode("utf-8")
+            return resp.status, json.loads(body) if body else {}
+    except urllib.error.HTTPError as error:
+        try:
+            body = error.read().decode("utf-8")
+            return error.code, json.loads(body) if body else {}
+        except Exception:
+            return error.code, {}
+    except Exception as error:
+        return 0, {"error": str(error)}
+
+
+def get_central_credential():
+    if CREDENTIAL_FILE.exists():
+        try:
+            stored = json.loads(CREDENTIAL_FILE.read_text(encoding="utf-8"))
+            if stored.get("deviceId") == DEVICE_ID and stored.get("credential"):
+                return stored["credential"]
+        except Exception as e:
+            print(f"[Central] Error reading credential file: {e}", flush=True)
+
+    if not CENTRAL_URL:
+        return None
+
+    url = f"{CENTRAL_URL}/api/v1/devices/auto-enroll"
+    status, res = http_json_request(url, payload={"deviceId": DEVICE_ID, "hostname": os.uname().nodename[:160]})
+    if status in (200, 201) and res.get("credential"):
+        cred = res["credential"]
+        fd, name = tempfile.mkstemp(prefix=".cred-", dir=CREDENTIAL_FILE.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump({"deviceId": DEVICE_ID, "credential": cred}, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(name, 0o644)
+            os.replace(name, CREDENTIAL_FILE)
+        except Exception as e:
+            print(f"[Central] Error saving credential: {e}", flush=True)
+            try: os.unlink(name)
+            except FileNotFoundError: pass
+        return cred
+    elif status == 409:
+        print(f"[Central] Device {DEVICE_ID} is already registered on Central server but missing local credential file", flush=True)
+    else:
+        print(f"[Central] Auto-enroll failed ({status}): {res}", flush=True)
+    return None
+
+
+def central_cycle(snap):
+    if not CENTRAL_URL:
+        return
+
+    cred = get_central_credential()
+    if not cred:
+        return
+
+    headers = {"Authorization": f"Bearer {cred}"}
+    services = snap.get("services", {})
+    metrics = snap.get("metrics", {})
+    if not metrics:
+        metrics = host_metrics()
+
+    unhealthy = any(s.get("status") != "healthy" for s in services.values())
+    hb_payload = {
+        "deviceId": DEVICE_ID,
+        "hostname": os.uname().nodename[:160],
+        "appVersion": os.getenv("NURSEAID_APP_VERSION", "1.0.0"),
+        "hospitalCode": os.getenv("NURSEAID_HOSPITAL_CODE", ""),
+        "hospitalName": os.getenv("NURSEAID_HOSPITAL_NAME", ""),
+        "wardCode": os.getenv("NURSEAID_WARD_CODE", ""),
+        "wardName": os.getenv("NURSEAID_WARD_NAME", ""),
+        "installPoint": os.getenv("NURSEAID_INSTALL_POINT", ""),
+        "status": "unhealthy" if unhealthy else "healthy",
+        "services": services,
+        "metrics": metrics,
+        "sensors": {}
+    }
+
+    # 1. Heartbeat
+    status, res = http_json_request(f"{CENTRAL_URL}/api/v1/devices/heartbeat", payload=hb_payload, headers=headers)
+    if status == 401:
+        print("[Central] Credential rejected (401), invalidating local credential", flush=True)
+        try: CREDENTIAL_FILE.unlink(missing_ok=True)
+        except OSError: pass
+        return
+    elif status not in (200, 201):
+        print(f"[Central] Heartbeat response ({status}): {res}", flush=True)
+
+    # 2. Poll & handle log commands
+    status, res = http_json_request(f"{CENTRAL_URL}/api/v1/devices/log-commands", payload={"deviceId": DEVICE_ID}, headers=headers)
+    if status == 200 and isinstance(res.get("sessions"), list):
+        for item in res["sessions"]:
+            session_id = item.get("sessionId")
+            service = item.get("service")
+            expires_at = item.get("expiresAt")
+            if not session_id or not service or not expires_at: continue
+            req_file = SPOOL_DIR / f"{session_id}.request.json"
+            resp_file = SPOOL_DIR / f"{session_id}.response.json"
+            if not resp_file.exists():
+                try:
+                    req_file.write_text(json.dumps({"service": service, "expiresAt": expires_at}), encoding="utf-8")
+                    process_log_requests()
+                except Exception: pass
+            if resp_file.exists():
+                try:
+                    resp_data = json.loads(resp_file.read_text(encoding="utf-8"))
+                    batch_payload = {
+                        "deviceId": DEVICE_ID,
+                        "sessionId": session_id,
+                        "state": resp_data.get("state"),
+                        "content": resp_data.get("content", ""),
+                        "error": resp_data.get("error")
+                    }
+                    http_json_request(f"{CENTRAL_URL}/api/v1/devices/log-batches", payload=batch_payload, headers=headers)
+                except Exception as error:
+                    print(f"[Central] Log batch error: {error}", flush=True)
+                finally:
+                    req_file.unlink(missing_ok=True)
+                    resp_file.unlink(missing_ok=True)
+                    (SPOOL_DIR / f"{session_id}.cursor").unlink(missing_ok=True)
+
+    # 3. Poll & handle action commands
+    status, res = http_json_request(f"{CENTRAL_URL}/api/v1/devices/action-commands", payload={"deviceId": DEVICE_ID}, headers=headers)
+    if status == 200 and isinstance(res.get("actions"), list):
+        for item in res["actions"]:
+            action_id = item.get("actionId")
+            action = item.get("action")
+            service = item.get("service")
+            expires_at = item.get("expiresAt")
+            if not action_id or not action or not expires_at: continue
+            req_file = SPOOL_DIR / f"{action_id}.action-request.json"
+            resp_file = SPOOL_DIR / f"{action_id}.action-response.json"
+            if not resp_file.exists():
+                try:
+                    req_file.write_text(json.dumps({"action": action, "service": service, "expiresAt": expires_at}), encoding="utf-8")
+                    process_action_requests()
+                except Exception: pass
+            if resp_file.exists():
+                try:
+                    resp_data = json.loads(resp_file.read_text(encoding="utf-8"))
+                    result_payload = {
+                        "deviceId": DEVICE_ID,
+                        "actionId": action_id,
+                        "status": resp_data.get("status"),
+                        "result": resp_data.get("result"),
+                        "error": resp_data.get("error")
+                    }
+                    http_json_request(f"{CENTRAL_URL}/api/v1/devices/action-results", payload=result_payload, headers=headers)
+                except Exception as error:
+                    print(f"[Central] Action result error: {error}", flush=True)
+                finally:
+                    req_file.unlink(missing_ok=True)
+                    resp_file.unlink(missing_ok=True)
+
+
 def collect_once():
     atomic_write(snapshot())
     process_log_requests()
     process_action_requests()
 
 def main():
+    last_central_beat = 0
     while True:
         started = time.monotonic()
-        try: collect_once()
+        current_snap = None
+        try:
+            current_snap = snapshot()
+            atomic_write(current_snap)
+            process_log_requests()
+            process_action_requests()
         except Exception as error:
             print(json.dumps({"event": "collector_error", "error": type(error).__name__}), flush=True)
+
+        now_mono = time.monotonic()
+        if CENTRAL_URL and (now_mono - last_central_beat >= HEARTBEAT_INTERVAL):
+            last_central_beat = now_mono
+            try:
+                central_cycle(current_snap or snapshot())
+            except Exception as error:
+                print(json.dumps({"event": "central_error", "error": str(error)}), flush=True)
+
         time.sleep(max(0.2, COLLECT_INTERVAL - (time.monotonic() - started)))
 
 if __name__ == "__main__": main()
