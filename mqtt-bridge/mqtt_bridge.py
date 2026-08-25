@@ -178,6 +178,9 @@ def _on_message(client, userdata, msg):
     try:
         if topic.startswith("ble/"):
             data_json = json.loads(payload)
+            if not isinstance(data_json, dict):
+                print(f"   ⚠️ Ignored non-object payload on {topic}: {payload[:300]}")
+                return
             mac = validate_and_normalize_mac(data_json.get("mac"))
             if mac is None:
                 if VERBOSE_SENSOR_LOGS:

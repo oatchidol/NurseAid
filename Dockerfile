@@ -20,7 +20,10 @@ FROM node:18-alpine
 
 # Set timezone to Thailand (UTC+7)
 ENV TZ=Asia/Bangkok
-RUN apk add --no-cache curl tzdata && \
+# fluidsynth + soundfont-timgm (small ~6MB General MIDI soundfont) let the app
+# render user-uploaded .mid/.midi alert sounds to WAV server-side, so playback
+# doesn't depend on the browser having its own MIDI synthesizer (most don't).
+RUN apk add --no-cache curl tzdata fluidsynth soundfont-timgm && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone
 
@@ -34,6 +37,11 @@ COPY --chown=appuser:appgroup --from=builder /build/node_modules ./node_modules
 COPY --chown=appuser:appgroup package.json package-lock.json ./
 COPY --chown=appuser:appgroup server.js ./
 COPY --chown=appuser:appgroup live-status.js ./
+
+# Per-user uploaded alert sounds live here (volume-mounted so they survive
+# container recreation) — owned by appuser upfront since the app runs as
+# appuser and writes into it at runtime.
+RUN mkdir -p /app/uploads/notification-sounds && chown -R appuser:appgroup /app/uploads
 
 # Expose port
 EXPOSE 3333

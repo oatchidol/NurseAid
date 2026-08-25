@@ -5,6 +5,7 @@ __pycache__/
 .env
 .docker-compose.yml.swp
 test_output.log
+*.bak-*
 
 # AI tooling / assistant internals — never belongs in this repo, including
 # agent-tooling skills (.claude/skills/) — useful locally for driving/testing
@@ -13,6 +14,18 @@ test_output.log
 .claude/
 .codex/
 .agents/
+
+# Never commit this or anything like it: a machine-local wrapper/installer
+# that routes Claude Code work through an unverified external gateway with
+# an embedded credential. Not part of the app, not something any clone of
+# this repo should carry.
+claude.sh
+claude-9arm
+claude-chidol
+
+# TLS private key + cert are generated per-machine by scripts/generate-certs.sh
+# (see DEPLOY.md) — never shared across machines, never committed.
+nginx/certs/
 
 # deploy-run scratch (logs, pids, ad-hoc backups)
 .compose-ui-deploy/

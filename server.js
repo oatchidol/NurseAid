@@ -1,13 +1,6 @@
 const express = require('express');
 const { Pool, types } = require('pg');
-// Every timestamp column in this schema is TIMESTAMP WITHOUT TIME ZONE, and Postgres's
-// session timezone here is UTC — so NOW() is stored as plain UTC wall-clock digits with
-// no offset marker. node-postgres's default parser for that type (oid 1114) builds the
-// JS Date from those digits as if they were *local* time (the Node process runs with
-// TZ=Asia/Bangkok), which silently shifts every timestamp read from the DB back by 7
-// hours. Override the parser to treat the naive string as UTC instead, so created_at /
-// acknowledged_at / etc. report the real instant everywhere (audit log, alert history, ...).
-types.setTypeParser(1114, str => (str === null ? null : new Date(str.replace(' ', 'T') + 'Z')));
+// Removed timezone override (see git history). Postgres session is Asia/Bangkok.
 const { InfluxDB } = require('@influxdata/influxdb-client');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -15,6 +8,11 @@ const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { promisify } = require('util');
 const mqtt = require('mqtt');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { execFile } = require('child_process');
 const {
     buildLiveSnapshot,
     calculateQueryWindowMinutes,
@@ -1088,7 +1086,12 @@ async function initDatabase() {
             sound_enabled BOOLEAN DEFAULT true,
             silent_start TIME DEFAULT '22:00',
             silent_end TIME DEFAULT '06:00',
-            
+
+            -- Custom alert sound (uploaded by the user; NULL = use the standard built-in beep)
+            custom_sound_path TEXT,
+            custom_sound_original_name TEXT,
+            custom_sound_uploaded_at TIMESTAMP,
+
             updated_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE TABLE IF NOT EXISTS ai_feedback (
@@ -1136,6 +1139,12 @@ async function initDatabase() {
         await pool.query(`
             CREATE UNIQUE INDEX IF NOT EXISTS uq_vital_signs_logs_mac_recorded_at
             ON vital_signs_logs(mac, recorded_at)
+        `);
+        // Per-user custom alert sound (upload). NULL means "use the standard beep".
+        await pool.query(`
+            ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_path TEXT;
+            ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_original_name TEXT;
+            ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_uploaded_at TIMESTAMP;
         `);
     } catch (e) { console.error("Migration error:", e.message); }
     await pool.query(`
@@ -1507,8 +1516,14 @@ async function dispatchConnectionNotification(status, deviceSettings, event, thr
     };
 
     for (const user of settings.rows) {
-        if (user.line_enabled && !isSilencePeriod(user.silent_start, user.silent_end)) {
+        if (isSilencePeriod(user.silent_start, user.silent_end)) continue;
+        if (user.line_enabled && user.line_bot_token && user.line_target) {
             addDestination(user.line_bot_token, user.line_target);
+        }
+        if (user.telegram_enabled && user.telegram_bot_token && user.telegram_chat_id) {
+            tasks.push(postJson(`https://api.telegram.org/bot${user.telegram_bot_token}/sendMessage`, {
+                chat_id: user.telegram_chat_id, text
+            }));
         }
     }
     if (!isSilencePeriod(deviceSettings.silence_start, deviceSettings.silence_end)) {
@@ -2498,8 +2513,13 @@ function ui(user, active, content, script = "") {
             box-shadow: 0 0 0 2px var(--priority-high), 0 0 16px 2px color-mix(in srgb, var(--priority-high) 35%, transparent);
         }
         .card.dragging { opacity: .92; position: relative; z-index: 20; box-shadow: var(--shadow-xl); cursor: grabbing; transition: none; }
-        .card.drop-before { border-top: 3px solid var(--accent-primary) !important; }
-        .card.drop-after { border-bottom: 3px solid var(--accent-primary) !important; }
+        /* Scoped to #monitor-grid > .card (1 id + 2 classes) so these beat the #monitor-grid >
+           .card border-top-width:0 / border-left-width:4px !important rules above (1 id + 1
+           class) — both sides are !important, so specificity decides the tie, not source order. */
+        #monitor-grid > .card.drop-before { border-top: 3px solid var(--accent-primary) !important; }
+        #monitor-grid > .card.drop-after { border-bottom: 3px solid var(--accent-primary) !important; }
+        #monitor-grid > .card.drop-left { border-left: 3px solid var(--accent-primary) !important; }
+        #monitor-grid > .card.drop-right { border-right: 3px solid var(--accent-primary) !important; }
 
         #monitor-grid > .card > div:first-child {
             margin-bottom: 0.55rem !important;
@@ -3686,20 +3706,64 @@ function ui(user, active, content, script = "") {
             } catch (_) {}
         }
         document.addEventListener('pointerdown', unlockAlertAudio, { once: true });
-        function playAlert() {
-            document.getElementById('alertSound')?.play().catch(() => {
-                try {
-                    unlockAlertAudio();
-                    if (!alertAudioContext || alertAudioContext.state !== 'running') return;
+
+        // Standard beep — always the fallback, so a custom sound that fails
+        // to play (unsupported codec, network hiccup) never leaves a
+        // critical alert silent.
+        function playDefaultBeep() {
+            try {
+                unlockAlertAudio();
+                if (!alertAudioContext || alertAudioContext.state !== 'running') {
+                    document.getElementById('alertSound')?.play().catch(() => {});
+                    return;
+                }
+                const now = alertAudioContext.currentTime;
+                // 3-beep alarm pattern, ~1.8s total
+                for (let i = 0; i < 3; i++) {
+                    const start = now + i * 0.6;
                     const oscillator = alertAudioContext.createOscillator();
                     const gain = alertAudioContext.createGain();
+                    oscillator.type = 'square';
                     oscillator.frequency.value = 880;
-                    gain.gain.setValueAtTime(0.12, alertAudioContext.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, alertAudioContext.currentTime + 0.35);
+                    gain.gain.setValueAtTime(0.0001, start);
+                    gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+                    gain.gain.setValueAtTime(0.25, start + 0.45);
+                    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.55);
                     oscillator.connect(gain).connect(alertAudioContext.destination);
-                    oscillator.start(); oscillator.stop(alertAudioContext.currentTime + 0.35);
-                } catch (_) {}
-            });
+                    oscillator.start(start); oscillator.stop(start + 0.55);
+                }
+            } catch (_) {
+                document.getElementById('alertSound')?.play().catch(() => {});
+            }
+        }
+
+        // Per-user custom alert sound, checked once at load. Default (no
+        // custom sound set) keeps playing the standard beep exactly as before.
+        let hasCustomAlertSound = false;
+        (async function refreshCustomAlertSoundState() {
+            try {
+                const r = await fetch('/api/notification-settings/sound-info');
+                if (!r.ok) return;
+                const info = await r.json();
+                hasCustomAlertSound = Boolean(info.hasCustomSound);
+                if (hasCustomAlertSound) {
+                    const el = document.getElementById('alertSound');
+                    if (el) el.src = '/api/notification-sound';
+                }
+            } catch (_) {}
+        })();
+
+        function playAlert() {
+            if (hasCustomAlertSound) {
+                const el = document.getElementById('alertSound');
+                const playResult = el?.play();
+                if (playResult && typeof playResult.catch === 'function') {
+                    playResult.catch(() => playDefaultBeep());
+                    return;
+                }
+                if (el) return;
+            }
+            playDefaultBeep();
         }
 
         let globalAlertSoundTimer = null;
@@ -5743,11 +5807,12 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     const monitorGrid = document.getElementById('monitor-grid');
     let dragSrcNode = null;
     let dragInProgress = false;
+    let dragStartX = 0;
     let dragStartY = 0;
     let dropTarget = null; // { node, before }
 
     function clearDropIndicator() {
-        monitorGrid.querySelectorAll('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
+        monitorGrid.querySelectorAll('.drop-before, .drop-after, .drop-left, .drop-right').forEach(n => n.classList.remove('drop-before', 'drop-after', 'drop-left', 'drop-right'));
     }
 
     monitorGrid.addEventListener('pointerdown', (e) => {
@@ -5757,6 +5822,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         handle.setPointerCapture(e.pointerId);
         dragSrcNode = card;
         dragInProgress = true;
+        dragStartX = e.clientX;
         dragStartY = e.clientY;
         dropTarget = null;
         card.classList.add('dragging');
@@ -5765,16 +5831,32 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     monitorGrid.addEventListener('pointermove', (e) => {
         if (!dragInProgress || !dragSrcNode) return;
         e.preventDefault();
-        // Visually lift the card and have it follow the pointer vertically — without this,
-        // nothing visibly moves until a full card-height is crossed, which reads as broken.
-        dragSrcNode.style.transform = 'translateY(' + (e.clientY - dragStartY) + 'px)';
-        // Pointer capture keeps e.target locked to the handle — elementFromPoint finds
-        // whatever card is actually under the finger/cursor right now.
+        // Visually lift the card and have it follow the pointer on both axes — #monitor-grid is
+        // a multi-column CSS Grid, so a Y-only transform left horizontal drags looking frozen.
+        dragSrcNode.style.transform = 'translate(' + (e.clientX - dragStartX) + 'px, ' + (e.clientY - dragStartY) + 'px)';
+        // Pointer capture keeps e.target locked to the handle — elementFromPoint finds whatever
+        // card is actually under the finger/cursor right now. The dragged card's own transform
+        // tracks the pointer 1:1, so without this it would report itself as the hit target on
+        // nearly every sample; hide it from hit-testing for just this one query.
+        dragSrcNode.style.pointerEvents = 'none';
         const under = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-patient-key]');
+        dragSrcNode.style.pointerEvents = '';
         clearDropIndicator();
         if (!under || under === dragSrcNode) { dropTarget = null; return; }
-        const before = (e.clientY - under.getBoundingClientRect().top) < under.offsetHeight / 2;
-        under.classList.add(before ? 'drop-before' : 'drop-after');
+        // Ask the grid how many tracks are actually live right now instead of guessing from
+        // viewport width — stays correct at the 640px/1800px/2500px breakpoints and for any
+        // container-based narrowing or zoom in between.
+        const colCount = getComputedStyle(monitorGrid).gridTemplateColumns.trim().split(/\\s+/).length;
+        const rect = under.getBoundingClientRect();
+        let before, axisClass;
+        if (colCount > 1) {
+            before = (e.clientX - rect.left) < rect.width / 2;
+            axisClass = before ? 'drop-left' : 'drop-right';
+        } else {
+            before = (e.clientY - rect.top) < rect.height / 2;
+            axisClass = before ? 'drop-before' : 'drop-after';
+        }
+        under.classList.add(axisClass);
         dropTarget = { node: under, before };
     });
 
@@ -5796,9 +5878,14 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 method: 'POST', headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({ hns })
             });
-            if (!response.ok) showNotice(await apiErrorMessage(response, 'ไม่สามารถบันทึกลำดับได้'));
-        } catch (_) { showNotice('เชื่อมต่อไม่สำเร็จ ไม่สามารถบันทึกลำดับได้'); }
-        finally { updateDash(); }
+            // On success, deliberately do NOT call updateDash() here: the DOM was already
+            // optimistically reordered above (correctly), but /api/live-status is cached for
+            // LIVE_STATUS_CACHE_MS — an immediate refetch can still return the pre-reorder
+            // snapshot and reconcilePatientCards would then reassert that stale order, making a
+            // successful drag visibly "snap back" for a few seconds. Only resync on failure,
+            // where the optimistic DOM move needs to be corrected back to server truth.
+            if (!response.ok) { showNotice(await apiErrorMessage(response, 'ไม่สามารถบันทึกลำดับได้')); updateDash(); }
+        } catch (_) { showNotice('เชื่อมต่อไม่สำเร็จ ไม่สามารถบันทึกลำดับได้'); updateDash(); }
     }
     monitorGrid.addEventListener('pointerup', () => endDrag(true));
     monitorGrid.addEventListener('pointercancel', () => endDrag(false));
@@ -7884,6 +7971,221 @@ app.post('/api/notification-settings', async (req, res) => {
     }
 });
 
+// ─── Custom alert sound (per-user upload) ──────────────────────────────
+// Default behaviour is unchanged: the standard synthesized beep plays for
+// everyone. A user may instead upload their own sound (mp3/wav/ogg played
+// as-is, or a MIDI file rendered server-side to WAV so it's guaranteed to
+// play back the same way in every browser). Nothing here is required for
+// the app to keep working — it's opt-in per user, stored per user.
+const NOTIFICATION_SOUND_DIR = process.env.NOTIFICATION_SOUND_DIR || path.join(__dirname, 'uploads', 'notification-sounds');
+try { fs.mkdirSync(NOTIFICATION_SOUND_DIR, { recursive: true }); } catch (e) { console.error('[Notification Sound] Could not create upload dir:', e.message); }
+
+// A General MIDI soundfont is required to render .mid/.midi uploads to audio.
+// Installed via apk (soundfont-timgm) in the Docker image; if it's missing
+// (e.g. running outside Docker without it installed) MIDI uploads are simply
+// rejected with a clear error — mp3/wav/ogg uploads are unaffected.
+const NOTIFICATION_SOUNDFONT_PATH = [
+    '/usr/share/soundfonts/TimGM6mb.sf2',
+    '/usr/share/sounds/TimGM6mb.sf2'
+].find(p => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
+
+const NOTIFICATION_SOUND_MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2MB — plenty for a short alert clip
+const NOTIFICATION_SOUND_MAX_RENDERED_BYTES = 10 * 1024 * 1024; // cap on the WAV rendered from a MIDI upload
+const NOTIFICATION_SOUND_RENDER_TIMEOUT_MS = 15000;
+
+// ext -> how to handle it. Extension (not the client-supplied MIME type, which
+// browsers report inconsistently for .mid) decides handling; the magic-byte
+// check below is what actually gates acceptance.
+const NOTIFICATION_SOUND_TYPES = {
+    mp3: { kind: 'direct', contentType: 'audio/mpeg' },
+    wav: { kind: 'direct', contentType: 'audio/wav' },
+    ogg: { kind: 'direct', contentType: 'audio/ogg' },
+    mid: { kind: 'midi', contentType: 'audio/wav' },
+    midi: { kind: 'midi', contentType: 'audio/wav' }
+};
+
+// Sanity-check the file is actually the format its extension claims, via
+// magic bytes — we never trust the extension or client-sent MIME alone.
+function detectNotificationSoundKind(buffer, ext) {
+    if (!buffer || buffer.length < 4) return null;
+    if (ext === 'mid' || ext === 'midi') {
+        return buffer.slice(0, 4).toString('ascii') === 'MThd' ? 'midi' : null;
+    }
+    if (ext === 'wav') {
+        return buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WAVE' ? 'direct' : null;
+    }
+    if (ext === 'ogg') {
+        return buffer.slice(0, 4).toString('ascii') === 'OggS' ? 'direct' : null;
+    }
+    if (ext === 'mp3') {
+        if (buffer.slice(0, 3).toString('ascii') === 'ID3') return 'direct';
+        if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return 'direct'; // raw MPEG frame sync
+        return null;
+    }
+    return null;
+}
+
+function cleanupNotificationSoundTmpDir(dir) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+}
+
+// Renders a MIDI file to WAV with fluidsynth so playback doesn't depend on
+// the browser having its own MIDI synthesizer (most don't).
+function convertMidiToWav(midiBuffer) {
+    return new Promise((resolve, reject) => {
+        if (!NOTIFICATION_SOUNDFONT_PATH) return reject(new Error('MIDI_UNSUPPORTED_ON_SERVER'));
+        let tmpDir;
+        try {
+            tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nurseaid-midi-'));
+        } catch (e) { return reject(e); }
+        const midiPath = path.join(tmpDir, 'input.mid');
+        const wavPath = path.join(tmpDir, 'output.wav');
+        try {
+            fs.writeFileSync(midiPath, midiBuffer);
+        } catch (e) {
+            cleanupNotificationSoundTmpDir(tmpDir);
+            return reject(e);
+        }
+        execFile('fluidsynth', ['-ni', NOTIFICATION_SOUNDFONT_PATH, midiPath, '-F', wavPath, '-r', '44100'],
+            { timeout: NOTIFICATION_SOUND_RENDER_TIMEOUT_MS },
+            (error) => {
+                try {
+                    if (error) {
+                        cleanupNotificationSoundTmpDir(tmpDir);
+                        return reject(new Error('MIDI_CONVERSION_FAILED'));
+                    }
+                    const stat = fs.statSync(wavPath);
+                    if (stat.size === 0) {
+                        cleanupNotificationSoundTmpDir(tmpDir);
+                        return reject(new Error('MIDI_CONVERSION_FAILED'));
+                    }
+                    if (stat.size > NOTIFICATION_SOUND_MAX_RENDERED_BYTES) {
+                        cleanupNotificationSoundTmpDir(tmpDir);
+                        return reject(new Error('MIDI_TOO_LONG'));
+                    }
+                    const wavBuffer = fs.readFileSync(wavPath);
+                    cleanupNotificationSoundTmpDir(tmpDir);
+                    resolve(wavBuffer);
+                } catch (e) {
+                    cleanupNotificationSoundTmpDir(tmpDir);
+                    reject(e);
+                }
+            });
+    });
+}
+
+// Filenames are always server-generated (user_<id>.<ext>), never taken from
+// client input, so there's no path-traversal surface when we read them back.
+function notificationSoundFilesFor(userId) {
+    try {
+        const prefix = `user_${userId}.`;
+        return fs.readdirSync(NOTIFICATION_SOUND_DIR).filter(f => f.startsWith(prefix));
+    } catch (_) { return []; }
+}
+function clearNotificationSoundFiles(userId) {
+    for (const f of notificationSoundFilesFor(userId)) {
+        try { fs.unlinkSync(path.join(NOTIFICATION_SOUND_DIR, f)); } catch (_) {}
+    }
+}
+
+const notificationSoundUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: NOTIFICATION_SOUND_MAX_UPLOAD_BYTES },
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').replace('.', '').toLowerCase();
+        if (NOTIFICATION_SOUND_TYPES[ext]) return cb(null, true);
+        cb(new Error('UNSUPPORTED_SOUND_FORMAT'));
+    }
+}).single('sound');
+
+app.post('/api/notification-settings/sound', (req, res) => {
+    notificationSoundUpload(req, res, async (err) => {
+        if (err) {
+            const error = err.message === 'UNSUPPORTED_SOUND_FORMAT' ? 'UNSUPPORTED_SOUND_FORMAT'
+                : err.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'UPLOAD_FAILED';
+            return res.status(400).json({ error });
+        }
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: 'NO_FILE' });
+
+        const userId = req.user.id;
+        const ext = path.extname(file.originalname || '').replace('.', '').toLowerCase();
+        const typeInfo = NOTIFICATION_SOUND_TYPES[ext];
+        if (!typeInfo) return res.status(400).json({ error: 'UNSUPPORTED_SOUND_FORMAT' });
+        if (!detectNotificationSoundKind(file.buffer, ext)) return res.status(400).json({ error: 'INVALID_AUDIO_FILE' });
+
+        try {
+            let finalBuffer = file.buffer;
+            let finalExt = ext;
+            if (typeInfo.kind === 'midi') {
+                finalBuffer = await convertMidiToWav(file.buffer);
+                finalExt = 'wav';
+            }
+            clearNotificationSoundFiles(userId);
+            fs.writeFileSync(path.join(NOTIFICATION_SOUND_DIR, `user_${userId}.${finalExt}`), finalBuffer);
+
+            const originalName = String(file.originalname || 'sound').slice(0, 120);
+            await pool.query(`
+                INSERT INTO user_notification_settings (user_id, custom_sound_path, custom_sound_original_name, custom_sound_uploaded_at)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET
+                    custom_sound_path = EXCLUDED.custom_sound_path,
+                    custom_sound_original_name = EXCLUDED.custom_sound_original_name,
+                    custom_sound_uploaded_at = NOW()
+            `, [userId, `user_${userId}.${finalExt}`, originalName]);
+
+            res.json({ success: true, originalName, converted: typeInfo.kind === 'midi' });
+        } catch (e) {
+            console.error('[Notification Sound] Upload error:', e.message);
+            const knownErrors = {
+                MIDI_CONVERSION_FAILED: 'MIDI_CONVERSION_FAILED',
+                MIDI_TOO_LONG: 'MIDI_TOO_LONG',
+                MIDI_UNSUPPORTED_ON_SERVER: 'MIDI_UNSUPPORTED_ON_SERVER'
+            };
+            res.status(knownErrors[e.message] === 'MIDI_UNSUPPORTED_ON_SERVER' ? 503 : 500)
+                .json({ error: knownErrors[e.message] || 'UPLOAD_FAILED' });
+        }
+    });
+});
+
+app.delete('/api/notification-settings/sound', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        clearNotificationSoundFiles(userId);
+        await pool.query(
+            'UPDATE user_notification_settings SET custom_sound_path=NULL, custom_sound_original_name=NULL, custom_sound_uploaded_at=NULL WHERE user_id=$1',
+            [userId]
+        );
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/notification-settings/sound-info', async (req, res) => {
+    const r = await pool.query(
+        'SELECT custom_sound_path, custom_sound_original_name FROM user_notification_settings WHERE user_id=$1',
+        [req.user.id]
+    );
+    const row = r.rows[0];
+    res.json({ hasCustomSound: Boolean(row && row.custom_sound_path), originalName: row?.custom_sound_original_name || null });
+});
+
+app.get('/api/notification-sound', async (req, res) => {
+    const r = await pool.query('SELECT custom_sound_path FROM user_notification_settings WHERE user_id=$1', [req.user.id]);
+    const filename = r.rows[0]?.custom_sound_path;
+    if (!filename) return res.status(404).end();
+    const ext = path.extname(filename).replace('.', '').toLowerCase();
+    const contentType = (NOTIFICATION_SOUND_TYPES[ext] || {}).contentType || 'application/octet-stream';
+    const fullPath = path.join(NOTIFICATION_SOUND_DIR, filename);
+    fs.access(fullPath, fs.constants.R_OK, (err) => {
+        if (err) return res.status(404).end();
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'no-store');
+        res.sendFile(fullPath);
+    });
+});
+
 app.get('/notification-settings', async (req, res) => {
     const userId = req.user.id;
 
@@ -8029,12 +8331,81 @@ app.get('/notification-settings', async (req, res) => {
                 </div>
             </div>
 
+            <!-- Custom Alert Sound -->
+            <div class="card p-6">
+                <h3 class="font-bold text-lg mb-1">🎵 เสียงแจ้งเตือนของคุณ</h3>
+                <p class="text-slate-500 text-xs mb-4">ค่ามาตรฐานคือเสียงบี๊บของระบบ — ถ้าต้องการ สามารถอัปโหลดไฟล์เสียงของตัวเองได้ (mp3, wav, ogg หรือ midi — ไม่เกิน 2MB) ไฟล์ MIDI จะถูกแปลงเป็นเสียงให้อัตโนมัติ</p>
+                <div id="custom-sound-status" class="text-sm font-bold mb-3">${s.custom_sound_original_name ? '🎵 ใช้งานอยู่: ' + escapeHtml(s.custom_sound_original_name) : '🔊 ใช้เสียงมาตรฐาน (บี๊บ)'}</div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <input id="custom-sound-file" type="file" accept=".mp3,.wav,.ogg,.mid,.midi,audio/mpeg,audio/wav,audio/ogg,audio/midi" class="text-sm">
+                    <button onclick="uploadCustomSound()" class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 transition-colors">อัปโหลด</button>
+                    <button onclick="testCustomSound()" class="bg-slate-200 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-300 transition-colors">🔈 ทดสอบเสียง</button>
+                    <button onclick="resetCustomSound()" class="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">คืนค่ามาตรฐาน</button>
+                </div>
+            </div>
+
             <!-- Save Button -->
             <button onclick="saveNotifSettings()" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold text-lg hover:bg-blue-700 transition-colors">
                 💾 บันทึกรายการตังค่า
             </button>
         </div>
     `, `
+        const CUSTOM_SOUND_ERROR_MESSAGES = {
+            UNSUPPORTED_SOUND_FORMAT: 'รองรับเฉพาะไฟล์ mp3, wav, ogg, mid/midi',
+            INVALID_AUDIO_FILE: 'ไฟล์นี้ไม่ใช่ไฟล์เสียงที่ถูกต้อง',
+            FILE_TOO_LARGE: 'ไฟล์ใหญ่เกินไป (จำกัด 2MB)',
+            MIDI_CONVERSION_FAILED: 'ไม่สามารถแปลงไฟล์ MIDI นี้ได้',
+            MIDI_TOO_LONG: 'ไฟล์ MIDI นี้ยาวเกินไป',
+            MIDI_UNSUPPORTED_ON_SERVER: 'เซิร์ฟเวอร์นี้ยังไม่รองรับไฟล์ MIDI ในขณะนี้'
+        };
+        async function uploadCustomSound() {
+            const input = document.getElementById('custom-sound-file');
+            const file = input.files && input.files[0];
+            const statusEl = document.getElementById('custom-sound-status');
+            if (!file) return showNotice('กรุณาเลือกไฟล์เสียงก่อน', {kind:'warning'});
+            if (file.size > 2 * 1024 * 1024) return showNotice('ไฟล์ใหญ่เกินไป (จำกัด 2MB)', {kind:'warning'});
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            if (!['mp3','wav','ogg','mid','midi'].includes(ext)) return showNotice('รองรับเฉพาะไฟล์ mp3, wav, ogg, mid/midi', {kind:'warning'});
+            const previousStatus = statusEl.textContent;
+            statusEl.textContent = '⏳ กำลังอัปโหลด...';
+            const formData = new FormData();
+            formData.append('sound', file);
+            try {
+                const r = await fetch('/api/notification-settings/sound', { method: 'POST', body: formData });
+                const result = await r.json();
+                if (!r.ok) {
+                    statusEl.textContent = previousStatus;
+                    return showNotice(CUSTOM_SOUND_ERROR_MESSAGES[result.error] || 'อัปโหลดไม่สำเร็จ', {kind:'error'});
+                }
+                statusEl.textContent = '🎵 ใช้งานอยู่: ' + result.originalName + (result.converted ? ' (แปลงจาก MIDI แล้ว)' : '');
+                input.value = '';
+                showNotice('อัปโหลดเสียงแจ้งเตือนสำเร็จ!');
+            } catch (e) {
+                statusEl.textContent = previousStatus;
+                showNotice('Connection error: ' + e.message, {kind:'error'});
+            }
+        }
+        async function testCustomSound() {
+            try {
+                const r = await fetch('/api/notification-settings/sound-info');
+                const info = await r.json();
+                const audio = new Audio(info.hasCustomSound ? '/api/notification-sound' : 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+                audio.play().catch(() => showNotice('เล่นเสียงไม่ได้ในเบราว์เซอร์นี้', {kind:'error'}));
+            } catch (e) {
+                showNotice('Connection error: ' + e.message, {kind:'error'});
+            }
+        }
+        async function resetCustomSound() {
+            if (!await confirmAction({title:'คืนค่าเสียงมาตรฐาน', body:'<p>ต้องการยกเลิกเสียงที่อัปโหลดไว้ และกลับไปใช้เสียงบี๊บมาตรฐานหรือไม่?</p>', confirmText:'คืนค่ามาตรฐาน'})) return;
+            try {
+                const r = await fetch('/api/notification-settings/sound', { method: 'DELETE' });
+                if (!r.ok) return showNotice('ไม่สามารถคืนค่ามาตรฐานได้', {kind:'error'});
+                document.getElementById('custom-sound-status').textContent = '🔊 ใช้เสียงมาตรฐาน (บี๊บ)';
+                showNotice('คืนค่าเสียงมาตรฐานแล้ว');
+            } catch (e) {
+                showNotice('Connection error: ' + e.message, {kind:'error'});
+            }
+        }
         async function saveNotifSettings() {
             const payload = {
                 line_enabled: document.getElementById('line-enabled').checked,
@@ -8059,6 +8430,7 @@ app.get('/notification-settings', async (req, res) => {
                 silent_start: document.getElementById('silent-start').value,
                 silent_end: document.getElementById('silent-end').value
             };
+
 
             try {
                 const r = await fetch('/api/notification-settings', {
@@ -8266,7 +8638,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                    </div>`
                 : `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     ${wards.map(w => {
-                        const hasRefs = (+w.patient_count > 0 || +w.active_devices > 0 || +w.assigned_users > 0 || +w.alert_log_count > 0 || +w.audit_log_count > 0);
+                        const hasRefs = (+w.patient_count > 0 || +w.active_devices > 0 || +w.assigned_users > 0);
                         const stat = (icon, label, value) => `<div class="flex items-center gap-2.5 rounded-xl px-3 py-2" style="background: var(--bg-badge);">
                             <span style="color: var(--text-tertiary);" aria-hidden="true">${icon}</span>
                             <div class="min-w-0"><p class="text-[10px] font-bold uppercase tracking-wide" style="color: var(--text-tertiary);">${label}</p><p class="text-sm font-black tabular-nums" style="color: var(--text-primary);">${value ?? 0}</p></div>
@@ -8411,35 +8783,38 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
             }
             
             async function deleteWard(id, code, patientCount = 0, deviceCount = 0, staffCount = 0, alertCount = 0, auditCount = 0) {
+                const hasBlockingRefs = (+patientCount + +deviceCount + +staffCount) > 0;
+                const hasLogs = (+alertCount + +auditCount) > 0;
+                let bodyHtml = '<p>ต้องการลบ Ward <strong>\u201c' + escapeHTML(code) + '\u201d</strong> ใช่หรือไม่?</p>';
+                bodyHtml += '<div class="dialog-note"><strong>หมายเหตุ:</strong> การลบ Ward ไม่สามารถย้อนกลับได้</div>';
+                if (hasBlockingRefs) {
+                    bodyHtml += '<p class="text-sm" style="color:var(--danger);">ไม่สามารถลบได้เพราะ Ward นี้ยังมีข้อมูลอ้างอิง:</p>';
+                    bodyHtml += '<ul class="text-sm list-disc pl-5" style="color:var(--text-secondary);">';
+                    if (+patientCount > 0) bodyHtml += '<li>ผู้ป่วย ' + patientCount + ' คน</li>';
+                    if (+deviceCount > 0) bodyHtml += '<li>อุปกรณ์ ' + deviceCount + ' เครื่อง</li>';
+                    if (+staffCount > 0) bodyHtml += '<li>เจ้าหน้าที่ ' + staffCount + ' คน</li>';
+                    bodyHtml += '</ul>';
+                } else if (hasLogs) {
+                    bodyHtml += '<p class="text-sm" style="color:var(--text-secondary);">บันทึก Log ที่เกี่ยวข้องจะถูกลบไปด้วย:</p>';
+                    bodyHtml += '<ul class="text-sm list-disc pl-5" style="color:var(--text-secondary);">';
+                    if (+alertCount > 0) bodyHtml += '<li>บันทึกการแจ้งเตือน ' + alertCount + ' รายการ</li>';
+                    if (+auditCount > 0) bodyHtml += '<li>บันทึกการตรวจสอบ ' + auditCount + ' รายการ</li>';
+                    bodyHtml += '</ul>';
+                }
                 await confirmAction({
                     title: 'ลบ Ward',
                     kind: 'danger',
                     confirmText: 'ลบ Ward',
                     loadingText: 'กำลังลบ…',
-                    body: '<p>ต้องการลบ Ward <strong>“' + escapeHTML(code) + '”</strong> ใช่หรือไม่?</p>' +
-                          '<div class="dialog-note"><strong>หมายเหตุ:</strong> การลบ Ward ไม่สามารถย้อนกลับได้</div>' +
-                          ((+patientCount + +deviceCount + +staffCount + +alertCount + +auditCount) > 0
-                            ? '<p class="text-sm" style="color:var(--danger);">ไม่สามารถลบได้เพราะ Ward นี้ยังมีข้อมูลอ้างอิง:</p>' +
-                              '<ul class="text-sm list-disc pl-5" style="color:var(--text-secondary);">' +
-                              (+patientCount > 0 ? '<li>ผู้ป่วย ' + patientCount + ' คน</li>' : '') +
-                              (+deviceCount > 0 ? '<li>อุปกรณ์ ' + deviceCount + ' เครื่อง</li>' : '') +
-                              (+staffCount > 0 ? '<li>เจ้าหน้าที่ ' + staffCount + ' คน</li>' : '') +
-                              (+alertCount > 0 ? '<li>บันทึกการแจ้งเตือน ' + alertCount + ' รายการ</li>' : '') +
-                              (+auditCount > 0 ? '<li>บันทึกการตรวจสอบ ' + auditCount + ' รายการ</li>' : '') +
-                              '</ul>'
-                            : ''),
+                    body: bodyHtml,
                     onConfirm: async () => {
                         const response = await fetch('/api/wards/' + id, { method: 'DELETE' });
                         const payload = await response.json().catch(() => ({}));
-                        // 409 with blocked details (data added since the page rendered, or a
-                        // stale tab): explain exactly what's in the way before anything else.
                         if (payload.blocked) {
-                            let detail = 'ไม่สามารถลบ Ward “' + code + '” ได้ เนื่องจากยังมีข้อมูลอ้างอิง:';
+                            let detail = 'ไม่สามารถลบ Ward \u201c' + code + '\u201d ได้ เนื่องจากยังมีข้อมูลอ้างอิง:';
                             if (payload.blocked.patients > 0) detail += '\\n• ผู้ป่วย ' + payload.blocked.patients + ' คน';
                             if (payload.blocked.devices > 0) detail += '\\n• อุปกรณ์ ' + payload.blocked.devices + ' เครื่อง';
                             if (payload.blocked.staff > 0) detail += '\\n• เจ้าหน้าที่ ' + payload.blocked.staff + ' คน';
-                            if (payload.blocked.alert_logs > 0) detail += '\\n• บันทึกการแจ้งเตือน ' + payload.blocked.alert_logs + ' รายการ';
-                            if (payload.blocked.audit_logs > 0) detail += '\\n• บันทึกการตรวจสอบ ' + payload.blocked.audit_logs + ' รายการ';
                             throw new Error(detail);
                         }
                         if (!response.ok) throw new Error(payload.error || payload.message || 'ไม่สามารถลบ Ward ได้');
@@ -8540,14 +8915,11 @@ app.delete('/api/wards/:id', requireCapability('wards:manage'), async (req, res)
             SELECT
               (SELECT COUNT(*) FROM patients    WHERE ward_id = $1) AS patients,
               (SELECT COUNT(*) FROM nurseaid    WHERE ward_id = $1) AS devices,
-              (SELECT COUNT(*) FROM user_wards  WHERE ward_id = $1) AS staff,
-              (SELECT COUNT(*) FROM alert_logs  WHERE ward_id = $1) AS alert_logs,
-              (SELECT COUNT(*) FROM audit_logs  WHERE ward_id = $1) AS audit_logs
+              (SELECT COUNT(*) FROM user_wards  WHERE ward_id = $1) AS staff
         `, [id]);
         const blocked = refs.rows[0];
 
-        if (blocked.patients > 0 || blocked.devices > 0 || blocked.staff > 0 ||
-            blocked.alert_logs > 0 || blocked.audit_logs > 0) {
+        if (blocked.patients > 0 || blocked.devices > 0 || blocked.staff > 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({
                 error: 'Ward has related records and cannot be deleted.',
@@ -8555,6 +8927,9 @@ app.delete('/api/wards/:id', requireCapability('wards:manage'), async (req, res)
             });
         }
 
+        // Cascade delete logs that reference this ward
+        await client.query('DELETE FROM alert_logs WHERE ward_id = $1', [id]);
+        await client.query('DELETE FROM audit_logs WHERE ward_id = $1', [id]);
         await client.query('DELETE FROM wards WHERE id=$1', [id]);
         await client.query('COMMIT');
         logAudit(req, 'DELETE', 'ward', id, { ward_code, ward_name }).catch(console.error);

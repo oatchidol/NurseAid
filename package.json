@@ -19,6 +19,7 @@
     "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.3",
     "mqtt": "^5.15.2",
+    "multer": "^2.2.0",
     "nodemailer": "^9.0.1",
     "pg": "^8.20.0"
   },

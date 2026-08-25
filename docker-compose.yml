@@ -116,6 +116,8 @@ services:
       - AI_CONVERSATION_MAX_TOKENS=${AI_CONVERSATION_MAX_TOKENS:-4096}
     ports:
       - "3333:3333"
+    volumes:
+      - notification_sounds_data:/app/uploads/notification-sounds
     depends_on:
       - influxdb
       - postgres
@@ -171,6 +173,8 @@ services:
       dockerfile: Dockerfile.collector
     container_name: nurseaid-compose-collector
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - TZ=Asia/Bangkok
       - NURSEAID_PROJECT_NAME=nurseaid
@@ -178,6 +182,10 @@ services:
       - NURSEAID_COLLECT_INTERVAL=3
       - NURSEAID_AGENT_UID=65532
       - NURSEAID_INITIAL_LOG_HISTORY_MINUTES=${NURSEAID_INITIAL_LOG_HISTORY_MINUTES:-30}
+      - NURSEAID_CENTRAL_URL=${NURSEAID_CENTRAL_URL:-https://nurseaid-central.softsquaregroup.com}
+      - NURSEAID_DEVICE_ID=${NURSEAID_DEVICE_ID:-}
+      - NURSEAID_HEARTBEAT_INTERVAL=${NURSEAID_HEARTBEAT_INTERVAL:-60}
+
     volumes:
       - compose_status:/run/nurseaid-compose
       - ./ops:/host/project:ro
@@ -186,6 +194,8 @@ services:
       - /proc/meminfo:/host/proc/meminfo:ro
       - /proc/uptime:/host/proc/uptime:ro
       - /sys/class/thermal/thermal_zone0/temp:/host/sys/class/thermal/thermal_zone0/temp:ro
+      - /etc/machine-id:/etc/machine-id:ro
+
     networks:
       - nurseaid-network
     security_opt:
@@ -201,6 +211,28 @@ services:
     tmpfs:
       - /tmp
 
+  # === Nginx HTTPS Reverse Proxy ===
+  nginx:
+    logging: *default-logging
+    image: nginx:alpine
+    container_name: nurseaid-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - nurseaid-network
+    depends_on:
+      - nurseaid
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider --no-check-certificate https://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   compose_status:
     driver: local
@@ -209,6 +241,8 @@ volumes:
   postgres_data:
     driver: local
   mosquitto_data:
+    driver: local
+  notification_sounds_data:
     driver: local
 
 networks:

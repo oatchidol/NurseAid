@@ -117,12 +117,52 @@ Open `http://<machine-ip>:3333`, sign in with `INITIAL_ADMIN_USERNAME` /
    lives on the patient record, not a placeholder).
 3. Add users/patients/devices as needed.
 
-## 6. Domain / HTTPS (if applicable)
-This repo does not manage the reverse proxy. If the app sits behind an
-nginx edge host on a domain (as production currently does), point that
-proxy's upstream at the new machine's IP:3333 and make sure it forwards
-`X-Forwarded-*` headers — the app trusts the proxy for origin checks on
-non-GET requests.
+## 6. HTTPS (nginx + self-signed certificate)
+
+NurseAid ใช้ nginx container เป็น reverse proxy ข้างหน้า app
+โดย terminate TLS ด้วย self-signed certificate — ใช้ได้ทันทีบน LAN
+โดยไม่ต้องมี domain, ไม่ต้องเปิด port ที่ router, ไม่ต้องพึ่ง third-party
+
+### 6.1 สร้าง certificate (ครั้งเดียว)
+
+```sh
+scripts/generate-certs.sh
+```
+
+Script จะ:
+- สร้าง EC P-256 self-signed cert อายุ 10 ปี
+- ใส่ hostname + IP ทั้งหมดของเครื่องเป็น SAN
+- เก็บไว้ที่ `nginx/certs/` (อยู่ใน `.gitignore` แล้ว)
+
+### 6.2 Start stack
+
+```sh
+docker compose up -d --build
+```
+
+ตรวจสอบ:
+```sh
+docker compose ps nginx
+# ต้อง Healthy
+
+curl -skI https://localhost/health/ready
+# HTTP/1.1 200 OK
+```
+
+### 6.3 เข้าใช้งาน
+
+| Protocol | URL | หมายเหตุ |
+|----------|-----|----------|
+| HTTPS | `https://<machine-ip>/` | Browser เตือนครั้งแรก — กด Advanced → Proceed |
+| HTTP | `http://<machine-ip>:3333/` | ยังใช้ได้ (direct to app, no TLS) |
+
+### 6.4 Trust certificate (ไม่ให้ browser เตือนอีก)
+
+Download `nginx/certs/nurseaid.crt` แล้ว import ที่ device:
+- **Android**: Settings → Security → Install from storage
+- **iOS**: AirDrop/email `.crt` file → Install Profile → Trust
+- **Chrome**: Settings → Privacy → Manage certificates → Import
+- **Windows**: Double-click `.crt` → Install → Trusted Root CA
 
 ## Known gaps (not yet automated here)
 - No data migration path is included by design — this produces a
