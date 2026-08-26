@@ -1662,15 +1662,18 @@ function renderNavLinks(user, active) {
     
     if (roleHasCapability(role, 'patients:read')) main += `<a href="/" title="Monitor" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'dash' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📊</span><span class="sidebar-hide">Monitor</span></a>\n`;
     if (roleHasCapability(role, 'export:read')) main += `<a href="/export" title="Report" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'export' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📥</span><span class="sidebar-hide">Report</span></a>\n`;
-    
+    // Quick Setup Wizard (Device -> Patient -> Pair) — placed right after Report,
+    // ahead of the individual Devices/Patients/Pairing pages, since it's the
+    // faster/guided path most admins reach for first. The three write
+    // capabilities this wizard needs (devices:write, patients:write,
+    // pairing:write) are always co-granted to the same roles in
+    // ROLE_CAPABILITIES, so gating on any one of them is equivalent to
+    // requiring all three.
+    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="Quick Setup" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🚀</span><span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
+
     if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="Devices" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📟</span><span class="sidebar-hide">Devices</span></a>\n`;
     if (roleHasCapability(role, 'patients:write')) main += `<a href="/patients-mgmt" title="Patients" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'pats' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">👥</span><span class="sidebar-hide">Patients</span></a>\n`;
     if (roleHasCapability(role, 'pairing:write')) main += `<a href="/matching" title="Pairing" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'match' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">⌚</span><span class="sidebar-hide">Pairing</span></a>\n`;
-    // Quick Setup Wizard (Device -> Patient -> Pair). The three write capabilities
-    // this wizard needs (devices:write, patients:write, pairing:write) are always
-    // co-granted to the same roles in ROLE_CAPABILITIES, so gating on any one of
-    // them is equivalent to requiring all three.
-    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="Quick Setup" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🚀</span><span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
 
     if (roleHasCapability(role, 'wards:manage')) main += `<a href="/wards-mgmt" title="Wards" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'wards' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🏥</span><span class="sidebar-hide">Wards</span></a>\n`;
     if (roleHasCapability(role, 'users:manage:ward') || roleHasCapability(role, 'users:manage:all')) main += `<a href="/users-mgmt" title="Users" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'users' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🛡️</span><span class="sidebar-hide">Users</span></a>\n`;
@@ -3420,6 +3423,7 @@ function ui(user, active, content, script = "") {
         .qs-list-item[aria-pressed="true"] { border-color:var(--accent-primary); background:color-mix(in srgb, var(--accent-primary) 9%, var(--bg-input)); }
         .qs-list-item-name { font-weight:700; color:var(--text-primary); font-size:.85rem; }
         .qs-list-item-sub { font-family:ui-monospace,monospace; font-size:.72rem; color:var(--text-tertiary); margin-top:1px; }
+        .qs-list-item-badge { flex-shrink:0; font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:.5rem; background:var(--bg-badge); color:var(--text-secondary); white-space:nowrap; }
         .qs-empty { padding:1.25rem; text-align:center; border-radius:.7rem; border:1px dashed var(--border-color); background:var(--bg-input); color:var(--text-secondary); font-size:.85rem; }
         .qs-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-weight:800; color:#fff; background:var(--accent-primary); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
         .qs-primary:disabled { opacity:.55; cursor:not-allowed; }
@@ -5369,6 +5373,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         </div>
 
         <div class="flex items-center gap-2">
+            ${roleHasCapability(req.user?.role, 'devices:write') ? `<a href="/quick-setup" class="qs-primary" style="font-size:.68rem; padding:.5rem 1rem; border-radius:9999px;"><span aria-hidden="true">🚀</span> เริ่มต้นใช้งาน</a>` : ''}
             <div id="patient-count" class="dashboard-sync text-[10px] font-bold px-4 py-2 rounded-full font-mono italic shadow-sm" style="background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);">0 Patients</div>
             <div id="last-sync" class="dashboard-sync text-[10px] font-bold px-4 py-2 rounded-full font-mono italic shadow-sm" style="background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border-color);">🔄 Syncing...</div>
         </div>
@@ -8941,11 +8946,11 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             <div id="qs-panel-1" class="card qs-panel">
                 <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 1 · อุปกรณ์</p>
                 <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทอุปกรณ์">
-                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="true">เพิ่มอุปกรณ์ใหม่</button>
-                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false">ใช้อุปกรณ์ที่มีอยู่</button>
+                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="false">เพิ่มอุปกรณ์ใหม่</button>
+                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="true">ใช้อุปกรณ์ที่มีอยู่</button>
                 </div>
 
-                <div id="qs-create-new-section">
+                <div id="qs-create-new-section" class="is-hidden">
                     <div class="space-y-3">
                         <div>
                             <label for="qs-d-dno" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขอุปกรณ์ (Device No)</label>
@@ -8969,7 +8974,7 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                     </div>
                 </div>
 
-                <div id="qs-existing-section" class="is-hidden">
+                <div id="qs-existing-section">
                     <div class="space-y-3">
                         <div id="qs-existing-list" role="list" aria-label="อุปกรณ์ที่พร้อมใช้งาน"></div>
                         <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้และไปต่อ</button>
@@ -9126,7 +9131,9 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                 item.className = 'qs-list-item';
                 item.setAttribute('role', 'button');
                 item.tabIndex = 0;
-                item.innerHTML = '<div><div class="qs-list-item-name">' + escapeHTML(device.device_no) + '</div><div class="qs-list-item-sub">' + escapeHTML(device.mac) + '</div></div>';
+                const typeLabel = device.device_type === 'wearos' ? 'Wear OS' : device.device_type === 'jstyle' ? 'JStyle / iStyle' : escapeHTML(device.device_type || '');
+                item.innerHTML = '<div><div class="qs-list-item-name">' + escapeHTML(device.device_no) + '</div><div class="qs-list-item-sub">' + escapeHTML(device.mac) + '</div></div>'
+                    + '<span class="qs-list-item-badge">' + typeLabel + '</span>';
                 item.addEventListener('click', () => selectExistingDevice(device, item));
                 list.appendChild(item);
             });
@@ -9265,8 +9272,9 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             const pSubmitExisting = document.getElementById('qs-p-submit-existing');
             if (pSubmitExisting) pSubmitExisting.disabled = true;
 
-            // Back both mode toggles to their "create new" default.
-            setDeviceMode(false);
+            // Back both mode toggles to their defaults — device defaults to
+            // "existing" (the common case), patient defaults to "create new".
+            setDeviceMode(true);
             setPatientMode(false);
 
             sessionStorage.removeItem('nurseaid-quick-setup');
@@ -9274,6 +9282,12 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
         }
 
         function initQuickSetup() {
+            // "Use existing device" is the default visible state now (real-world
+            // usage: the device is almost always already registered, just not
+            // yet paired) — kick off the fetch immediately instead of waiting
+            // for a mode-toggle click that may never happen.
+            loadAvailableDevices();
+
             const modeNew = document.getElementById('qs-d-mode-new');
             const modeExisting = document.getElementById('qs-d-mode-existing');
             if (modeNew) modeNew.addEventListener('click', () => setDeviceMode(false));
