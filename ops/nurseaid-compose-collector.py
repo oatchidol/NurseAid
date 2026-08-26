@@ -387,6 +387,18 @@ def release_apply_update_lock():
     except OSError: pass
 
 
+def report_phase(action_id, phase):
+    """Write an interim 'still pending, here's where we are' response so the
+    client's poll loop can render real progress instead of a static
+    "updating..." message for however long build/health-check takes.
+    Best-effort: a write failure here must never abort the actual pipeline."""
+    try:
+        response_path = APPLY_UPDATE_SPOOL / f"{action_id}.action-response.json"
+        atomic_response(response_path, {"actionId": action_id, "status": "pending", "phase": phase}, chown_gid=APPLY_UPDATE_APP_GID)
+    except OSError as error:
+        print(f"[ApplyUpdate] phase report failed ({phase}): {error}", flush=True)
+
+
 def run_apply_update(action_id):
     """The actual pipeline. Always releases the lock. Never raises for a
     handled build/health failure — those return a result dict describing
@@ -395,6 +407,7 @@ def run_apply_update(action_id):
     caller turns into a 'failed' response."""
     acquire_apply_update_lock()
     try:
+        report_phase(action_id, "checking")
         # Clean-tree guard: never git-reset/checkout over an ops engineer's
         # in-progress edit on the same checkout this bind-mounts.
         if repo_command("git", "status", "--porcelain").strip():
@@ -409,6 +422,7 @@ def run_apply_update(action_id):
         if not old_image:
             raise RuntimeError("could not resolve current nurseaid image id")
 
+        report_phase(action_id, "pulling")
         repo_command("git", "fetch", timeout=60)
         repo_command("git", "pull", timeout=60)
         new_sha = repo_command("git", "rev-parse", "HEAD").strip()
@@ -420,6 +434,7 @@ def run_apply_update(action_id):
 
         # Build only — does not touch the running container. A build failure
         # is zero-disruption: restore the working tree and stop.
+        report_phase(action_id, "building")
         try:
             compose_command("build", "nurseaid", timeout=600)
         except subprocess.CalledProcessError as build_error:
@@ -441,6 +456,7 @@ def run_apply_update(action_id):
         # old container at all yet — but /repo's git state has already moved
         # to new_sha, so it must still be reset to stay consistent with
         # whatever container actually ends up running.
+        report_phase(action_id, "starting")
         try:
             compose_command("up", "-d", "nurseaid", timeout=120)
         except subprocess.CalledProcessError as up_error:
@@ -451,6 +467,7 @@ def run_apply_update(action_id):
                 "error": (up_error.stderr or up_error.stdout or "")[-2000:],
             })
             raise RuntimeError("failed to recreate the container on the new build; working tree restored — verify the running container manually, it may still be the old version")
+        report_phase(action_id, "health_check")
         runtime = wait_for_service("nurseaid", timeout=90)
 
         if runtime.get("status") == "healthy":
@@ -463,12 +480,14 @@ def run_apply_update(action_id):
             "fromSha": old_sha, "toSha": new_sha, "healthy": False, "rolledBack": True,
             "reason": runtime.get("reason") or "new version failed health check",
         }
+        report_phase(action_id, "rolling_back")
         try:
             command("docker", "tag", old_image, "nurseaid-nurseaid:latest")
             # Same reasoning as the build-failure path above: reset --hard,
             # not checkout, to avoid leaving /repo in detached HEAD.
             repo_command("git", "reset", "--hard", old_sha, timeout=30)
             compose_command("up", "-d", "nurseaid", timeout=120)
+            report_phase(action_id, "rollback_health_check")
             rollback_runtime = wait_for_service("nurseaid", timeout=90)
             result["rollbackHealthy"] = rollback_runtime.get("status") == "healthy"
             if not result["rollbackHealthy"]:

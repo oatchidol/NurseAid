@@ -9561,6 +9561,15 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                     ติดตั้งอัตโนมัติทันที
                 </button>
                 <p id="apply-update-status" class="hidden mt-3 rounded-xl border p-3 text-sm font-semibold" role="status" aria-live="polite"></p>
+                <div id="apply-update-progress-wrap" class="hidden mt-3">
+                    <div class="rounded-full overflow-hidden" style="background: var(--bg-badge); height: .5rem;">
+                        <div id="apply-update-progress-bar" style="height:.5rem; width:5%; background: var(--accent-primary); transition: width .5s ease, background-color .3s ease; border-radius: 9999px;"></div>
+                    </div>
+                    <div class="flex justify-between items-center mt-1.5 text-[11px]" style="color: var(--text-tertiary);">
+                        <span id="apply-update-phase-label">กำลังเริ่มต้น…</span>
+                        <span id="apply-update-elapsed"></span>
+                    </div>
+                </div>
                 <div id="apply-update-critical" class="hidden mt-3 bg-red-600 text-white border-2 border-red-800 p-4 rounded-xl font-black">🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้</div>
                 <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: #fffbeb; color: #713f12;">git pull&#10;docker compose up -d --build</pre>
             </div>
@@ -9657,19 +9666,67 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 applyInProgress = false;
             }
         }
+        // Phase -> {label, percent, color}. Percents are rough weights, not
+        // measured — "building" gets the biggest share because a docker
+        // build is usually by far the longest single step (up to 600s
+        // server-side). Order mirrors run_apply_update()'s actual sequence
+        // in ops/nurseaid-compose-collector.py.
+        const APPLY_UPDATE_PHASES = {
+            checking:               { label: '🔍 กำลังตรวจสอบระบบ…',              percent: 8,  color: 'var(--accent-primary)' },
+            pulling:                { label: '⬇️ กำลังดึงโค้ดล่าสุดจาก GitHub…',    percent: 20, color: 'var(--accent-primary)' },
+            building:               { label: '🏗️ กำลังสร้างเวอร์ชันใหม่ (ขั้นตอนนี้ใช้เวลานานสุด)…', percent: 55, color: 'var(--accent-primary)' },
+            starting:               { label: '🔄 กำลังรีสตาร์ทระบบด้วยเวอร์ชันใหม่…', percent: 78, color: 'var(--accent-primary)' },
+            health_check:           { label: '🩺 กำลังตรวจสอบว่าระบบทำงานปกติ…',    percent: 92, color: 'var(--accent-primary)' },
+            rolling_back:           { label: '↩️ เวอร์ชันใหม่มีปัญหา กำลังย้อนกลับเป็นเวอร์ชันเดิม…', percent: 60, color: '#d97706' },
+            rollback_health_check:  { label: '🩺 กำลังตรวจสอบว่าย้อนกลับสำเร็จ…',    percent: 88, color: '#d97706' },
+        };
+
         async function pollApplyUpdateStatus(sessionId) {
             const statusEl = document.getElementById('apply-update-status');
             const criticalEl = document.getElementById('apply-update-critical');
             const btn = document.getElementById('apply-update-btn');
+            const progressWrap = document.getElementById('apply-update-progress-wrap');
+            const progressBar = document.getElementById('apply-update-progress-bar');
+            const phaseLabelEl = document.getElementById('apply-update-phase-label');
+            const elapsedEl = document.getElementById('apply-update-elapsed');
             const start = Date.now();
             const TIMEOUT_MS = 6 * 60 * 1000;
             const pollingClass = 'rounded-xl border border-blue-300 bg-blue-50 p-3 text-sm font-semibold text-blue-800';
+
+            function formatElapsed() {
+                const s = Math.floor((Date.now() - start) / 1000);
+                return 'ผ่านไป ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+            }
+            const elapsedTicker = setInterval(() => {
+                if (elapsedEl && !progressWrap.classList.contains('hidden')) elapsedEl.textContent = formatElapsed();
+            }, 1000);
+
+            function showProgress(phase) {
+                statusEl.classList.add('hidden');
+                criticalEl.classList.add('hidden');
+                progressWrap.classList.remove('hidden');
+                const info = APPLY_UPDATE_PHASES[phase] || { label: '🔄 กำลังเริ่มต้น…', percent: 5, color: 'var(--accent-primary)' };
+                progressBar.style.width = info.percent + '%';
+                progressBar.style.background = info.color;
+                phaseLabelEl.textContent = info.label;
+                elapsedEl.textContent = formatElapsed();
+            }
             function showStatus(html, className) {
+                clearInterval(elapsedTicker);
+                progressWrap.classList.add('hidden');
                 statusEl.classList.remove('hidden');
                 criticalEl.classList.add('hidden');
                 statusEl.className = className;
                 statusEl.innerHTML = html;
             }
+            function showCritical(html) {
+                clearInterval(elapsedTicker);
+                progressWrap.classList.add('hidden');
+                statusEl.classList.add('hidden');
+                criticalEl.classList.remove('hidden');
+                criticalEl.innerHTML = html;
+            }
+
             while (true) {
                 if (Date.now() - start > TIMEOUT_MS) {
                     showStatus('⚠️ หมดเวลารอผล กรุณาตรวจสอบสถานะระบบด้วยตนเอง', 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
@@ -9684,14 +9741,12 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     const data = await r.json().catch(() => ({}));
                     if (data && data.status === 'pending') {
-                        showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                        showProgress(data.phase);
                     } else if (data && data.status === 'succeeded') {
                         const result = data.result || {};
                         if (result.critical) {
-                            statusEl.classList.add('hidden');
-                            criticalEl.classList.remove('hidden');
                             const detail = result.rollbackReason || result.reason;
-                            criticalEl.innerHTML = '🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้' + (detail ? '<br><span class="font-semibold">' + escapeHTML(detail) + '</span>' : '');
+                            showCritical('🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้' + (detail ? '<br><span class="font-semibold">' + escapeHTML(detail) + '</span>' : ''));
                             btn.disabled = false;
                             return;
                         }
@@ -9714,12 +9769,15 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                         btn.disabled = false;
                         return;
                     } else {
-                        showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                        showProgress(null);
                     }
                 } catch (e) {
                     clearTimeout(timer);
                     console.log('apply-update poll attempt failed, retrying:', e && e.message ? e.message : e);
-                    showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                    // Keep whatever phase/progress was last shown — a single failed poll
+                    // (likely the container mid-restart) shouldn't reset the bar backward.
+                    if (progressWrap.classList.contains('hidden')) showProgress(null);
+                    else if (elapsedEl) elapsedEl.textContent = formatElapsed() + ' (กำลังลองใหม่…)';
                 }
                 await new Promise(res => setTimeout(res, 5000));
             }
@@ -10325,6 +10383,15 @@ app.get('/api/system/apply-update/status', adminOnly, async (req, res) => {
         // the container is mid-restart and this very request may itself
         // fail/timeout; the client's poll loop tolerates that.
         return res.json({ status: 'pending' });
+    }
+
+    // An interim phase marker (e.g. {status:'pending', phase:'building'}) is
+    // NOT terminal — compose-collector writes these while the pipeline is
+    // still running so the client can show real progress. Forward it as-is
+    // and stop here: clearing the in-flight guard / auditing / notifying /
+    // scheduling cleanup below only makes sense once a real result exists.
+    if (response.status === 'pending') {
+        return res.json(response);
     }
 
     // Terminal status reached — clear the guard, audit, notify, cleanup.
