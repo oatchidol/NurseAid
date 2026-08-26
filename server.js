@@ -13,6 +13,10 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
+// Single source of truth for the current app version (see .claude/plans/check-for-updates.md).
+// The sidebar badge and the "Check for Updates" feature both read from this instead of a
+// hand-typed string, so they can never drift from package.json again.
+const APP_VERSION = require('./package.json').version;
 const {
     buildLiveSnapshot,
     calculateQueryWindowMinutes,
@@ -1672,7 +1676,9 @@ function renderNavLinks(user, active) {
     if (roleHasCapability(role, 'alerts:read')) alerts += `<a href="/alert-history" title="Alert History" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'ahist' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📋</span><span class="sidebar-hide">Alert History</span></a>\n`;
     
     if (roleHasCapability(role, 'audit:read:all') || roleHasCapability(role, 'audit:read:ward')) alerts += `<a href="/audit-log" title="Audit Log" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'audit' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📜</span><span class="sidebar-hide">Audit Log</span></a>\n`;
-    
+
+    if (roleHasCapability(role, 'settings:global')) alerts += `<a href="/system-mgmt" title="System" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'system' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">⚙️</span><span class="sidebar-hide">System</span></a>\n`;
+
     return { main, alerts };
 }
 
@@ -3424,8 +3430,8 @@ function ui(user, active, content, script = "") {
             <span class="nav-icon text-sm">🚪</span><span class="sidebar-hide">Logout</span>
         </button>
 
-        <div class="app-version sidebar-hide" aria-label="v2.17" title="v2.17">
-            <span class="app-version-badge">v2.17</span>
+        <div class="app-version sidebar-hide" aria-label="v${APP_VERSION}" title="v${APP_VERSION}">
+            <span class="app-version-badge">v${APP_VERSION}</span>
         </div>
     </aside>
 
@@ -5754,7 +5760,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     <div class="grid grid-cols-3 gap-2">
                         <div class="p-2 rounded-xl text-center transition-all" \${hrBg}>
                             <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
-                            <p class="text-3xl font-black tracking-tighter" style="color: \${hrNumColor};">\${safe.hr}</p>
+                            <p class="\${p.hr === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${hrNumColor};">\${safe.hr}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${spo2Bg}>
                             <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
@@ -5762,7 +5768,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${tempBg}>
                             <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
-                            <p class="text-3xl font-black tracking-tighter" style="color: \${tempNumColor};">\${safe.temp}</p>
+                            <p class="\${p.temp === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${tempNumColor};">\${safe.temp}</p>
                         </div>
                     </div>
                 </div>\`;
@@ -8829,6 +8835,89 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
     }
 });
 
+// ─── System Management (version / update check) ──────────────────────
+app.get('/system-mgmt', adminOnly, async (req, res) => {
+    res.send(ui(req.user, 'system', `
+        <div class="rounded-2xl border p-5 md:p-6 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4" style="background: var(--bg-card); border-color: var(--border-color);">
+            <div>
+                <h2 class="text-2xl font-black mb-1" style="color: var(--text-heading);">ระบบ</h2>
+                <p class="text-sm" style="color: var(--text-secondary);">ตรวจสอบและดูข้อมูลเวอร์ชันของโปรแกรม</p>
+            </div>
+        </div>
+
+        <div class="rounded-2xl border p-5 md:p-6" style="background: var(--bg-card); border-color: var(--border-color);">
+            <div class="flex items-center justify-between gap-4 mb-5">
+                <div>
+                    <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-tertiary);">เวอร์ชันปัจจุบัน</p>
+                    <p class="text-xl font-black" style="color: var(--text-heading);">v${APP_VERSION}</p>
+                </div>
+                <button type="button" id="check-update-btn" onclick="checkForUpdates()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary);">
+                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m0 0L5.582 5m0 0a9 9 0 1116.828 0"/></svg>
+                    ตรวจสอบอัปเดต
+                </button>
+            </div>
+
+            <p id="update-status" class="rounded-xl border p-3 text-sm font-semibold" style="color: var(--text-secondary); background: var(--bg-input);" role="status" aria-live="polite">
+                กดปุ่ม “ตรวจสอบอัปเดต” เพื่อดูว่ามีเวอร์ชันใหม่หรือไม่
+            </p>
+
+            <div id="update-apply" class="hidden mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                <p class="text-sm font-bold mb-2" style="color: #92400e;">📌 การติดตั้งอัปเดต (ทำด้วยมือ)</p>
+                <p class="text-xs mb-2" style="color: #a16207;">การอัปเดตต้องทำด้วยมือโดยผู้ดูแลระบบ ไม่สามารถอัปเดตอัตโนมัติได้</p>
+                <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: #fffbeb; color: #713f12;">git pull&#10;docker compose up -d --build</pre>
+            </div>
+        </div>
+    `, `
+        let updateCheckController = null;
+        async function checkForUpdates() {
+            const btn = document.getElementById('check-update-btn');
+            const statusEl = document.getElementById('update-status');
+            const applyEl = document.getElementById('update-apply');
+            if (btn.disabled) return;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ กำลังตรวจสอบ…';
+            applyEl.classList.add('hidden');
+            statusEl.className = 'rounded-xl border p-3 text-sm font-semibold';
+            statusEl.style.color = 'var(--text-secondary)';
+            statusEl.style.background = 'var(--bg-input)';
+            statusEl.textContent = '⏳ กำลังตรวจสอบ…';
+            try {
+                updateCheckController?.abort();
+                updateCheckController = new AbortController();
+                const r = await fetch('/api/system/update-check', { signal: updateCheckController.signal });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(data.error || 'การเชื่อมต่อล้มเหลว');
+                if (data.error) {
+                    statusEl.className = 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700';
+                    statusEl.textContent = data.error === 'timeout'
+                        ? '⚠️ ใช้เวลาในการเชื่อมต่อ GitHub เกินกำหนด โปรดลองใหม่'
+                        : '⚠️ ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่';
+                    return;
+                }
+                if (data.updateAvailable && data.latestVersion) {
+                    statusEl.className = 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800';
+                    const link = data.releaseUrl
+                        ? '<a href="' + escapeHTML(data.releaseUrl) + '" target="_blank" rel="noopener noreferrer" class="underline font-bold">ดูรายละเอียด</a>'
+                        : '';
+                    statusEl.innerHTML = '🆕 มีอัปเดตใหม่: v' + escapeHTML(data.latestVersion) + ' (คุณกำลังใช้ v' + escapeHTML(data.currentVersion) + ')' + link;
+                    applyEl.classList.remove('hidden');
+                } else {
+                    statusEl.className = 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800';
+                    statusEl.textContent = '✅ เป็นเวอร์ชันล่าสุดแล้ว (v' + escapeHTML(data.currentVersion) + ')';
+                }
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                statusEl.className = 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700';
+                statusEl.textContent = '⚠️ ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+    `));
+});
+
 // ─── Ward CRUD API (backs the Wards Management modal) ────────────────
 function validateWardPayload(body) {
     const ward_code = String(body?.ward_code || '').trim();
@@ -9215,6 +9304,93 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
     } catch (error) {
         console.error('[Audit Log]', error.message);
         res.status(500).send(ui(req.user, 'audit-log', '<p class="text-red-600">Failed to load audit log.</p>'));
+    }
+});
+
+// ─── System / Update Check ─────────────────────────────────────────
+// Cache of the last successful GitHub update check so repeated clicks / page
+// loads don't hammer GitHub's unauthenticated rate limit (60 req/hr/IP).
+// Keyed by the tag we compared against, so bumping APP_VERSION invalidates it.
+let updateCheckCache = { at: 0, result: null };
+const UPDATE_CHECK_CACHE_MS = 5 * 60 * 1000; // ~5 minutes
+
+// Parse a GitHub tag name into [major, minor, patch] numbers, or null if it
+// isn't a clean semver-ish version (e.g. "v2.17.0" or "2.18.3").
+function parseSemver(tag) {
+    const m = String(tag).match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+// Compare two dotted version strings numerically: returns -1, 0, or +1.
+function compareSemver(a, b) {
+    const pa = String(a).split('.').map(Number);
+    const pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const diff = (pa[i] || 0) - (pb[i] || 0);
+        if (diff !== 0) return diff < 0 ? -1 : 1;
+    }
+    return 0;
+}
+
+// Pick the highest version from a list of tag names via proper numeric/lexicographic
+// comparison (GitHub tags here are sparse, so don't assume the API returns them sorted;
+// naive per-component "some part is bigger" comparison is wrong, e.g. it would rank
+// 2.9.99 above 2.10.0 — compare component-by-component via compareSemver instead).
+function highestVersion(tags) {
+    let best = null;
+    for (const tag of tags) {
+        const parts = parseSemver(tag);
+        if (!parts) continue;
+        const candidate = parts.join('.');
+        if (!best || compareSemver(candidate, best) > 0) best = candidate;
+    }
+    return best;
+}
+
+app.get('/api/system/update-check', adminOnly, async (req, res) => {
+    const now = Date.now();
+    const cached = updateCheckCache;
+    if (cached.result && now - cached.at < UPDATE_CHECK_CACHE_MS) {
+        return res.json(cached.result);
+    }
+
+    try {
+        // GitHub's API requires a User-Agent header, and we bound the call with an
+        // AbortController timeout (~8s) to match the timeout-bound shellout discipline.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        let tags;
+        try {
+            const r = await fetch('https://api.github.com/repos/oatchidol/NurseAid/tags', {
+                headers: { 'User-Agent': 'NurseAid-UpdateCheck', 'Accept': 'application/vnd.github+json' },
+                signal: controller.signal
+            });
+            if (!r.ok) throw new Error('github_status_' + r.status);
+            const parsed = await r.json();
+            tags = Array.isArray(parsed) ? parsed.map(t => t.name) : [];
+        } finally {
+            clearTimeout(timer);
+        }
+
+        const latest = highestVersion(tags);
+        const result = {
+            currentVersion: APP_VERSION,
+            latestVersion: latest,
+            updateAvailable: latest ? compareSemver(latest, APP_VERSION) > 0 : false,
+            // Link to the tag page (guaranteed to exist even when there's no formal release).
+            releaseUrl: latest ? `https://github.com/oatchidol/NurseAid/tree/${latest}` : null,
+            checkedAt: new Date().toISOString()
+        };
+
+        // Only cache successful checks so a transient outage doesn't poison the cache.
+        updateCheckCache = { at: now, result };
+        return res.json(result);
+    } catch (e) {
+        // Never throw a 500 that breaks the page — surface a clear error shape instead.
+        const reason = e?.name === 'AbortError' ? 'timeout' : 'unreachable';
+        console.error('[Update Check] failed:', reason, e?.message || '');
+        return res.json({ currentVersion: APP_VERSION, error: reason, checkedAt: new Date().toISOString() });
     }
 });
 
