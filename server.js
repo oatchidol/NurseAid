@@ -1666,7 +1666,12 @@ function renderNavLinks(user, active) {
     if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="Devices" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📟</span><span class="sidebar-hide">Devices</span></a>\n`;
     if (roleHasCapability(role, 'patients:write')) main += `<a href="/patients-mgmt" title="Patients" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'pats' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">👥</span><span class="sidebar-hide">Patients</span></a>\n`;
     if (roleHasCapability(role, 'pairing:write')) main += `<a href="/matching" title="Pairing" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'match' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">⌚</span><span class="sidebar-hide">Pairing</span></a>\n`;
-    
+    // Quick Setup Wizard (Device -> Patient -> Pair). The three write capabilities
+    // this wizard needs (devices:write, patients:write, pairing:write) are always
+    // co-granted to the same roles in ROLE_CAPABILITIES, so gating on any one of
+    // them is equivalent to requiring all three.
+    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="Quick Setup" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🚀</span><span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
+
     if (roleHasCapability(role, 'wards:manage')) main += `<a href="/wards-mgmt" title="Wards" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'wards' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🏥</span><span class="sidebar-hide">Wards</span></a>\n`;
     if (roleHasCapability(role, 'users:manage:ward') || roleHasCapability(role, 'users:manage:all')) main += `<a href="/users-mgmt" title="Users" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'users' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🛡️</span><span class="sidebar-hide">Users</span></a>\n`;
 
@@ -3382,6 +3387,52 @@ function ui(user, active, content, script = "") {
         body.ai-chat-open { overflow: hidden; }
         @media (max-width: 640px) { .ai-chat-launcher span:last-child { display: none; } .ai-chat-launcher { width: 3.25rem; justify-content: center; padding: .75rem; } .ai-chat-context-row{grid-template-columns:1fr}.ai-evidence-grid{grid-template-columns:1fr}.ai-chat-panel{border-left:0}.ai-chat-header{padding-top:max(1rem,env(safe-area-inset-top));} }
         @media (prefers-reduced-motion: reduce) { .ai-chat-panel, .ai-chat-launcher, .ai-thinking-dots i { transition: none !important; animation:none !important; } }
+
+        /* Quick Setup Wizard stepper */
+        .qs-stepper { display:flex; align-items:flex-start; justify-content:space-between; gap:0; width:100%; max-width:520px; margin:0 auto; position:relative; }
+        .qs-step { flex:1 1 0; display:flex; flex-direction:column; align-items:center; text-align:center; min-width:0; }
+        .qs-step-ring { position:relative; width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-bold font-nums; font-size:.95rem; transition:background-color .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease; background:var(--bg-card); }
+        .qs-step-ring::before { content:""; position:absolute; inset:0; border-radius:50%; border:2px solid var(--border-color); }
+        .qs-step--pending .qs-step-ring { color:var(--text-tertiary); background:var(--bg-badge); }
+        .qs-step--active .qs-step-ring { color:var(--accent-primary); box-shadow:0 0 0 4px color-mix(in srgb, var(--accent-primary) 18%, transparent); }
+        .qs-step--active .qs-step-ring::before { border-color:var(--accent-primary); }
+        .qs-step--complete .qs-step-ring { color:#fff; background:var(--accent-primary); }
+        .qs-step--complete .qs-step-ring::before { border-color:var(--accent-primary); }
+        .qs-step-label { margin-top:.55rem; font-size:.78rem; font-weight:700; color:var(--text-tertiary); line-height:1.25; transition:color .25s ease; min-width:0; }
+        .qs-step--active .qs-step-label { color:var(--text-heading); }
+        .qs-step--complete .qs-step-label { color:var(--text-secondary); }
+        .qs-step-emoji { font-size:.9rem; display:block; margin-bottom:1px; }
+        .qs-step-num { font-variant-numeric:tabular-nums; }
+        .qs-step-check { display:none; }
+        .qs-step--complete .qs-step-num { display:none; }
+        .qs-step--complete .qs-step-check { display:block; }
+        .qs-step-connector { position:relative; flex:0 0 auto; height:44px; width:min(64px, calc(100% - 44px)); align-self:center; margin-left:-2px; }
+        .qs-step-connector .qs-track { position:absolute; inset:0; height:3px; margin-top:20px; border-radius:2px; background:var(--border-color); overflow:hidden; }
+        .qs-step-connector .qs-fill { position:absolute; inset:0 auto 0 0; width:0%; height:100%; background:var(--accent-primary); border-radius:2px; transition:width .3s ease; }
+        .qs-step--complete + .qs-step-connector .qs-fill { width:100%; }
+        .qs-panel { transition:opacity .2s ease; }
+        .qs-panel.is-hidden { display:none; }
+        .qs-mode-btn { padding:.5rem .85rem; border-radius:.7rem; font-size:.78rem; font-weight:700; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-secondary); transition:color .2s ease, border-color .2s ease, background .2s ease; }
+        .qs-mode-btn[aria-pressed="true"] { color:#fff; background:var(--accent-primary); border-color:var(--accent-primary); }
+        .qs-mode-btn[aria-pressed="false"] { color:var(--text-secondary); }
+        .qs-list-item { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:.6rem .75rem; border-radius:.7rem; border:1px solid var(--border-color); background:var(--bg-input); cursor:pointer; text-align:left; transition:background .15s ease, border-color .15s ease; }
+        .qs-list-item:hover { background:var(--bg-card-hover); border-color:var(--accent-primary); }
+        .qs-list-item[aria-pressed="true"] { border-color:var(--accent-primary); background:color-mix(in srgb, var(--accent-primary) 9%, var(--bg-input)); }
+        .qs-list-item-name { font-weight:700; color:var(--text-primary); font-size:.85rem; }
+        .qs-list-item-sub { font-family:ui-monospace,monospace; font-size:.72rem; color:var(--text-tertiary); margin-top:1px; }
+        .qs-empty { padding:1.25rem; text-align:center; border-radius:.7rem; border:1px dashed var(--border-color); background:var(--bg-input); color:var(--text-secondary); font-size:.85rem; }
+        .qs-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-weight:800; color:#fff; background:var(--accent-primary); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
+        .qs-primary:disabled { opacity:.55; cursor:not-allowed; }
+        .qs-primary:not(:disabled):active { transform:scale(.98); }
+        .qs-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-weight:800; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-color); transition:background .2s ease, transform .1s ease; }
+        .qs-secondary:not(:active):hover { background:var(--bg-card-hover); }
+        .qs-secondary:active { transform:scale(.98); }
+        .qs-scan { white-space:nowrap; flex-shrink:0; padding:0 1rem; border-radius:.85rem; font-weight:800; color:#fff; background:var(--accent-primary); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
+        .qs-scan:active { transform:scale(.97); }
+        .qs-field { width:100%; border-radius:.85rem; padding:.75rem 1rem; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border-color); }
+        .qs-field:focus { outline: none; border-color:var(--accent-primary); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent); }
+        @media (max-width: 480px) { .qs-step-ring { width:36px; height:36px; font-size:.85rem; } .qs-step-connector { height:36px; } .qs-step-connector .qs-track { margin-top:16px; } .qs-step-label { font-size:.7rem; } }
+        @media (prefers-reduced-motion: reduce) { .qs-panel, .qs-step-ring, .qs-step-label, .qs-mode-btn, .qs-list-item, .qs-fill { transition:none !important; } }
     </style>
 </head>
 <body class="flex flex-col md:flex-row min-h-screen">
@@ -3703,6 +3754,197 @@ function ui(user, active, content, script = "") {
         function confirmAction(options={}) { modalReturnFocus=document.activeElement;const session=prepareModal(options.title||'ยืนยันการดำเนินการ',options.body||'',{kind:options.kind||'danger',cancelText:options.cancelText||'ยกเลิก',confirmText:options.confirmText||'ยืนยัน'});return new Promise(resolve=>{modalResolver=resolve;document.getElementById('modalCancel').onclick=()=>closeModal(false);document.getElementById('modalSubmit').onclick=async()=>{const submit=document.getElementById('modalSubmit');if(typeof options.onConfirm!=='function')return closeModal(true);const original=submit.textContent;setModalBusy(true);submit.disabled=true;submit.textContent=options.loadingText||'กำลังดำเนินการ…';try{await options.onConfirm();if(session===modalSession)closeModal(true,true);}catch(error){if(session!==modalSession)return;submit.disabled=false;submit.textContent=original;setModalBusy(false);closeModal(false,true);await showNotice(error?.message||'ไม่สามารถดำเนินการได้',{kind:'error'});}};}); }
         document.getElementById('globalModal').addEventListener('mousedown',event=>{if(event.target===event.currentTarget&&!modalBusy)closeModal(false);});
         document.getElementById('globalModal').addEventListener('keydown',event=>{if(event.key!=='Tab')return;const focusable=modalFocusable();if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
+
+        // QR Scanner Functions — shared here (not page-specific) so every page's
+        // inline script (a separate document load per route) can call
+        // window.openQRScanner()/closeQRScanner() — e.g. /devices-mgmt and the
+        // Quick Setup wizard (/quick-setup) both use this same scanner.
+        let html5QrCode = null;
+        let scannerRunning = false;
+
+        window.openQRScanner = async () => {
+            // If a scanner is already running (e.g. user changed the camera
+            // lens selector), stop it first so we don't stack video streams.
+            if (scannerRunning && html5QrCode) {
+                try { await html5QrCode.stop(); await html5QrCode.clear(); }
+                catch (e) { console.error('Error stopping scanner', e); }
+                scannerRunning = false;
+            }
+            // Create modal if not exists
+            if (!document.getElementById('qr-scanner-modal')) {
+                const modal = document.createElement('div');
+                modal.id = 'qr-scanner-modal';
+                modal.className = 'modal';
+                modal.innerHTML = \`
+                    <div class="p-8 rounded-3xl w-full max-w-lg shadow-2xl transition-all" style="background: var(--bg-card); border: 2px solid var(--accent-primary);">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-xl font-bold" style="color: var(--text-primary);">📷 สแกน QR Code</h3>
+                            <button onclick="closeQRScanner()" class="p-2 rounded-xl transition-all" style="background: var(--bg-badge); color: var(--text-secondary);">✕</button>
+                        </div>
+                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลนส์กล้อง</label>
+                        <select id="qr-camera-select" onchange="openQRScanner()" class="w-full mb-3 p-2 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-primary);">
+                            <option value="">— กำลังตรวจจับกล้อง… —</option>
+                        </select>
+                        <div id="qr-reader" style="width: 100%; height: 400px; position: relative; overflow: hidden; border-radius: 12px;">
+                            <div id="scan-guide" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border: 3px solid rgba(255,255,255,0.9); border-radius: 16px; pointer-events: none; z-index: 10;"></div>
+                            <div id="scan-line" style="position: absolute; top: calc(50% - 110px); left: calc(50% - 110px); width: 220px; height: 3px; background: rgba(255,255,255,0.9); z-index: 11; pointer-events: none; animation: scan-pulse 2s ease-in-out infinite;"></div>
+                            <p id="scan-hint" style="position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: white; font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,0.9); z-index: 10; pointer-events: none; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 8px;">ยกห่าง QR Code ประมาณ 15-20 ซม.</p>
+                        </div>
+                        <div id="qr-result" class="mt-4 p-4 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); display: none;">
+                            <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">ผลลัพธ์:</p>
+                            <p id="qr-result-text" class="font-mono text-sm break-all" style="color: var(--text-primary);"></p>
+                        </div>
+                        <div class="flex gap-3 mt-6">
+                            <button onclick="closeQRScanner()" class="flex-1 p-3 rounded-xl font-bold" style="background: var(--bg-badge); color: var(--text-secondary); border: 1px solid var(--border-color);">ปิดกล้อง</button>
+                        </div>
+                    </div>
+                \`;
+                document.body.appendChild(modal);
+            }
+
+            document.getElementById('qr-scanner-modal').style.display = 'flex';
+            document.getElementById('qr-result').style.display = 'none';
+
+            // Initialize scanner with explicit control over which lens/camera is used.
+            html5QrCode = new Html5Qrcode("qr-reader");
+
+            // Enumerate cameras once so we can offer a lens picker and auto-prefer
+            // a tele/macro lens (best for reading a small QR at close range).
+            // Html5Qrcode needs a prior permission grant before getCameras()
+            // returns labels, so this may resolve to an empty fallback.
+            let cameras = [];
+            try { cameras = await Html5Qrcode.getCameras(); } catch (e) { /* no perms yet */ }
+
+            const select = document.getElementById('qr-camera-select');
+            // Keep any prior choice; otherwise populate and auto-pick a tele lens.
+            if (select && (!select.options.length || select.selectedIndex === 0)) {
+                select.innerHTML = '';
+                const emptyOpt = document.createElement('option');
+                emptyOpt.value = '';
+                emptyOpt.textContent = '— เลือกกล้อง —';
+                select.appendChild(emptyOpt);
+
+                const combined = [];
+                const seen = new Set();
+                cameras.forEach(c => {
+                    combined.push({ id: c.id, label: c.label || 'กล้อง ' + (combined.length + 1) });
+                });
+                combined.forEach(c => {
+                    if (seen.has(c.id)) return;
+                    seen.add(c.id);
+                    const opt = document.createElement('option');
+                    opt.value = c.id;
+                    opt.textContent = c.label;
+                    select.appendChild(opt);
+                });
+
+                // Auto-prefer a tele/macro-looking lens label (case-insensitive).
+                const teleKeywords = ['tele', 'zoom', 'macro', '3x', '2x', '远', '望', '长焦', 'ズーム'];
+                let telePick = combined.find(c => {
+                    const l = c.label.toLowerCase();
+                    return teleKeywords.some(k => l.includes(k.toLowerCase()));
+                });
+                if (telePick) {
+                    select.value = telePick.id;
+                } else if (combined.length === 1) {
+                    select.value = combined[0].id;
+                }
+            }
+
+            // Determine the camera selector: the picked deviceId (string) if any,
+            // otherwise fall back to the rear-facing constraint object.
+            let cameraSelector = { facingMode: "environment" };
+            const selValue = select ? select.value : '';
+            if (selValue) cameraSelector = selValue; // a deviceId string
+
+            try {
+                // html5-qrcode: first arg is a camera selector — a deviceId
+                // string OR a ONE-key facing-mode object. We pass a full
+                // MediaTrackConstraints via the config's 'videoConstraints'
+                // (used verbatim, no 1-key limit) to enable continuous autofocus
+                // and a sane high resolution — matching the phone's native
+                // camera, which reads the same 1cm QR clearly.
+                const forcedConstraints = {
+                    // Prefer the selected device; keep facingMode only as a hint
+                    // so the rear lens is used when no device is picked.
+                    ...(selValue ? { deviceId: { exact: selValue } } : { facingMode: "environment" }),
+                    focusMode: "continuous",
+                    width: { ideal: 1920, max: 3840 },
+                    height: { ideal: 1080, max: 2160 }
+                };
+                await html5QrCode.start(
+                    cameraSelector,
+                    {
+                        fps: 15,
+                        videoConstraints: forcedConstraints,
+                        qrbox: (viewfinderWidth, viewfinderHeight) => {
+                            // Fill the whole viewfinder (minus margin) so a
+                            // small code gets scanned wherever it is.
+                            const size = Math.max(
+                                200,
+                                Math.min(viewfinderWidth, viewfinderHeight) - 24
+                            );
+                            return { width: size, height: size };
+                        }
+                    },
+                    (decodedText) => {
+                        onQRScanSuccess(decodedText);
+                    },
+                    () => {}
+                );
+
+                scannerRunning = true;
+            } catch (err) {
+                console.error('Camera error:', err);
+                const msg = (err && err.message) ? err.message : String(err);
+                showNotice('ไม่สามารถเปิดกล้องได้: ' + msg);
+                closeQRScanner();
+            }
+        };
+
+        function onQRScanSuccess(text) {
+            // Stop scanner
+            closeQRScanner();
+
+            // Fill the MAC address field. Another page (e.g. the Quick Setup
+            // wizard) can redirect the fill target via window.__qrScanTarget
+            // before opening the scanner, so this one function serves both.
+            const mAddrInput = window.__qrScanTarget || document.getElementById('m_addr');
+            if (mAddrInput) {
+                mAddrInput.value = text;
+                mAddrInput.focus();
+                mAddrInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                // Show success feedback
+                const resultDiv = document.getElementById('qr-result');
+                const resultText = document.getElementById('qr-result-text');
+                if (resultDiv && resultText) {
+                    resultText.textContent = text;
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.borderColor = 'var(--accent-green)';
+                }
+
+                // Auto scroll to MAC address field
+                mAddrInput.classList.add('ring-4');
+                setTimeout(() => mAddrInput.classList.remove('ring-4'), 2000);
+            }
+        }
+
+        window.closeQRScanner = () => {
+            if (html5QrCode && scannerRunning) {
+                html5QrCode.stop().then(() => {
+                    html5QrCode.clear();
+                    scannerRunning = false;
+                }).catch(err => {
+                    console.error('Error stopping scanner:', err);
+                    scannerRunning = false;
+                });
+            }
+            const modal = document.getElementById('qr-scanner-modal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        };
 
         let alertAudioContext = null;
         function unlockAlertAudio() {
@@ -6278,191 +6520,8 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
             await confirmAction({title:'ลบอุปกรณ์',body:'<p>คุณต้องการลบอุปกรณ์นี้ใช่หรือไม่?</p><p class="text-sm font-mono">'+escapeHTML(mac)+'</p><div class="dialog-note"><strong>หมายเหตุ:</strong> การลบอุปกรณ์ไม่สามารถย้อนกลับได้</div>',confirmText:'ลบอุปกรณ์',loadingText:'กำลังลบ…',onConfirm:async()=>{const response=await fetch('/api/devices/'+encodeURIComponent(mac),{method:'DELETE'});if(!response.ok)throw new Error(await apiErrorMessage(response,'ไม่สามารถลบอุปกรณ์ได้'));location.reload();}});
         };
 
-        // QR Scanner Functions
-        let html5QrCode = null;
-        let scannerRunning = false;
-
-        window.openQRScanner = async () => {
-            // If a scanner is already running (e.g. user changed the camera
-            // lens selector), stop it first so we don't stack video streams.
-            if (scannerRunning && html5QrCode) {
-                try { await html5QrCode.stop(); await html5QrCode.clear(); }
-                catch (e) { console.error('Error stopping scanner', e); }
-                scannerRunning = false;
-            }
-            // Create modal if not exists
-            if (!document.getElementById('qr-scanner-modal')) {
-                const modal = document.createElement('div');
-                modal.id = 'qr-scanner-modal';
-                modal.className = 'modal';
-                modal.innerHTML = \`
-                    <div class="p-8 rounded-3xl w-full max-w-lg shadow-2xl transition-all" style="background: var(--bg-card); border: 2px solid var(--accent-primary);">
-                        <div class="flex justify-between items-center mb-6">
-                            <h3 class="text-xl font-bold" style="color: var(--text-primary);">📷 สแกน QR Code</h3>
-                            <button onclick="closeQRScanner()" class="p-2 rounded-xl transition-all" style="background: var(--bg-badge); color: var(--text-secondary);">✕</button>
-                        </div>
-                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลนส์กล้อง</label>
-                        <select id="qr-camera-select" onchange="openQRScanner()" class="w-full mb-3 p-2 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-primary);">
-                            <option value="">— กำลังตรวจจับกล้อง… —</option>
-                        </select>
-                        <div id="qr-reader" style="width: 100%; height: 400px; position: relative; overflow: hidden; border-radius: 12px;">
-                            <div id="scan-guide" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border: 3px solid rgba(255,255,255,0.9); border-radius: 16px; pointer-events: none; z-index: 10;"></div>
-                            <div id="scan-line" style="position: absolute; top: calc(50% - 110px); left: calc(50% - 110px); width: 220px; height: 3px; background: rgba(255,255,255,0.9); z-index: 11; pointer-events: none; animation: scan-pulse 2s ease-in-out infinite;"></div>
-                            <p id="scan-hint" style="position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: white; font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,0.9); z-index: 10; pointer-events: none; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 8px;">ยกห่าง QR Code ประมาณ 15-20 ซม.</p>
-                        </div>
-                        <div id="qr-result" class="mt-4 p-4 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); display: none;">
-                            <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">ผลลัพธ์:</p>
-                            <p id="qr-result-text" class="font-mono text-sm break-all" style="color: var(--text-primary);"></p>
-                        </div>
-                        <div class="flex gap-3 mt-6">
-                            <button onclick="closeQRScanner()" class="flex-1 p-3 rounded-xl font-bold" style="background: var(--bg-badge); color: var(--text-secondary); border: 1px solid var(--border-color);">ปิดกล้อง</button>
-                        </div>
-                    </div>
-                \`;
-                document.body.appendChild(modal);
-            }
-
-            document.getElementById('qr-scanner-modal').style.display = 'flex';
-            document.getElementById('qr-result').style.display = 'none';
-
-            // Initialize scanner with explicit control over which lens/camera is used.
-            html5QrCode = new Html5Qrcode("qr-reader");
-
-            // Enumerate cameras once so we can offer a lens picker and auto-prefer
-            // a tele/macro lens (best for reading a small QR at close range).
-            // Html5Qrcode needs a prior permission grant before getCameras()
-            // returns labels, so this may resolve to an empty fallback.
-            let cameras = [];
-            try { cameras = await Html5Qrcode.getCameras(); } catch (e) { /* no perms yet */ }
-
-            const select = document.getElementById('qr-camera-select');
-            // Keep any prior choice; otherwise populate and auto-pick a tele lens.
-            if (select && (!select.options.length || select.selectedIndex === 0)) {
-                select.innerHTML = '';
-                const emptyOpt = document.createElement('option');
-                emptyOpt.value = '';
-                emptyOpt.textContent = '— เลือกกล้อง —';
-                select.appendChild(emptyOpt);
-
-                const combined = [];
-                const seen = new Set();
-                cameras.forEach(c => {
-                    combined.push({ id: c.id, label: c.label || 'กล้อง ' + (combined.length + 1) });
-                });
-                combined.forEach(c => {
-                    if (seen.has(c.id)) return;
-                    seen.add(c.id);
-                    const opt = document.createElement('option');
-                    opt.value = c.id;
-                    opt.textContent = c.label;
-                    select.appendChild(opt);
-                });
-
-                // Auto-prefer a tele/macro-looking lens label (case-insensitive).
-                const teleKeywords = ['tele', 'zoom', 'macro', '3x', '2x', '远', '望', '长焦', 'ズーム'];
-                let telePick = combined.find(c => {
-                    const l = c.label.toLowerCase();
-                    return teleKeywords.some(k => l.includes(k.toLowerCase()));
-                });
-                if (telePick) {
-                    select.value = telePick.id;
-                } else if (combined.length === 1) {
-                    select.value = combined[0].id;
-                }
-            }
-
-            // Determine the camera selector: the picked deviceId (string) if any,
-            // otherwise fall back to the rear-facing constraint object.
-            let cameraSelector = { facingMode: "environment" };
-            const selValue = select ? select.value : '';
-            if (selValue) cameraSelector = selValue; // a deviceId string
-
-            try {
-                // html5-qrcode: first arg is a camera selector — a deviceId
-                // string OR a ONE-key facing-mode object. We pass a full
-                // MediaTrackConstraints via the config's 'videoConstraints'
-                // (used verbatim, no 1-key limit) to enable continuous autofocus
-                // and a sane high resolution — matching the phone's native
-                // camera, which reads the same 1cm QR clearly.
-                const forcedConstraints = {
-                    // Prefer the selected device; keep facingMode only as a hint
-                    // so the rear lens is used when no device is picked.
-                    ...(selValue ? { deviceId: { exact: selValue } } : { facingMode: "environment" }),
-                    focusMode: "continuous",
-                    width: { ideal: 1920, max: 3840 },
-                    height: { ideal: 1080, max: 2160 }
-                };
-                await html5QrCode.start(
-                    cameraSelector,
-                    {
-                        fps: 15,
-                        videoConstraints: forcedConstraints,
-                        qrbox: (viewfinderWidth, viewfinderHeight) => {
-                            // Fill the whole viewfinder (minus margin) so a
-                            // small code gets scanned wherever it is.
-                            const size = Math.max(
-                                200,
-                                Math.min(viewfinderWidth, viewfinderHeight) - 24
-                            );
-                            return { width: size, height: size };
-                        }
-                    },
-                    (decodedText) => {
-                        onQRScanSuccess(decodedText);
-                    },
-                    () => {}
-                );
-
-                scannerRunning = true;
-            } catch (err) {
-                console.error('Camera error:', err);
-                const msg = (err && err.message) ? err.message : String(err);
-                showNotice('ไม่สามารถเปิดกล้องได้: ' + msg);
-                closeQRScanner();
-            }
-        };
-
-        function onQRScanSuccess(text) {
-            // Stop scanner
-            closeQRScanner();
-
-            // Fill the MAC address field
-            const mAddrInput = document.getElementById('m_addr');
-            if (mAddrInput) {
-                mAddrInput.value = text;
-                mAddrInput.focus();
-                mAddrInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-                // Show success feedback
-                const resultDiv = document.getElementById('qr-result');
-                const resultText = document.getElementById('qr-result-text');
-                if (resultDiv && resultText) {
-                    resultText.textContent = text;
-                    resultDiv.style.display = 'block';
-                    resultDiv.style.borderColor = 'var(--accent-green)';
-                }
-
-                // Auto scroll to MAC address field
-                mAddrInput.classList.add('ring-4');
-                setTimeout(() => mAddrInput.classList.remove('ring-4'), 2000);
-            }
-        }
-
-        window.closeQRScanner = () => {
-            if (html5QrCode && scannerRunning) {
-                html5QrCode.stop().then(() => {
-                    html5QrCode.clear();
-                    scannerRunning = false;
-                }).catch(err => {
-                    console.error('Error stopping scanner:', err);
-                    scannerRunning = false;
-                });
-            }
-            const modal = document.getElementById('qr-scanner-modal');
-            if (modal) {
-                modal.style.display = 'none';
-            }
-        };
+        // QR Scanner Functions now live in the shared script block (see ui(),
+        // near confirmAction) so both this page and /quick-setup can use them.
     `));
 });
 
@@ -8833,6 +8892,565 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
         console.error('[Wards Management]', error.message);
         res.status(500).send(ui(req.user, 'wards', '<p class="text-red-600">Failed to load wards.</p>'));
     }
+});
+
+// ─── Quick Setup Wizard ──────────────────────────────────────────────
+// Steps 1 (device) and 2 (patient) are complete. Step 3 (pair) is stubbed
+// for a later slice.
+// Gated on devices:write — the same capability the sidebar "เริ่มต้นใช้งาน"
+// link uses, so a role that can see the link can also use the wizard.
+app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => {
+    // Wards this user is allowed to place a patient into: all active wards for
+    // super_admin, only their own assigned ward(s) otherwise. Mirrors the
+    // /patients-mgmt scoping so Step 2's ward select behaves identically.
+    const allowedWardsResult = req.user.role === 'super_admin'
+        ? await pool.query('SELECT id, code, name FROM wards WHERE is_active = true ORDER BY code')
+        : await pool.query('SELECT id, code, name FROM wards WHERE is_active = true AND id = ANY($1) ORDER BY code', [req.user.wardIds]);
+    const lockedWardId = req.user.role !== 'super_admin' && allowedWardsResult.rows.length === 1
+        ? allowedWardsResult.rows[0].id
+        : null;
+    const wardOpts = allowedWardsResult.rows.map(w => `<option value="${w.id}" ${lockedWardId === w.id ? 'selected' : ''}>${escapeHtml(w.code)} - ${escapeHtml(w.name)}</option>`).join('');
+    const wardSelectAttrs = lockedWardId ? 'disabled' : '';
+
+    res.send(ui(req.user, 'quicksetup', `
+        <div class="rounded-2xl border p-5 md:p-6 mb-6" style="background: var(--bg-card); border-color: var(--border-color);">
+            <div>
+                <h2 class="text-2xl font-black mb-1" style="color: var(--text-heading);">เริ่มต้นใช้งานอย่างรวดเร็ว</h2>
+                <p class="text-sm" style="color: var(--text-secondary);">คู่มือเดินทางลัด — เพิ่มอุปกรณ์ เพิ่มผู้ป่วย และจับคู่อุปกรณ์กับผู้ป่วยให้พร้อมใช้งานทุกขั้นตอน</p>
+            </div>
+        </div>
+
+        <div class="card p-5 md:p-6">
+            <div class="qs-stepper mb-8" role="list" aria-label="ขั้นตอนการตั้งค่า">
+                <div class="qs-step qs-step--active" id="qs-step-indicator-1" role="listitem">
+                    <div class="qs-step-ring"><span class="qs-step-num">1</span><span class="qs-step-check">✓</span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji">⌚</span> อุปกรณ์</div>
+                </div>
+                <div class="qs-step-connector"><div class="qs-track"><div class="qs-fill"></div></div></div>
+                <div class="qs-step qs-step--pending" id="qs-step-indicator-2" role="listitem">
+                    <div class="qs-step-ring"><span class="qs-step-num">2</span><span class="qs-step-check">✓</span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji">🧍</span> ผู้ป่วย</div>
+                </div>
+                <div class="qs-step-connector"><div class="qs-track"><div class="qs-fill"></div></div></div>
+                <div class="qs-step qs-step--pending" id="qs-step-indicator-3" role="listitem">
+                    <div class="qs-step-ring"><span class="qs-step-num">3</span><span class="qs-step-check">✓</span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji">🔗</span> จับคู่</div>
+                </div>
+            </div>
+
+            <div id="qs-panel-1" class="card qs-panel">
+                <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 1 · อุปกรณ์</p>
+                <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทอุปกรณ์">
+                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="true">เพิ่มอุปกรณ์ใหม่</button>
+                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false">ใช้อุปกรณ์ที่มีอยู่</button>
+                </div>
+
+                <div id="qs-create-new-section">
+                    <div class="space-y-3">
+                        <div>
+                            <label for="qs-d-dno" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขอุปกรณ์ (Device No)</label>
+                            <input id="qs-d-dno" class="qs-field" placeholder="เช่น WARD-01" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div>
+                            <label for="qs-d-mac" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลข MAC / Device ID</label>
+                            <div class="flex gap-2">
+                                <input id="qs-d-mac" class="qs-field flex-1" placeholder="เช่น A1:B2:C3:D4:E5:F6" autocomplete="off" spellcheck="false">
+                                <button type="button" id="qs-d-scan-mac" class="qs-scan" title="สแกน QR Code">สแกน QR</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="qs-d-type" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชนิดอุปกรณ์</label>
+                            <select id="qs-d-type" class="qs-field">
+                                <option value="jstyle" selected>JStyle / iStyle Watch</option>
+                                <option value="wearos">Wear OS Peripheral</option>
+                            </select>
+                        </div>
+                        <button type="button" id="qs-d-submit-new" class="qs-primary w-full">เพิ่มอุปกรณ์และไปต่อ</button>
+                    </div>
+                </div>
+
+                <div id="qs-existing-section" class="is-hidden">
+                    <div class="space-y-3">
+                        <div id="qs-existing-list" role="list" aria-label="อุปกรณ์ที่พร้อมใช้งาน"></div>
+                        <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้และไปต่อ</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="qs-panel-2" class="card qs-panel is-hidden">
+                ${allowedWardsResult.rows.length === 0 ? `
+                    <div class="qs-empty">
+                        ${roleHasCapability(req.user.role, 'wards:manage') ? `
+                            <p class="font-bold" style="color: var(--text-heading);">ยังไม่มี Ward ที่ตั้งค่าไว้</p>
+                            <p class="text-sm" style="color: var(--text-secondary);">โปรดสร้าง Ward ก่อนเพื่อเริ่มเพิ่มผู้ป่วย</p>
+                            <a href="/wards-mgmt" class="qs-primary inline-block mt-3 px-6 py-2.5">ไปที่หน้าจัดการ Ward</a>
+                        ` : `
+                            <p class="font-bold" style="color: var(--text-heading);">ยังไม่มี Ward ที่ตั้งค่าไว้</p>
+                            <p class="text-sm" style="color: var(--text-secondary);">ต้องการให้ผู้ดูแลระบบสร้าง Ward ให้ก่อน</p>
+                        `}
+                    </div>
+                ` : `
+                    <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 2 · ผู้ป่วย</p>
+                    <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทผู้ป่วย">
+                        <button type="button" id="qs-p-mode-new" class="qs-mode-btn flex-1" aria-pressed="true">เพิ่มผู้ป่วยใหม่</button>
+                        <button type="button" id="qs-p-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false">ใช้ผู้ป่วยที่มีอยู่</button>
+                    </div>
+
+                    <div id="qs-p-create-new">
+                        <div class="space-y-3">
+                            <div>
+                                <label for="qs-p-hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขผู้ป่วย (HN)</label>
+                                <input id="qs-p-hn" class="qs-field" placeholder="เช่น 63-00001" autocomplete="off" spellcheck="false">
+                            </div>
+                            <div>
+                                <label for="qs-p-name" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
+                                <input id="qs-p-name" class="qs-field" placeholder="เช่น สมชาย ใจดี" autocomplete="off" spellcheck="false">
+                            </div>
+                            <div>
+                                <label for="qs-p-ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Ward</label>
+                                <select id="qs-p-ward" class="qs-field" ${wardSelectAttrs}>
+                                    <option value="">เลือก Ward *</option>
+                                    ${wardOpts}
+                                </select>
+                                ${lockedWardId ? '<p class="text-[10px]" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                            </div>
+                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยและไปต่อ</button>
+                        </div>
+                    </div>
+
+                    <div id="qs-p-existing" class="is-hidden">
+                        <div class="space-y-3">
+                            <div id="qs-p-existing-list" role="list" aria-label="ผู้ป่วยที่พร้อมใช้งาน"></div>
+                            <button type="button" id="qs-p-submit-existing" class="qs-primary w-full" disabled>ใช้ผู้ป่วยนี้และไปต่อ</button>
+                        </div>
+                    </div>
+                `}
+            </div>
+            <div id="qs-panel-3" class="card qs-panel is-hidden">
+                <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 3 · จับคู่</p>
+                <div class="rounded-xl border p-4 mb-5" style="background: var(--bg-input); border-color: var(--border-color);">
+                    <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">สรุปก่อนจับคู่</p>
+                    <div class="space-y-2 text-sm">
+                        <div>อุปกรณ์: <span id="qs-pair-device-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                        <div>ผู้ป่วย: <span id="qs-pair-patient-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                    </div>
+                </div>
+                <div>
+                    <label for="qs-pair-bed" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขเตียง (ไม่บังคับ)</label>
+                    <input id="qs-pair-bed" class="qs-field" placeholder="เตียง (ไม่บังคับ) เช่น B01" autocomplete="off" spellcheck="false">
+                </div>
+                <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5">ยืนยันการจับคู่</button>
+            </div>
+            <div id="qs-panel-done" class="card qs-panel is-hidden">
+                <div class="text-center mb-5">
+                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style="background: var(--accent-primary); color: #fff;">
+                        <svg class="w-8 h-8" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                    <p class="text-xl font-black" style="color: var(--text-heading);">ตั้งค่าเสร็จแล้ว</p>
+                    <p class="text-sm" style="color: var(--text-secondary);">อุปกรณ์และผู้ป่วยพร้อมใช้งานแล้ว</p>
+                </div>
+                <div id="qs-done-summary" class="rounded-xl border p-4 mb-5" style="background: var(--bg-input); border-color: var(--border-color);">
+                    <div class="space-y-2 text-sm"></div>
+                </div>
+                <a href="/" class="qs-primary w-full text-center px-6 py-2.5 mb-3">ไปที่หน้า Monitor</a>
+                <button type="button" id="qs-done-reset" class="qs-secondary w-full">เริ่มตั้งค่าใหม่</button>
+            </div>
+        </div>
+    `, `
+        let qsState = { step: 1, device: null, patient: null };
+        let qsAvailableLoaded = false;
+        let selectedDevice = null;
+
+        // Generic stepper controller — reused by later slices (advanceToStep(3),
+        // advanceToStep(4), etc.). n is the target step number 1-4 (4 = done).
+        function advanceToStep(n) {
+            qsState.step = n;
+            const indicatorIds = ['qs-step-indicator-1', 'qs-step-indicator-2', 'qs-step-indicator-3'];
+            const panelIds = ['qs-panel-1', 'qs-panel-2', 'qs-panel-3', 'qs-panel-done'];
+            indicatorIds.forEach((id, i) => {
+                const stepNum = i + 1;
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.classList.remove('qs-step--active', 'qs-step--pending', 'qs-step--complete');
+                if (n === 4) {
+                    el.classList.add('qs-step--complete');
+                } else if (stepNum < n) {
+                    el.classList.add('qs-step--complete');
+                } else if (stepNum === n) {
+                    el.classList.add('qs-step--active');
+                } else {
+                    el.classList.add('qs-step--pending');
+                }
+            });
+            panelIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const panelNum = parseInt(id.replace(/qs-panel-/, ''), 10);
+                const isDone = id === 'qs-panel-done';
+                const shouldShow = isDone ? n === 4 : panelNum === n;
+                el.classList.toggle('is-hidden', !shouldShow);
+            });
+        }
+
+        function setDeviceMode(isExisting) {
+            document.getElementById('qs-d-mode-new').setAttribute('aria-pressed', String(!isExisting));
+            document.getElementById('qs-d-mode-existing').setAttribute('aria-pressed', String(isExisting));
+            document.getElementById('qs-create-new-section').classList.toggle('is-hidden', isExisting);
+            document.getElementById('qs-existing-section').classList.toggle('is-hidden', !isExisting);
+            if (isExisting) loadAvailableDevices();
+        }
+
+        async function loadAvailableDevices() {
+            if (qsAvailableLoaded) return;
+            qsAvailableLoaded = true;
+            try {
+                const response = await fetch('/api/devices-available');
+                if (!response.ok) return;
+                renderAvailableDevices(await response.json());
+            } catch (_) { /* offline — leave list empty */ }
+        }
+
+        function renderAvailableDevices(devices) {
+            const list = document.getElementById('qs-existing-list');
+            if (!list) return;
+            list.innerHTML = '';
+            if (!devices || devices.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'qs-empty';
+                empty.textContent = 'ไม่มีอุปกรณ์ว่างอยู่ในขณะนี้ กรุณาเพิ่มอุปกรณ์ใหม่แทน';
+                list.appendChild(empty);
+                return;
+            }
+            devices.forEach(device => {
+                const item = document.createElement('div');
+                item.className = 'qs-list-item';
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.innerHTML = '<div><div class="qs-list-item-name">' + escapeHTML(device.device_no) + '</div><div class="qs-list-item-sub">' + escapeHTML(device.mac) + '</div></div>';
+                item.addEventListener('click', () => selectExistingDevice(device, item));
+                list.appendChild(item);
+            });
+        }
+
+        function selectExistingDevice(device, item) {
+            selectedDevice = device;
+            const list = document.getElementById('qs-existing-list');
+            if (list) list.querySelectorAll('.qs-list-item').forEach(el => el.setAttribute('aria-pressed', 'false'));
+            item.setAttribute('aria-pressed', 'true');
+            document.getElementById('qs-d-submit-existing').disabled = false;
+        }
+
+        let qsPatientsLoaded = false;
+        let selectedPatient = null;
+
+        function setPatientMode(isExisting) {
+            document.getElementById('qs-p-mode-new').setAttribute('aria-pressed', String(!isExisting));
+            document.getElementById('qs-p-mode-existing').setAttribute('aria-pressed', String(isExisting));
+            document.getElementById('qs-p-create-new').classList.toggle('is-hidden', isExisting);
+            document.getElementById('qs-p-existing').classList.toggle('is-hidden', !isExisting);
+            if (isExisting) loadAvailablePatients();
+        }
+
+        async function loadAvailablePatients() {
+            if (qsPatientsLoaded) return;
+            qsPatientsLoaded = true;
+            try {
+                const response = await fetch('/api/patients-available');
+                if (!response.ok) return;
+                renderAvailablePatients(await response.json());
+            } catch (_) { /* offline — leave list empty */ }
+        }
+
+        function renderAvailablePatients(patients) {
+            const list = document.getElementById('qs-p-existing-list');
+            if (!list) return;
+            list.innerHTML = '';
+            if (!patients || patients.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'qs-empty';
+                empty.textContent = 'ไม่มีผู้ป่วยว่างอยู่ในขณะนี้ กรุณาเพิ่มผู้ป่วยใหม่แทน';
+                list.appendChild(empty);
+                return;
+            }
+            patients.forEach(patient => {
+                const item = document.createElement('div');
+                item.className = 'qs-list-item';
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.innerHTML = '<div><div class="qs-list-item-name">' + escapeHTML(patient.name) + '</div><div class="qs-list-item-sub">' + escapeHTML(patient.hn_number) + '</div></div>';
+                item.addEventListener('click', () => selectExistingPatient(patient, item));
+                list.appendChild(item);
+            });
+        }
+
+        function selectExistingPatient(patient, item) {
+            selectedPatient = patient;
+            const list = document.getElementById('qs-p-existing-list');
+            if (list) list.querySelectorAll('.qs-list-item').forEach(el => el.setAttribute('aria-pressed', 'false'));
+            item.setAttribute('aria-pressed', 'true');
+            document.getElementById('qs-p-submit-existing').disabled = false;
+        }
+
+        // Populate Step 3's read-only summary off qsState (device + patient).
+        // Called both when advancing into step 3 and when resuming from sessionStorage.
+        function renderPairSummary() {
+            const deviceEl = document.getElementById('qs-pair-device-summary');
+            const patientEl = document.getElementById('qs-pair-patient-summary');
+            if (deviceEl && qsState.device) {
+                deviceEl.textContent = '#' + escapeHTML(qsState.device.dno) + ' (' + escapeHTML(qsState.device.mac) + ')';
+            }
+            if (patientEl && qsState.patient) {
+                patientEl.textContent = escapeHTML(qsState.patient.name) + ' (HN: ' + escapeHTML(qsState.patient.hn) + ')';
+            }
+        }
+
+        // Populate the completed panel's summary off qsState. No persistence needed —
+        // sessionStorage is cleared on success, so a fresh page never resumes here.
+        function renderDoneSummary() {
+            const el = document.getElementById('qs-done-summary');
+            if (!el) return;
+            let html = '';
+            if (qsState.device) {
+                html += '<div>อุปกรณ์: <span style="color: var(--text-heading); font-bold;">#' + escapeHTML(qsState.device.dno) + ' (' + escapeHTML(qsState.device.mac) + ')</span></div>';
+            }
+            if (qsState.patient) {
+                html += '<div>ผู้ป่วย: <span style="color: var(--text-heading); font-bold;">' + escapeHTML(qsState.patient.name) + ' (HN: ' + escapeHTML(qsState.patient.hn) + ')</span></div>';
+            }
+            const bed = document.getElementById('qs-pair-bed');
+            if (bed && bed.value.trim()) {
+                html += '<div>เตียง: <span style="color: var(--text-heading); font-bold;">' + escapeHTML(bed.value.trim()) + '</span></div>';
+            }
+            el.querySelector('.space-y-2').innerHTML = html;
+        }
+
+        // Reset the whole wizard in place — no page reload. Restores every step to
+        // its fresh default and clears persisted state so a new run starts clean.
+        function resetWizard() {
+            qsState = { step: 1, device: null, patient: null };
+            selectedDevice = null;
+            selectedPatient = null;
+
+            const dno = document.getElementById('qs-d-dno');
+            const mac = document.getElementById('qs-d-mac');
+            if (dno) dno.value = '';
+            if (mac) mac.value = '';
+            const type = document.getElementById('qs-d-type');
+            if (type) type.value = 'jstyle';
+
+            const hn = document.getElementById('qs-p-hn');
+            const nm = document.getElementById('qs-p-name');
+            if (hn) hn.value = '';
+            if (nm) nm.value = '';
+            const ward = document.getElementById('qs-p-ward');
+            if (ward) ward.value = '';
+
+            const bed = document.getElementById('qs-pair-bed');
+            if (bed) bed.value = '';
+
+            // Clear the existing-device / existing-patient selection lists, and
+            // reset their "already fetched" guards — otherwise switching back to
+            // "use existing" after a reset shows a permanently empty list (the
+            // guard would skip re-fetching even though the list was just wiped,
+            // and the paired device/patient is no longer "available" anyway).
+            const deviceList = document.getElementById('qs-existing-list');
+            if (deviceList) deviceList.innerHTML = '';
+            const patientList = document.getElementById('qs-p-existing-list');
+            if (patientList) patientList.innerHTML = '';
+            qsAvailableLoaded = false;
+            qsPatientsLoaded = false;
+
+            // Re-disable the existing-submit buttons.
+            const dSubmitExisting = document.getElementById('qs-d-submit-existing');
+            if (dSubmitExisting) dSubmitExisting.disabled = true;
+            const pSubmitExisting = document.getElementById('qs-p-submit-existing');
+            if (pSubmitExisting) pSubmitExisting.disabled = true;
+
+            // Back both mode toggles to their "create new" default.
+            setDeviceMode(false);
+            setPatientMode(false);
+
+            sessionStorage.removeItem('nurseaid-quick-setup');
+            advanceToStep(1);
+        }
+
+        function initQuickSetup() {
+            const modeNew = document.getElementById('qs-d-mode-new');
+            const modeExisting = document.getElementById('qs-d-mode-existing');
+            if (modeNew) modeNew.addEventListener('click', () => setDeviceMode(false));
+            if (modeExisting) modeExisting.addEventListener('click', () => setDeviceMode(true));
+
+            const scanBtn = document.getElementById('qs-d-scan-mac');
+            if (scanBtn) {
+                scanBtn.addEventListener('click', () => {
+                    // Redirect the shared scanner's fill target to this page's
+                    // MAC input (onQRScanSuccess reads window.__qrScanTarget).
+                    window.__qrScanTarget = document.getElementById('qs-d-mac');
+                    openQRScanner();
+                });
+            }
+
+            const submitNew = document.getElementById('qs-d-submit-new');
+            if (submitNew) {
+                submitNew.addEventListener('click', async () => {
+                    const dno = document.getElementById('qs-d-dno').value.trim();
+                    const mac = document.getElementById('qs-d-mac').value.trim();
+                    const deviceType = document.getElementById('qs-d-type').value;
+                    submitNew.disabled = true;
+                    const originalText = submitNew.textContent;
+                    submitNew.textContent = 'กำลังเพิ่ม…';
+                    try {
+                        const response = await fetch('/api/devices', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dno, mac, device_type: deviceType })
+                        });
+                        if (!response.ok) {
+                            submitNew.disabled = false;
+                            submitNew.textContent = originalText;
+                            return showNotice(await apiErrorMessage(response, 'ไม่สามารถเพิ่มอุปกรณ์ได้'), { kind: 'error' });
+                        }
+                        const device = { dno, mac, device_type: deviceType };
+                        qsState.device = device;
+                        console.log('[Quick Setup] เพิ่มอุปกรณ์ใหม่:', device);
+                        sessionStorage.setItem('nurseaid-quick-setup', JSON.stringify(qsState));
+                        advanceToStep(2);
+                    } catch (err) {
+                        submitNew.disabled = false;
+                        submitNew.textContent = originalText;
+                        showNotice((err && err.message) ? err.message : 'เชื่อมต่อไม่สำเร็จ', { kind: 'error' });
+                    }
+                });
+            }
+
+            const submitExisting = document.getElementById('qs-d-submit-existing');
+            if (submitExisting) {
+                submitExisting.addEventListener('click', () => {
+                    if (!selectedDevice) return;
+                    // Normalize to the same shape the create-new path uses
+                    // ({dno, mac, device_type}) — selectedDevice is a raw
+                    // /api/devices-available row, which uses device_no, not dno.
+                    qsState.device = { dno: selectedDevice.device_no, mac: selectedDevice.mac, device_type: selectedDevice.device_type };
+                    console.log('[Quick Setup] เลือกอุปกรณ์ที่มีอยู่:', selectedDevice);
+                    sessionStorage.setItem('nurseaid-quick-setup', JSON.stringify(qsState));
+                    advanceToStep(2);
+                });
+            }
+
+            const pModeNew = document.getElementById('qs-p-mode-new');
+            const pModeExisting = document.getElementById('qs-p-mode-existing');
+            if (pModeNew) pModeNew.addEventListener('click', () => setPatientMode(false));
+            if (pModeExisting) pModeExisting.addEventListener('click', () => setPatientMode(true));
+
+            const pSubmitNew = document.getElementById('qs-p-submit-new');
+            if (pSubmitNew) {
+                pSubmitNew.addEventListener('click', async () => {
+                    const hn = document.getElementById('qs-p-hn').value.trim();
+                    const nm = document.getElementById('qs-p-name').value.trim();
+                    const wardId = document.getElementById('qs-p-ward').value;
+                    pSubmitNew.disabled = true;
+                    const originalText = pSubmitNew.textContent;
+                    pSubmitNew.textContent = 'กำลังเพิ่ม…';
+                    try {
+                        const response = await fetch('/api/patients', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ hn, nm, ward_id: wardId })
+                        });
+                        if (!response.ok) {
+                            pSubmitNew.disabled = false;
+                            pSubmitNew.textContent = originalText;
+                            return showNotice(await apiErrorMessage(response, 'ไม่สามารถเพิ่มผู้ป่วยได้'), { kind: 'error' });
+                        }
+                        const patient = { hn, name: nm, ward_id: wardId };
+                        qsState.patient = patient;
+                        console.log('[Quick Setup] เพิ่มผู้ป่วยใหม่:', patient);
+                        sessionStorage.setItem('nurseaid-quick-setup', JSON.stringify(qsState));
+                        advanceToStep(3);
+                    } catch (err) {
+                        pSubmitNew.disabled = false;
+                        pSubmitNew.textContent = originalText;
+                        showNotice((err && err.message) ? err.message : 'เชื่อมต่อไม่สำเร็จ', { kind: 'error' });
+                    }
+                });
+            }
+
+            const pSubmitExisting = document.getElementById('qs-p-submit-existing');
+            if (pSubmitExisting) {
+                pSubmitExisting.addEventListener('click', () => {
+                    if (!selectedPatient) return;
+                    qsState.patient = { hn: selectedPatient.hn_number, name: selectedPatient.name };
+                    console.log('[Quick Setup] เลือกผู้ป่วยที่มีอยู่:', qsState.patient);
+                    sessionStorage.setItem('nurseaid-quick-setup', JSON.stringify(qsState));
+                    advanceToStep(3);
+                });
+            }
+
+            const pairSubmit = document.getElementById('qs-pair-submit');
+            if (pairSubmit) {
+                pairSubmit.addEventListener('click', async () => {
+                    const bed = document.getElementById('qs-pair-bed').value.trim();
+                    pairSubmit.disabled = true;
+                    const originalText = pairSubmit.textContent;
+                    pairSubmit.textContent = 'กำลังจับคู่…';
+                    try {
+                        const response = await fetch('/api/pair', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                mac: qsState.device.mac,
+                                hn: qsState.patient.hn,
+                                name: qsState.patient.name,
+                                bed: bed
+                            })
+                        });
+                        if (!response.ok) {
+                            // /api/pair returns plain text on error (not JSON), so read it as text.
+                            const text = await response.text();
+                            pairSubmit.disabled = false;
+                            pairSubmit.textContent = originalText;
+                            return showNotice(text || 'ไม่สามารถจับคู่ได้', { kind: 'error' });
+                        }
+                        renderDoneSummary();
+                        sessionStorage.removeItem('nurseaid-quick-setup');
+                        advanceToStep(4);
+                    } catch (err) {
+                        pairSubmit.disabled = false;
+                        pairSubmit.textContent = originalText;
+                        showNotice((err && err.message) ? err.message : 'เชื่อมต่อไม่สำเร็จ', { kind: 'error' });
+                    }
+                });
+            }
+
+            const doneReset = document.getElementById('qs-done-reset');
+            if (doneReset) {
+                doneReset.addEventListener('click', () => resetWizard());
+            }
+        }
+
+        // On page load, try to resume a wizard that was left in progress. Wrap in
+        // try/catch so corrupt/stale sessionStorage never crashes the page, and only
+        // restore when the saved shape looks sane (step 1-3 with device+patient when
+        // resuming into step 3). sessionStorage is cleared on success/reset, so a
+        // completed wizard simply starts fresh at step 1.
+        try {
+            const saved = sessionStorage.getItem('nurseaid-quick-setup');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed && typeof parsed.step === 'number' && parsed.step >= 1 && parsed.step <= 3) {
+                    qsState = parsed;
+                    if (qsState.step === 3 && qsState.device && qsState.patient) {
+                        renderPairSummary();
+                    } else if (qsState.step === 3) {
+                        // Missing device/patient — fall back to step 1.
+                        qsState = { step: 1, device: null, patient: null };
+                    }
+                    advanceToStep(qsState.step);
+                }
+            }
+        } catch (e) { /* corrupt/stale sessionStorage — ignore, start fresh at step 1 */ }
+
+        initQuickSetup();
+    `));
 });
 
 // ─── System Management (version / update check) ──────────────────────
