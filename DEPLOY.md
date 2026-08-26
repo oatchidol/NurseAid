@@ -21,6 +21,7 @@ package.json, package-lock.json    Node deps
 .env.example                       field reference (no real secrets)
 scripts/bootstrap-new-machine.sh   one-command setup (see below)
 DEPLOY.md, README.md, CHANGELOG.md docs
+RELEASE.md                         cutting/pushing a new version
 ```
 
 Deliberately **not** in this repo (see `.gitignore`) — present on the
