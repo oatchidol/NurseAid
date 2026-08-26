@@ -3414,7 +3414,7 @@ function ui(user, active, content, script = "") {
         .qs-step-connector .qs-fill { position:absolute; inset:0 auto 0 0; width:0%; height:100%; background:var(--accent-primary); border-radius:2px; transition:width .3s ease; }
         .qs-step--complete + .qs-step-connector .qs-fill { width:100%; }
         .qs-panel { transition:opacity .2s ease; }
-        .qs-panel.is-hidden { display:none; }
+        .is-hidden { display:none; }
         .qs-mode-btn { padding:.5rem .85rem; border-radius:.7rem; font-size:.78rem; font-weight:700; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-secondary); transition:color .2s ease, border-color .2s ease, background .2s ease; }
         .qs-mode-btn[aria-pressed="true"] { color:#fff; background:var(--accent-primary); border-color:var(--accent-primary); }
         .qs-mode-btn[aria-pressed="false"] { color:var(--text-secondary); }
@@ -8926,7 +8926,7 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
         </div>
 
         <div class="card p-5 md:p-6">
-            <div class="qs-stepper mb-8" role="list" aria-label="ขั้นตอนการตั้งค่า">
+            <div class="qs-stepper mb-3" role="list" aria-label="ขั้นตอนการตั้งค่า">
                 <div class="qs-step qs-step--active" id="qs-step-indicator-1" role="listitem">
                     <div class="qs-step-ring"><span class="qs-step-num">1</span><span class="qs-step-check">✓</span></div>
                     <div class="qs-step-label"><span class="qs-step-emoji">⌚</span> อุปกรณ์</div>
@@ -8942,25 +8942,29 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                     <div class="qs-step-label"><span class="qs-step-emoji">🔗</span> จับคู่</div>
                 </div>
             </div>
+            <p id="qs-step-of-total" class="text-center text-xs font-bold mb-8" style="color: var(--text-tertiary);" aria-live="polite">ขั้นตอนที่ 1 จาก 3</p>
 
             <div id="qs-panel-1" class="card qs-panel">
-                <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 1 · อุปกรณ์</p>
-                <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทอุปกรณ์">
-                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="false">เพิ่มอุปกรณ์ใหม่</button>
-                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="true">ใช้อุปกรณ์ที่มีอยู่</button>
+                <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-secondary);">ขั้นตอนที่ 1 · อุปกรณ์</p>
+                <p class="text-sm mb-4" style="color: var(--text-tertiary);">เลือกอุปกรณ์ (นาฬิกา/สายรัด) ที่จะใช้ติดตามสัญญาณชีพของผู้ป่วยรายนี้</p>
+                <div class="inline-flex p-1 rounded-xl mb-1 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทอุปกรณ์">
+                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true">➕</span> เพิ่มอุปกรณ์ใหม่</button>
+                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true">📋</span> เลือกจากที่มีอยู่</button>
                 </div>
+                <p class="text-[11px] mb-4" style="color: var(--text-tertiary);">💡 ส่วนใหญ่อุปกรณ์จะถูกลงทะเบียนไว้ในระบบแล้ว — เลือก "จากที่มีอยู่" ก่อน ถ้าไม่เจอค่อยเพิ่มใหม่</p>
 
                 <div id="qs-create-new-section" class="is-hidden">
                     <div class="space-y-3">
                         <div>
-                            <label for="qs-d-dno" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขอุปกรณ์ (Device No)</label>
+                            <label for="qs-d-dno" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขอุปกรณ์ (ตั้งชื่อเรียกเองได้ เช่น ชื่อวอร์ด+ลำดับ)</label>
                             <input id="qs-d-dno" class="qs-field" placeholder="เช่น WARD-01" autocomplete="off" spellcheck="false">
                         </div>
                         <div>
-                            <label for="qs-d-mac" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลข MAC / Device ID</label>
+                            <label for="qs-d-mac" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">รหัสประจำเครื่อง (MAC Address)</label>
+                            <p class="text-[11px] mb-1.5" style="color: var(--text-tertiary);">ดูได้จากสติกเกอร์บนตัวเครื่องหรือกล่อง หรือกดปุ่ม "สแกน QR" เพื่อสแกนแทนการพิมพ์</p>
                             <div class="flex gap-2">
                                 <input id="qs-d-mac" class="qs-field flex-1" placeholder="เช่น A1:B2:C3:D4:E5:F6" autocomplete="off" spellcheck="false">
-                                <button type="button" id="qs-d-scan-mac" class="qs-scan" title="สแกน QR Code">สแกน QR</button>
+                                <button type="button" id="qs-d-scan-mac" class="qs-scan" title="สแกน QR Code"><span aria-hidden="true">📷</span> สแกน QR</button>
                             </div>
                         </div>
                         <div>
@@ -8970,14 +8974,14 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                 <option value="wearos">Wear OS Peripheral</option>
                             </select>
                         </div>
-                        <button type="button" id="qs-d-submit-new" class="qs-primary w-full">เพิ่มอุปกรณ์และไปต่อ</button>
+                        <button type="button" id="qs-d-submit-new" class="qs-primary w-full">เพิ่มอุปกรณ์นี้ →</button>
                     </div>
                 </div>
 
                 <div id="qs-existing-section">
                     <div class="space-y-3">
                         <div id="qs-existing-list" role="list" aria-label="อุปกรณ์ที่พร้อมใช้งาน"></div>
-                        <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้และไปต่อ</button>
+                        <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้ →</button>
                     </div>
                 </div>
             </div>
@@ -8995,10 +8999,14 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                         `}
                     </div>
                 ` : `
-                    <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 2 · ผู้ป่วย</p>
+                    <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-secondary);">ขั้นตอนที่ 2 · ผู้ป่วย</p>
+                    <p class="text-sm mb-3" style="color: var(--text-tertiary);">เพิ่มข้อมูลผู้ป่วยที่จะสวมใส่อุปกรณ์นี้ หรือเลือกผู้ป่วยที่มีอยู่แล้วในระบบ</p>
+                    <div id="qs-p-device-reminder" class="rounded-xl border p-3 mb-4 text-xs flex items-center gap-2" style="background: var(--bg-input); border-color: var(--border-color); color: var(--text-secondary);">
+                        <span aria-hidden="true">⌚</span> อุปกรณ์ที่เลือกไว้: <strong id="qs-p-device-reminder-text" style="color: var(--text-heading);"></strong>
+                    </div>
                     <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทผู้ป่วย">
-                        <button type="button" id="qs-p-mode-new" class="qs-mode-btn flex-1" aria-pressed="true">เพิ่มผู้ป่วยใหม่</button>
-                        <button type="button" id="qs-p-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false">ใช้ผู้ป่วยที่มีอยู่</button>
+                        <button type="button" id="qs-p-mode-new" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true">➕</span> เพิ่มผู้ป่วยใหม่</button>
+                        <button type="button" id="qs-p-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true">📋</span> เลือกจากที่มีอยู่</button>
                     </div>
 
                     <div id="qs-p-create-new">
@@ -9012,39 +9020,42 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                 <input id="qs-p-name" class="qs-field" placeholder="เช่น สมชาย ใจดี" autocomplete="off" spellcheck="false">
                             </div>
                             <div>
-                                <label for="qs-p-ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Ward</label>
+                                <label for="qs-p-ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Ward (แผนก) *</label>
                                 <select id="qs-p-ward" class="qs-field" ${wardSelectAttrs}>
                                     <option value="">เลือก Ward *</option>
                                     ${wardOpts}
                                 </select>
                                 ${lockedWardId ? '<p class="text-[10px]" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                             </div>
-                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยและไปต่อ</button>
+                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้ →</button>
                         </div>
                     </div>
 
                     <div id="qs-p-existing" class="is-hidden">
                         <div class="space-y-3">
                             <div id="qs-p-existing-list" role="list" aria-label="ผู้ป่วยที่พร้อมใช้งาน"></div>
-                            <button type="button" id="qs-p-submit-existing" class="qs-primary w-full" disabled>ใช้ผู้ป่วยนี้และไปต่อ</button>
+                            <button type="button" id="qs-p-submit-existing" class="qs-primary w-full" disabled>ใช้ผู้ป่วยนี้ →</button>
                         </div>
                     </div>
+                    <button type="button" id="qs-p-back" class="qs-secondary w-full mt-4"><span aria-hidden="true">←</span> ย้อนกลับไปเลือกอุปกรณ์</button>
                 `}
             </div>
             <div id="qs-panel-3" class="card qs-panel is-hidden">
-                <p class="text-xs font-bold uppercase tracking-wide mb-3" style="color: var(--text-secondary);">ขั้นตอนที่ 3 · จับคู่</p>
+                <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-secondary);">ขั้นตอนที่ 3 · จับคู่</p>
+                <p class="text-sm mb-4" style="color: var(--text-tertiary);">ตรวจสอบข้อมูลด้านล่างอีกครั้ง แล้วกดยืนยันเพื่อเริ่มติดตามผู้ป่วยรายนี้</p>
                 <div class="rounded-xl border p-4 mb-5" style="background: var(--bg-input); border-color: var(--border-color);">
                     <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">สรุปก่อนจับคู่</p>
                     <div class="space-y-2 text-sm">
-                        <div>อุปกรณ์: <span id="qs-pair-device-summary" style="color: var(--text-heading); font-bold;"></span></div>
-                        <div>ผู้ป่วย: <span id="qs-pair-patient-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                        <div>⌚ อุปกรณ์: <span id="qs-pair-device-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                        <div>🧍 ผู้ป่วย: <span id="qs-pair-patient-summary" style="color: var(--text-heading); font-bold;"></span></div>
                     </div>
                 </div>
                 <div>
-                    <label for="qs-pair-bed" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขเตียง (ไม่บังคับ)</label>
-                    <input id="qs-pair-bed" class="qs-field" placeholder="เตียง (ไม่บังคับ) เช่น B01" autocomplete="off" spellcheck="false">
+                    <label for="qs-pair-bed" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขเตียง (ไม่บังคับ — กรอกภายหลังได้)</label>
+                    <input id="qs-pair-bed" class="qs-field" placeholder="เช่น B01" autocomplete="off" spellcheck="false">
                 </div>
-                <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5">ยืนยันการจับคู่</button>
+                <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5">✓ ยืนยันการจับคู่</button>
+                <button type="button" id="qs-pair-back" class="qs-secondary w-full mt-3"><span aria-hidden="true">←</span> ย้อนกลับไปแก้ไขผู้ป่วย</button>
             </div>
             <div id="qs-panel-done" class="card qs-panel is-hidden">
                 <div class="text-center mb-5">
@@ -9068,7 +9079,24 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
 
         // Generic stepper controller — reused by later slices (advanceToStep(3),
         // advanceToStep(4), etc.). n is the target step number 1-4 (4 = done).
+        // Reset any submit button that might be stuck in a stale "in flight"
+        // state (disabled + loading text) from a *previous* successful
+        // submission — matters now that steps are revisitable via Back /
+        // clicking a completed stepper circle, not just a one-way forward walk.
+        function resetSubmitButtonStates() {
+            const resets = [
+                ['qs-d-submit-new', 'เพิ่มอุปกรณ์นี้ →'],
+                ['qs-p-submit-new', 'เพิ่มผู้ป่วยนี้ →'],
+                ['qs-pair-submit', '✓ ยืนยันการจับคู่']
+            ];
+            resets.forEach(([id, text]) => {
+                const el = document.getElementById(id);
+                if (el) { el.disabled = false; el.textContent = text; }
+            });
+        }
+
         function advanceToStep(n) {
+            resetSubmitButtonStates();
             qsState.step = n;
             const indicatorIds = ['qs-step-indicator-1', 'qs-step-indicator-2', 'qs-step-indicator-3'];
             const panelIds = ['qs-panel-1', 'qs-panel-2', 'qs-panel-3', 'qs-panel-done'];
@@ -9094,6 +9122,32 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                 const isDone = id === 'qs-panel-done';
                 const shouldShow = isDone ? n === 4 : panelNum === n;
                 el.classList.toggle('is-hidden', !shouldShow);
+            });
+            const stepOfTotal = document.getElementById('qs-step-of-total');
+            if (stepOfTotal) stepOfTotal.textContent = n === 4 ? 'เสร็จสิ้น' : 'ขั้นตอนที่ ' + n + ' จาก 3';
+            if (n === 2) renderDeviceReminder();
+            if (n === 3) renderPairSummary();
+        }
+
+        // Shows what was picked in Step 1 while the admin is filling Step 2 —
+        // otherwise there's no visible confirmation that Step 1 "took".
+        function renderDeviceReminder() {
+            const el = document.getElementById('qs-p-device-reminder-text');
+            if (el && qsState.device) {
+                el.textContent = '#' + qsState.device.dno + ' (' + qsState.device.mac + ')';
+            }
+        }
+
+        // Completed stepper circles are clickable to jump back — only ever
+        // backward, never skipping ahead to a step not yet reached.
+        function wireStepperNav() {
+            [1, 2, 3].forEach(n => {
+                const el = document.getElementById('qs-step-indicator-' + n);
+                if (!el) return;
+                el.style.cursor = 'pointer';
+                el.addEventListener('click', () => {
+                    if (el.classList.contains('qs-step--complete')) advanceToStep(n);
+                });
             });
         }
 
@@ -9287,6 +9341,12 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             // yet paired) — kick off the fetch immediately instead of waiting
             // for a mode-toggle click that may never happen.
             loadAvailableDevices();
+            wireStepperNav();
+
+            const backToDevice = document.getElementById('qs-p-back');
+            if (backToDevice) backToDevice.addEventListener('click', () => advanceToStep(1));
+            const backToPatient = document.getElementById('qs-pair-back');
+            if (backToPatient) backToPatient.addEventListener('click', () => advanceToStep(2));
 
             const modeNew = document.getElementById('qs-d-mode-new');
             const modeExisting = document.getElementById('qs-d-mode-existing');
