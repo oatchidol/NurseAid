@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-08-26
+
+### Added
+- หน้า "ตรวจสอบอัปเดต" (`/system-mgmt`, เฉพาะ super_admin) แสดงเวอร์ชันปัจจุบันและเช็คเวอร์ชันล่าสุดจาก GitHub tags — แก้ปัญหาป้าย version บน sidebar ที่เคยเป็นข้อความตายตัว (`v2.17`) ให้อ่านจาก `package.json` แหล่งเดียวเสมอ
+- ปุ่ม **ติดตั้งอัปเดตอัตโนมัติ** (one-click Apply Update) บนหน้าเดียวกัน — กดแล้วระบบ `git pull` + build + recreate container ให้เองผ่าน `compose-collector` โดยมี **auto-rollback อัตโนมัติ** ถ้าเวอร์ชันใหม่ไม่ผ่าน health check (retag image เดิม, ย้อน git กลับ, recreate ใหม่, ยืนยัน healthy อีกครั้ง) พร้อมแจ้งเตือนผ่าน LINE/Telegram และบันทึก audit log ทุกขั้นตอน — ช่องทางสั่งอัปเดตนี้แยกจาก Central (fleet server ภายนอก) โดยโครงสร้าง ไม่ใช่แค่ไม่เปิดสิทธิ์
+- `scripts/updategit.sh` — สคริปต์อัปเดต/สำรองข้อมูลด้วยมือสำหรับกรณีที่ไม่ต้องการใช้ปุ่มในเว็บ (backup repo + `.env`, `git reset --hard` ไปที่ origin, rebuild, health check)
+
+### Fixed
+- แก้บั๊กสิทธิ์ไฟล์ข้ามคอนเทนเนอร์ระหว่าง `nurseaid` (รันเป็น appuser) กับ `compose-collector` (รันเป็น root) ที่ทำให้ปุ่ม Apply Update เขียน/อ่านไฟล์ในโฟลเดอร์ spool ที่ใช้สื่อสารกันไม่ได้ — pin UID/GID ของ appuser ให้แน่นอน และปรับสิทธิ์ไฟล์ให้ทั้งสองฝั่งเข้าถึงได้เท่าที่จำเป็นเท่านั้น (พบระหว่างทดสอบจริงผ่านหน้าเว็บ ไม่ใช่แค่ทดสอบโค้ด)
+- แก้บั๊ก `git checkout <sha>` ที่ทำให้ HEAD หลุดจาก branch (detached HEAD) หลัง rollback ซึ่งจะทำให้การอัปเดตครั้งถัดไปพัง — เปลี่ยนเป็น `git reset --hard`
+- แก้บั๊ก Docker Compose เดารหัสโปรเจกต์ผิดตอนรันจากใน `compose-collector` (ได้ `repo` แทนที่จะเป็น `nurseaid`) ซึ่งเกือบทำให้ container postgres/influxdb ที่รันอยู่จริงถูกสร้างซ้ำโดยไม่ตั้งใจ — เพิ่ม `--project-name` ให้ชัดเจนทุกคำสั่ง
+
 ## [2.17.0] - 2026-08-25
 
 ### Added
