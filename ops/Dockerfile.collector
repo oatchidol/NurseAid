@@ -4,7 +4,7 @@
 FROM python:3.11.15-alpine
 
 ENV TZ=Asia/Bangkok
-RUN apk add --no-cache docker-cli tzdata && \
+RUN apk add --no-cache docker-cli docker-cli-compose git tzdata && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone
 

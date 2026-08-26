@@ -118,6 +118,7 @@ services:
       - "3333:3333"
     volumes:
       - notification_sounds_data:/app/uploads/notification-sounds
+      - apply_update_spool:/run/nurseaid-apply-update
     depends_on:
       - influxdb
       - postgres
@@ -185,10 +186,17 @@ services:
       - NURSEAID_CENTRAL_URL=${NURSEAID_CENTRAL_URL:-https://nurseaid-central.softsquaregroup.com}
       - NURSEAID_DEVICE_ID=${NURSEAID_DEVICE_ID:-}
       - NURSEAID_HEARTBEAT_INTERVAL=${NURSEAID_HEARTBEAT_INTERVAL:-60}
+      - NURSEAID_APPLY_UPDATE_SPOOL=/run/nurseaid-apply-update
+      - NURSEAID_REPO_PATH=/repo
 
     volumes:
       - compose_status:/run/nurseaid-compose
       - ./ops:/host/project:ro
+      # Separate from ./ops:/host/project:ro above (which stays read-only, for
+      # diagnostics/expected_services()). apply_update needs a real writable
+      # checkout to `git pull`/`docker compose build` against.
+      - .:/repo:rw
+      - apply_update_spool:/run/nurseaid-apply-update
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc/stat:/host/proc/stat:ro
       - /proc/meminfo:/host/proc/meminfo:ro
@@ -235,6 +243,12 @@ services:
 
 volumes:
   compose_status:
+    driver: local
+  # Isolated trigger channel for the apply_update pipeline (server.js <->
+  # compose-collector). Deliberately separate from compose_status: Central
+  # (the external fleet server) only ever talks HTTP to the collector
+  # process, never to volumes, so it structurally cannot reach this one.
+  apply_update_spool:
     driver: local
   influxdb_data:
     driver: local

@@ -8862,13 +8862,21 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             </p>
 
             <div id="update-apply" class="hidden mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
-                <p class="text-sm font-bold mb-2" style="color: #92400e;">📌 การติดตั้งอัปเดต (ทำด้วยมือ)</p>
-                <p class="text-xs mb-2" style="color: #a16207;">การอัปเดตต้องทำด้วยมือโดยผู้ดูแลระบบ ไม่สามารถอัปเดตอัตโนมัติได้</p>
+                <p class="text-sm font-bold mb-2" style="color: #92400e;">📌 การติดตั้งอัตโนมัติ</p>
+                <p class="text-xs mb-3" style="color: #a16207;">กดปุ่มด้านล่างเพื่อติดตั้งอัตโนมัติ ระบบจะดึงโค้ด บิลดocker และ recreate container พร้อม auto-rollback หากเวอร์ชันใหม่ไม่ผ่าน health-check</p>
+                <button type="button" id="apply-update-btn" onclick="applyUpdate()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: #d97706;">
+                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    ติดตั้งอัตโนมัติทันที
+                </button>
+                <p id="apply-update-status" class="hidden mt-3 rounded-xl border p-3 text-sm font-semibold" role="status" aria-live="polite"></p>
+                <div id="apply-update-critical" class="hidden mt-3 bg-red-600 text-white border-2 border-red-800 p-4 rounded-xl font-black">🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้</div>
                 <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: #fffbeb; color: #713f12;">git pull&#10;docker compose up -d --build</pre>
             </div>
         </div>
     `, `
         let updateCheckController = null;
+        let lastUpdateCheckData = null;
+        let applyInProgress = false;
         async function checkForUpdates() {
             const btn = document.getElementById('check-update-btn');
             const statusEl = document.getElementById('update-status');
@@ -8887,6 +8895,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 updateCheckController = new AbortController();
                 const r = await fetch('/api/system/update-check', { signal: updateCheckController.signal });
                 const data = await r.json().catch(() => ({}));
+                lastUpdateCheckData = data;
                 if (!r.ok) throw new Error(data.error || 'การเชื่อมต่อล้มเหลว');
                 if (data.error) {
                     statusEl.className = 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700';
@@ -8913,6 +8922,114 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             } finally {
                 btn.disabled = false;
                 btn.textContent = originalText;
+            }
+        }
+        async function applyUpdate() {
+            if (applyInProgress) return;
+            const btn = document.getElementById('apply-update-btn');
+            try {
+                updateCheckController?.abort();
+                updateCheckController = new AbortController();
+                const pf = await fetch('/api/system/apply-update/preflight', { signal: updateCheckController.signal });
+                const pfData = await pf.json().catch(() => ({}));
+                const onlineCount = pfData.onlinePatientCount;
+                const versionText = lastUpdateCheckData && lastUpdateCheckData.latestVersion ? ' v' + escapeHTML(lastUpdateCheckData.latestVersion) : '';
+                let body = '<p>ระบบจะดึงโค้ดใหม่ บิลด์ และ recreate container เพื่อติดตั้งอัปเดต' + versionText + ' โดยระบบจะ auto-rollback หากอัปเดตล้มเหลว</p>';
+                if (onlineCount === null || onlineCount === undefined) {
+                    body += '<p style="color:var(--text-secondary);">ไม่สามารถตรวจสอบจำนวนผู้ป่วยออนไลน์ได้</p>';
+                } else {
+                    body += '<p style="color:var(--text-secondary);">ขณะนี้มีผู้ป่วย ' + onlineCount + ' คนกำลังออนไลน์</p>';
+                }
+                applyInProgress = true;
+                btn.disabled = true;
+                const confirmed = await confirmAction({
+                    title: 'ติดตั้งอัปเดตทันที',
+                    kind: 'danger',
+                    confirmText: 'ติดตั้งอัปเดต',
+                    loadingText: 'กำลังเริ่มอัปเดต…',
+                    body: body,
+                    onConfirm: async () => {
+                        const r = await fetch('/api/system/apply-update', { method: 'POST' });
+                        const data = await r.json().catch(() => ({}));
+                        if (!r.ok) throw new Error(data.error || 'การเชื่อมต่อล้มเหลว');
+                        if (!data.sessionId) throw new Error('ไม่ได้รับ sessionId จากเซิร์เวอร์');
+                        pollApplyUpdateStatus(data.sessionId);
+                    }
+                });
+                if (!confirmed) {
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.log('applyUpdate error:', e && e.message ? e.message : e);
+            } finally {
+                applyInProgress = false;
+            }
+        }
+        async function pollApplyUpdateStatus(sessionId) {
+            const statusEl = document.getElementById('apply-update-status');
+            const criticalEl = document.getElementById('apply-update-critical');
+            const btn = document.getElementById('apply-update-btn');
+            const start = Date.now();
+            const TIMEOUT_MS = 6 * 60 * 1000;
+            const pollingClass = 'rounded-xl border border-blue-300 bg-blue-50 p-3 text-sm font-semibold text-blue-800';
+            function showStatus(html, className) {
+                statusEl.classList.remove('hidden');
+                criticalEl.classList.add('hidden');
+                statusEl.className = className;
+                statusEl.innerHTML = html;
+            }
+            while (true) {
+                if (Date.now() - start > TIMEOUT_MS) {
+                    showStatus('⚠️ หมดเวลารอผล กรุณาตรวจสอบสถานะระบบด้วยตนเอง', 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
+                    btn.disabled = false;
+                    return;
+                }
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 10000);
+                try {
+                    const r = await fetch('/api/system/apply-update/status?sessionId=' + encodeURIComponent(sessionId), { signal: controller.signal });
+                    clearTimeout(timer);
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const data = await r.json().catch(() => ({}));
+                    if (data && data.status === 'pending') {
+                        showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                    } else if (data && data.status === 'succeeded') {
+                        const result = data.result || {};
+                        if (result.critical) {
+                            statusEl.classList.add('hidden');
+                            criticalEl.classList.remove('hidden');
+                            const detail = result.rollbackReason || result.reason;
+                            criticalEl.innerHTML = '🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้' + (detail ? '<br><span class="font-semibold">' + escapeHTML(detail) + '</span>' : '');
+                            btn.disabled = false;
+                            return;
+                        }
+                        if (result.rolledBack) {
+                            showStatus('⚠️ อัปเดตล้มเหลว ระบบย้อนกลับเป็นเวอร์ชันเดิมโดยอัตโนมัติ' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
+                            btn.disabled = false;
+                            return;
+                        }
+                        if (result.healthy) {
+                            showStatus('✅ อัปเดตสำเร็จ v' + escapeHTML(lastUpdateCheckData && lastUpdateCheckData.latestVersion ? lastUpdateCheckData.latestVersion : ''), 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800');
+                            btn.disabled = false;
+                            checkForUpdates();
+                            return;
+                        }
+                        showStatus('⚠️ อัปเดตล้มเหลว' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
+                        btn.disabled = false;
+                        return;
+                    } else if (data && data.status === 'failed') {
+                        showStatus('⚠️ ไม่สามารถเริ่มอัปเดตได้: ' + escapeHTML(data.error || 'ไม่ทราบเหตุผล'), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
+                        btn.disabled = false;
+                        return;
+                    } else {
+                        showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                    }
+                } catch (e) {
+                    clearTimeout(timer);
+                    console.log('apply-update poll attempt failed, retrying:', e && e.message ? e.message : e);
+                    showStatus('🔄 กำลังอัปเดต… (ระบบอาจกำลังรีสตาร์ท)', pollingClass);
+                }
+                await new Promise(res => setTimeout(res, 5000));
             }
         }
     `));
@@ -9392,6 +9509,154 @@ app.get('/api/system/update-check', adminOnly, async (req, res) => {
         console.error('[Update Check] failed:', reason, e?.message || '');
         return res.json({ currentVersion: APP_VERSION, error: reason, checkedAt: new Date().toISOString() });
     }
+});
+
+// ─── System / Apply Update (auto-update with automatic rollback) ─────
+// See .claude/plans/auto-update.md. Trigger + status endpoints only —
+// the actual pipeline (lock, dirty-tree guard, build, rollback) lives in
+// compose-collector (ops/nurseaid-compose-collector.py, process_apply_update_requests).
+// This is the ONLY writer of *.action-request.json into APPLY_UPDATE_SPOOL;
+// Central (the external fleet server) has no path to this spool at all.
+const APPLY_UPDATE_SPOOL = process.env.NURSEAID_APPLY_UPDATE_SPOOL || '/run/nurseaid-apply-update';
+const APPLY_UPDATE_REQUEST_TTL_MS = 5 * 60 * 1000; // matches the request's own expiresAt window
+const APPLY_UPDATE_SPOOL_CLEANUP_MS = 60 * 1000; // best-effort TTL sweep of old request/response files
+// Module-level guard (mirrors aiChatInFlightUsers, server.js:86): this is a
+// single system-wide operation, not per-user, so it tracks at most one
+// in-flight sessionId rather than a Set.
+let applyUpdateInFlight = null; // { sessionId, startedAt, startedByUserId } | null
+
+function applyUpdateSpoolPath(sessionId, kind) {
+    // sessionId always comes from crypto.randomUUID() (this module) or is
+    // validated against SESSION_RE-equivalent shape before file access.
+    return path.join(APPLY_UPDATE_SPOOL, `${sessionId}.action-${kind}.json`);
+}
+
+// Fan out a plain-text notification to every super_admin who has LINE/Telegram
+// configured — the only role with 'settings:global', i.e. the only role that
+// can see /system-mgmt or trigger apply-update in the first place. Mirrors the
+// dispatch shape in dispatchConnectionNotification (server.js:1507) but that
+// helper's SELECT * FROM user_notification_settings has no role filter today,
+// so this join is new rather than reusable as-is.
+async function notifyAdmins(text) {
+    try {
+        const settings = await pool.query(
+            `SELECT uns.* FROM user_notification_settings uns
+             JOIN users u ON u.id = uns.user_id
+             WHERE u.role = 'super_admin'`
+        );
+        const tasks = [];
+        for (const user of settings.rows) {
+            if (isSilencePeriod(user.silent_start, user.silent_end)) continue;
+            if (user.line_enabled && user.line_bot_token && user.line_target) {
+                tasks.push(postLinePush(user.line_bot_token, user.line_target, text));
+            }
+            if (user.telegram_enabled && user.telegram_bot_token && user.telegram_chat_id) {
+                tasks.push(postJson(`https://api.telegram.org/bot${user.telegram_bot_token}/sendMessage`, {
+                    chat_id: user.telegram_chat_id, text
+                }));
+            }
+        }
+        const results = await Promise.allSettled(tasks);
+        results.filter(item => item.status === 'rejected')
+            .forEach(item => console.error('[Apply Update Notify]', item.reason?.message || item.reason));
+    } catch (e) {
+        console.error('[Apply Update Notify]', e.message);
+    }
+}
+
+// Best-effort cleanup of stale request/response files for one session, so the
+// spool doesn't accumulate forever across many apply-update cycles over time.
+async function cleanupApplyUpdateSession(sessionId) {
+    for (const kind of ['request', 'response']) {
+        try { await fs.promises.unlink(applyUpdateSpoolPath(sessionId, kind)); } catch (e) { /* already gone */ }
+    }
+}
+
+app.get('/api/system/apply-update/preflight', adminOnly, async (req, res) => {
+    // Informational context for the confirm dialog only — one-click apply
+    // was the explicit choice, so this never blocks the button.
+    try {
+        const snapshot = await readLiveStatuses();
+        const onlinePatientCount = snapshot.stale ? null
+            : snapshot.value.filter(status => status.status === 'Online').length;
+        res.json({ onlinePatientCount, inFlight: Boolean(applyUpdateInFlight) });
+    } catch (e) {
+        res.json({ onlinePatientCount: null, inFlight: Boolean(applyUpdateInFlight) });
+    }
+});
+
+// Worst-case pipeline duration is ~600s build + ~120s recreate + ~90s health
+// (x2 if it rolls back) — cap well above that so an abandoned browser tab
+// (client stopped polling, never reached a terminal status) can't wedge this
+// guard forever after that. The collector's own on-disk lock is the real
+// safety net against a genuinely-concurrent run; this is just UX fast-fail.
+const APPLY_UPDATE_IN_FLIGHT_STALE_MS = 20 * 60 * 1000;
+
+app.post('/api/system/apply-update', adminOnly, async (req, res) => {
+    if (applyUpdateInFlight && Date.now() - applyUpdateInFlight.startedAt > APPLY_UPDATE_IN_FLIGHT_STALE_MS) {
+        applyUpdateInFlight = null;
+    }
+    if (applyUpdateInFlight) return res.status(409).json({ error: 'มีการอัปเดตกำลังดำเนินการอยู่แล้ว' });
+
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + APPLY_UPDATE_REQUEST_TTL_MS).toISOString();
+    try {
+        await fs.promises.mkdir(APPLY_UPDATE_SPOOL, { recursive: true, mode: 0o770 });
+        await fs.promises.writeFile(
+            applyUpdateSpoolPath(sessionId, 'request'),
+            JSON.stringify({ action: 'apply_update', expiresAt }),
+            { encoding: 'utf-8' }
+        );
+    } catch (e) {
+        console.error('[Apply Update] failed to write request:', e.message);
+        return res.status(503).json({ error: 'ไม่สามารถเริ่มกระบวนการอัปเดตได้ กรุณาลองใหม่' });
+    }
+
+    applyUpdateInFlight = { sessionId, startedAt: Date.now(), startedByUserId: req.user.id };
+    logAudit(req, 'system:apply_update:start', 'service', 'nurseaid', { fromVersion: APP_VERSION }).catch(console.error);
+    notifyAdmins(`🔄 NurseAid: ${req.user.username || req.user.id} เริ่มการอัปเดตระบบ (ปัจจุบัน v${APP_VERSION})`).catch(console.error);
+    res.json({ sessionId });
+});
+
+app.get('/api/system/apply-update/status', adminOnly, async (req, res) => {
+    const sessionId = String(req.query.sessionId || '');
+    if (!sessionId || (applyUpdateInFlight && applyUpdateInFlight.sessionId !== sessionId)) {
+        return res.status(400).json({ error: 'invalid sessionId' });
+    }
+
+    let response = null;
+    try {
+        const raw = await fs.promises.readFile(applyUpdateSpoolPath(sessionId, 'response'), 'utf-8');
+        response = JSON.parse(raw);
+    } catch (e) {
+        // Not written yet (still pending) — also the expected state while
+        // the container is mid-restart and this very request may itself
+        // fail/timeout; the client's poll loop tolerates that.
+        return res.json({ status: 'pending' });
+    }
+
+    // Terminal status reached — clear the guard, audit, notify, cleanup.
+    if (applyUpdateInFlight && applyUpdateInFlight.sessionId === sessionId) applyUpdateInFlight = null;
+
+    const result = response.result || {};
+    if (response.status === 'succeeded') {
+        logAudit(req, 'system:apply_update:success', 'service', 'nurseaid', {
+            fromSha: result.fromSha, toSha: result.toSha, healthy: result.healthy
+        }).catch(console.error);
+        if (result.healthy && !result.rolledBack) {
+            notifyAdmins(`✅ NurseAid: อัปเดตสำเร็จ (${String(result.toSha || '').slice(0, 7)})`).catch(console.error);
+        } else if (result.critical) {
+            notifyAdmins(`🚨 NurseAid: อัปเดตล้มเหลวและ rollback ไม่สำเร็จ — ต้องการความช่วยเหลือด่วน (${result.rollbackReason || result.reason || ''})`).catch(console.error);
+        } else if (result.rolledBack) {
+            notifyAdmins(`⚠️ NurseAid: อัปเดตล้มเหลว ระบบย้อนกลับเป็นเวอร์ชันเดิมโดยอัตโนมัติแล้ว (${result.reason || ''})`).catch(console.error);
+        }
+    } else {
+        logAudit(req, 'system:apply_update:failed', 'service', 'nurseaid', { error: response.error }).catch(console.error);
+        notifyAdmins(`⚠️ NurseAid: ไม่สามารถเริ่มการอัปเดตได้ — ${response.error || 'unknown error'}`).catch(console.error);
+    }
+
+    setTimeout(() => cleanupApplyUpdateSession(sessionId), APPLY_UPDATE_SPOOL_CLEANUP_MS);
+    res.json(response);
 });
 
 async function startServer() {

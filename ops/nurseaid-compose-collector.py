@@ -63,12 +63,12 @@ DEVICE_ID = get_machine_device_id()
 
 
 
-def command(*args):
-    return subprocess.run(args, text=True, capture_output=True, check=True).stdout
+def command(*args, timeout=15):
+    return subprocess.run(args, text=True, capture_output=True, check=True, timeout=timeout).stdout
 
 
-def log_command(*args):
-    completed = subprocess.run(args, text=True, capture_output=True, check=True)
+def log_command(*args, timeout=30):
+    completed = subprocess.run(args, text=True, capture_output=True, check=True, timeout=timeout)
     return completed.stdout + completed.stderr
 
 
@@ -310,6 +310,190 @@ def process_action_requests(now=None):
             except OSError: pass
 
 
+# ─── apply_update: admin-initiated self-update with automatic rollback ────
+# Deliberately a SEPARATE spool dir/volume + separate handler from
+# process_action_requests() above. Central only ever talks HTTP to this
+# process (see central_cycle() below) and writes into SPOOL_DIR, never into
+# APPLY_UPDATE_SPOOL — so Central structurally cannot trigger apply_update,
+# not just "isn't supposed to". The only writer of *.action-request.json in
+# this spool is server.js's POST /api/system/apply-update (adminOnly).
+APPLY_UPDATE_SPOOL = Path(os.getenv("NURSEAID_APPLY_UPDATE_SPOOL", "/run/nurseaid-apply-update"))
+REPO_PATH = Path(os.getenv("NURSEAID_REPO_PATH", "/repo"))
+COMPOSE_FILE = REPO_PATH / "docker-compose.yml"
+LOCK_FILE = APPLY_UPDATE_SPOOL / "apply_update.lock"
+HISTORY_FILE = APPLY_UPDATE_SPOOL / "apply_update-history.jsonl"
+# Response/request files here are read almost immediately (run_apply_update
+# already blocks until the whole build/restart/health cycle is done before
+# writing the response), so this only needs to bound long-run spool growth —
+# not race the client's ~5s poll / ~6min give-up. Kept well clear of that
+# window, unlike the tighter per-item TTL server.js applies on read.
+APPLY_UPDATE_STALE_SECONDS = 600
+
+
+def repo_command(*args, timeout=15):
+    return subprocess.run(args, text=True, capture_output=True, check=True, cwd=REPO_PATH, timeout=timeout).stdout
+
+
+def compose_command(*args, timeout=15):
+    # --project-name is NOT optional here: without it, Compose infers the
+    # project name from --project-directory's basename ("repo", the
+    # container-side mount point) instead of the real running stack's
+    # project ("nurseaid", NURSEAID_PROJECT_NAME) — a total identity
+    # mismatch. Confirmed live: Compose then can't see the already-running
+    # postgres/influxdb containers as "this project's", tries to create
+    # fresh ones, and collides on their hardcoded container_name. Caught via
+    # a real dry-run before this ever touched the live nurseaid container.
+    return repo_command(
+        "docker", "compose", "-f", str(COMPOSE_FILE), "--project-directory", str(REPO_PATH),
+        "--project-name", PROJECT_NAME, *args, timeout=timeout
+    )
+
+
+def append_apply_update_history(entry):
+    try:
+        APPLY_UPDATE_SPOOL.mkdir(parents=True, exist_ok=True, mode=0o770)
+        with open(HISTORY_FILE, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({**entry, "at": datetime.now(timezone.utc).isoformat()}) + "\n")
+    except OSError as error:
+        print(f"[ApplyUpdate] history append failed: {error}", flush=True)
+
+
+def acquire_apply_update_lock():
+    APPLY_UPDATE_SPOOL.mkdir(parents=True, exist_ok=True, mode=0o770)
+    try:
+        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+    except FileExistsError:
+        raise RuntimeError("update already in progress")
+
+
+def release_apply_update_lock():
+    try: LOCK_FILE.unlink(missing_ok=True)
+    except OSError: pass
+
+
+def run_apply_update(action_id):
+    """The actual pipeline. Always releases the lock. Never raises for a
+    handled build/health failure — those return a result dict describing
+    what happened; only truly unexpected errors (guard failures, git/docker
+    plumbing errors before any container was touched) raise, which the
+    caller turns into a 'failed' response."""
+    acquire_apply_update_lock()
+    try:
+        # Clean-tree guard: never git-reset/checkout over an ops engineer's
+        # in-progress edit on the same checkout this bind-mounts.
+        if repo_command("git", "status", "--porcelain").strip():
+            raise RuntimeError("repo has uncommitted local changes, refusing to update")
+
+        # Snapshot current state so a failed build/health check can roll back.
+        old_sha = repo_command("git", "rev-parse", "HEAD").strip()
+        nurseaid_ids = container_ids("nurseaid")
+        if not nurseaid_ids:
+            raise RuntimeError("nurseaid container not found")
+        old_image = command("docker", "inspect", "--format={{.Image}}", nurseaid_ids[0]).strip()
+        if not old_image:
+            raise RuntimeError("could not resolve current nurseaid image id")
+
+        repo_command("git", "fetch", timeout=60)
+        repo_command("git", "pull", timeout=60)
+        new_sha = repo_command("git", "rev-parse", "HEAD").strip()
+
+        if new_sha == old_sha:
+            result = {"fromSha": old_sha, "toSha": new_sha, "healthy": True, "message": "already up to date"}
+            append_apply_update_history({"actionId": action_id, **result})
+            return result
+
+        # Build only — does not touch the running container. A build failure
+        # is zero-disruption: restore the working tree and stop.
+        try:
+            compose_command("build", "nurseaid", timeout=600)
+        except subprocess.CalledProcessError as build_error:
+            # `git reset --hard`, not `git checkout <sha>` — checkout on a raw
+            # commit hash detaches HEAD, which would break the *next*
+            # `git pull` (no tracking branch in detached HEAD). reset --hard
+            # moves the current branch back and keeps it attached.
+            repo_command("git", "reset", "--hard", old_sha, timeout=30)
+            append_apply_update_history({
+                "actionId": action_id, "fromSha": old_sha, "toSha": new_sha,
+                "phase": "build", "healthy": False,
+                "error": (build_error.stderr or build_error.stdout or "")[-2000:],
+            })
+            raise RuntimeError("build failed; working tree restored to the previous version, running container untouched")
+
+        # This is the one moment the live container is disrupted. If the
+        # recreate command itself errors (distinct from "came up but failed
+        # its health check", handled below) Compose may not have touched the
+        # old container at all yet — but /repo's git state has already moved
+        # to new_sha, so it must still be reset to stay consistent with
+        # whatever container actually ends up running.
+        try:
+            compose_command("up", "-d", "nurseaid", timeout=120)
+        except subprocess.CalledProcessError as up_error:
+            repo_command("git", "reset", "--hard", old_sha, timeout=30)
+            append_apply_update_history({
+                "actionId": action_id, "fromSha": old_sha, "toSha": new_sha,
+                "phase": "recreate", "healthy": False,
+                "error": (up_error.stderr or up_error.stdout or "")[-2000:],
+            })
+            raise RuntimeError("failed to recreate the container on the new build; working tree restored — verify the running container manually, it may still be the old version")
+        runtime = wait_for_service("nurseaid", timeout=90)
+
+        if runtime.get("status") == "healthy":
+            result = {"fromSha": old_sha, "toSha": new_sha, "healthy": True}
+            append_apply_update_history({"actionId": action_id, **result})
+            return result
+
+        # Automatic rollback.
+        result = {
+            "fromSha": old_sha, "toSha": new_sha, "healthy": False, "rolledBack": True,
+            "reason": runtime.get("reason") or "new version failed health check",
+        }
+        try:
+            command("docker", "tag", old_image, "nurseaid-nurseaid:latest")
+            # Same reasoning as the build-failure path above: reset --hard,
+            # not checkout, to avoid leaving /repo in detached HEAD.
+            repo_command("git", "reset", "--hard", old_sha, timeout=30)
+            compose_command("up", "-d", "nurseaid", timeout=120)
+            rollback_runtime = wait_for_service("nurseaid", timeout=90)
+            result["rollbackHealthy"] = rollback_runtime.get("status") == "healthy"
+            if not result["rollbackHealthy"]:
+                result["critical"] = True
+                result["rollbackReason"] = rollback_runtime.get("reason") or "rollback did not become healthy"
+        except Exception as rollback_error:
+            # Rollback itself blew up — do not retry or attempt further
+            # remediation. A human has to look at this one.
+            result["rollbackHealthy"] = False
+            result["critical"] = True
+            result["rollbackError"] = str(rollback_error)[:500]
+        append_apply_update_history({"actionId": action_id, **result})
+        return result
+    finally:
+        release_apply_update_lock()
+
+
+def process_apply_update_requests(now=None):
+    now = now or datetime.now(timezone.utc)
+    APPLY_UPDATE_SPOOL.mkdir(parents=True, exist_ok=True, mode=0o770)
+    for stale in list(APPLY_UPDATE_SPOOL.glob("*.action-request.json")) + list(APPLY_UPDATE_SPOOL.glob("*.action-response.json")):
+        try:
+            if now.timestamp() - stale.stat().st_mtime > APPLY_UPDATE_STALE_SECONDS: stale.unlink(missing_ok=True)
+        except OSError: pass
+    for request_path in list(APPLY_UPDATE_SPOOL.glob("*.action-request.json"))[:1]:
+        action_id = request_path.name.removesuffix(".action-request.json")
+        response_path = APPLY_UPDATE_SPOOL / f"{action_id}.action-response.json"
+        if response_path.exists(): continue
+        try:
+            value = json.loads(request_path.read_text(encoding="utf-8"))
+            expires = datetime.fromisoformat(str(value.get("expiresAt") or "").replace("Z", "+00:00"))
+            if not SESSION_RE.fullmatch(action_id) or value.get("action") != "apply_update" or expires <= now:
+                request_path.unlink(missing_ok=True); continue
+            result = run_apply_update(action_id)
+            atomic_response(response_path, {"actionId": action_id, "status": "succeeded", "result": result})
+        except Exception as error:
+            atomic_response(response_path, {"actionId": action_id, "status": "failed", "error": str(error)[:500] or type(error).__name__})
+
+
 def http_json_request(url, method="POST", payload=None, headers=None, timeout=10):
     headers = dict(headers or {})
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -478,6 +662,7 @@ def collect_once():
     atomic_write(snapshot())
     process_log_requests()
     process_action_requests()
+    process_apply_update_requests()
 
 def main():
     last_central_beat = 0
@@ -489,6 +674,13 @@ def main():
             atomic_write(current_snap)
             process_log_requests()
             process_action_requests()
+            # NOTE: run_apply_update() blocks synchronously for the whole
+            # build/restart/health-check cycle (up to ~15 min worst case) —
+            # heartbeats to Central and diagnostics/restart_service pause for
+            # that window. Acceptable for an admin-initiated, rare action;
+            # not fire-and-forget/background by design (keeps the apply
+            # pipeline's own error handling linear and simple).
+            process_apply_update_requests()
         except Exception as error:
             print(json.dumps({"event": "collector_error", "error": type(error).__name__}), flush=True)
 
