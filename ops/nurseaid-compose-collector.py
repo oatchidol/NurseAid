@@ -190,11 +190,19 @@ def atomic_write(value):
         except FileNotFoundError: pass
 
 
-def atomic_response(path, value):
+def atomic_response(path, value, chown_gid=None):
+    # mkstemp defaults to 0600 root:root (this process runs as root) — fine
+    # for the log/action spools, which only Central (via this same process)
+    # ever reads back. chown_gid opts a response into being group-readable
+    # too, for the apply_update spool, where the reader is server.js running
+    # as a different, non-root user (nurseaid's appuser) in another container.
     fd, name = tempfile.mkstemp(prefix=".response-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(value, handle, separators=(",", ":")); handle.flush(); os.fsync(handle.fileno())
+        if chown_gid is not None:
+            os.chown(name, 0, chown_gid)
+            os.chmod(name, 0o640)
         os.replace(name, path)
     finally:
         try: os.unlink(name)
@@ -318,6 +326,12 @@ def process_action_requests(now=None):
 # not just "isn't supposed to". The only writer of *.action-request.json in
 # this spool is server.js's POST /api/system/apply-update (adminOnly).
 APPLY_UPDATE_SPOOL = Path(os.getenv("NURSEAID_APPLY_UPDATE_SPOOL", "/run/nurseaid-apply-update"))
+# The `nurseaid` service runs as a non-root appuser (uid 100, gid 101 —
+# pinned in ./Dockerfile) and must be able to write *.action-request.json
+# into this spool; this container runs as root, which can always write
+# regardless of the directory's owner/mode. Chowning the directory's group
+# to appuser's gid grants exactly that one extra writer — not world-writable.
+APPLY_UPDATE_APP_GID = int(os.getenv("NURSEAID_APP_GID", "101"))
 REPO_PATH = Path(os.getenv("NURSEAID_REPO_PATH", "/repo"))
 COMPOSE_FILE = REPO_PATH / "docker-compose.yml"
 LOCK_FILE = APPLY_UPDATE_SPOOL / "apply_update.lock"
@@ -475,6 +489,17 @@ def run_apply_update(action_id):
 def process_apply_update_requests(now=None):
     now = now or datetime.now(timezone.utc)
     APPLY_UPDATE_SPOOL.mkdir(parents=True, exist_ok=True, mode=0o770)
+    # mkdir's mode only applies on *creation* — exist_ok=True silently skips
+    # it once the volume already exists (Docker itself may have pre-created
+    # the mount point as root:root 0755 on first use), so enforce ownership
+    # every call. Group-owned by appuser's gid + 0770: root (this process)
+    # and appuser (nurseaid, the only two legitimate writers) can read/write;
+    # nobody else can.
+    try:
+        os.chown(APPLY_UPDATE_SPOOL, 0, APPLY_UPDATE_APP_GID)
+        os.chmod(APPLY_UPDATE_SPOOL, 0o770)
+    except OSError as error:
+        print(f"[ApplyUpdate] spool chown/chmod failed: {error}", flush=True)
     for stale in list(APPLY_UPDATE_SPOOL.glob("*.action-request.json")) + list(APPLY_UPDATE_SPOOL.glob("*.action-response.json")):
         try:
             if now.timestamp() - stale.stat().st_mtime > APPLY_UPDATE_STALE_SECONDS: stale.unlink(missing_ok=True)
@@ -489,9 +514,9 @@ def process_apply_update_requests(now=None):
             if not SESSION_RE.fullmatch(action_id) or value.get("action") != "apply_update" or expires <= now:
                 request_path.unlink(missing_ok=True); continue
             result = run_apply_update(action_id)
-            atomic_response(response_path, {"actionId": action_id, "status": "succeeded", "result": result})
+            atomic_response(response_path, {"actionId": action_id, "status": "succeeded", "result": result}, chown_gid=APPLY_UPDATE_APP_GID)
         except Exception as error:
-            atomic_response(response_path, {"actionId": action_id, "status": "failed", "error": str(error)[:500] or type(error).__name__})
+            atomic_response(response_path, {"actionId": action_id, "status": "failed", "error": str(error)[:500] or type(error).__name__}, chown_gid=APPLY_UPDATE_APP_GID)
 
 
 def http_json_request(url, method="POST", payload=None, headers=None, timeout=10):

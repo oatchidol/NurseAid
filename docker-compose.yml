@@ -188,6 +188,10 @@ services:
       - NURSEAID_HEARTBEAT_INTERVAL=${NURSEAID_HEARTBEAT_INTERVAL:-60}
       - NURSEAID_APPLY_UPDATE_SPOOL=/run/nurseaid-apply-update
       - NURSEAID_REPO_PATH=/repo
+      # Matches the `nurseaid` service's appuser/appgroup gid (pinned in
+      # ./Dockerfile) — lets appuser write *.action-request.json here
+      # without making the directory world-writable.
+      - NURSEAID_APP_GID=101
 
     volumes:
       - compose_status:/run/nurseaid-compose

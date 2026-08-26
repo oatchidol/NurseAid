@@ -29,8 +29,16 @@ RUN apk add --no-cache curl tzdata fluidsynth soundfont-timgm && \
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create non-root user. UID/GID pinned explicitly (matching what Alpine's
+# adduser -S already happened to assign) rather than left to
+# adduser/addgroup's "next available system id" default — compose-collector
+# (a separate image) needs a stable, known GID to grant this user write
+# access to the apply_update_spool volume (see docker-compose.yml /
+# ops/nurseaid-compose-collector.py), and an implicit "usually 100/101"
+# isn't a contract. Existing volumes (e.g. notification_sounds_data) are
+# already owned by uid 100/gid 101, so pinning to those exact values is a
+# no-op for current deployments, not a breaking change.
+RUN addgroup -S -g 101 appgroup && adduser -S -u 100 -G appgroup appuser
 
 # Copy node_modules and source files from builder
 COPY --chown=appuser:appgroup --from=builder /build/node_modules ./node_modules
