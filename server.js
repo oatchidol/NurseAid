@@ -12140,6 +12140,26 @@ app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (r
     });
 });
 
+// No capability/session gate here on purpose — the ESP32's HTTPUpdate
+// client can't do cookie/session auth. Security is the token: random,
+// single-purpose, not linked from anywhere but the deploy trigger itself.
+app.get('/fw/:token/firmware.bin', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT filename FROM firmware_versions WHERE download_token=$1`,
+            [req.params.token]
+        );
+        if (!result.rows.length) return res.status(404).end();
+        const filePath = path.join(FIRMWARE_UPLOAD_DIR, result.rows[0].filename);
+        if (!fs.existsSync(filePath)) return res.status(404).end();
+        res.setHeader('Content-Type', 'application/octet-stream');
+        fs.createReadStream(filePath).pipe(res);
+    } catch (e) {
+        console.error('[Firmware Serve]', e.message);
+        res.status(500).end();
+    }
+});
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
