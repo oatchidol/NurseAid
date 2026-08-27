@@ -5,7 +5,9 @@
   "scripts": {
     "test": "node --check server.js && node --test test_wards_mgmt.js test_monitor_ai_chat.js && python3 -m unittest test_mqtt_bridge",
     "ai:eval": "node eval_monitor_ai.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:css": "tailwindcss -c tailwind.config.js -i src/tailwind-input.css -o public/assets/tailwind.css --minify",
+    "check:assets": "node scripts/check-offline-assets.js"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +15,7 @@
   "dependencies": {
     "@influxdata/influxdb-client": "^1.35.0",
     "acorn": "^8.18.0",
+    "chart.js": "^4.5.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -23,5 +26,8 @@
     "nodemailer": "^9.0.1",
     "pg": "^8.20.0"
   },
-  "description": ""
+  "description": "",
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
 }

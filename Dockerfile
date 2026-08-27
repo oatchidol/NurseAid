@@ -46,6 +46,11 @@ COPY --chown=appuser:appgroup package.json package-lock.json ./
 COPY --chown=appuser:appgroup server.js ./
 COPY --chown=appuser:appgroup live-status.js ./
 
+# Locally-served UI assets (Tailwind CSS, vendored JS, fonts) — committed
+# build artifacts, not generated here: the builder stage runs
+# `npm ci --only=production`, so tailwindcss (a devDependency) isn't installed.
+COPY --chown=appuser:appgroup public ./public
+
 # Per-user uploaded alert sounds live here (volume-mounted so they survive
 # container recreation) — owned by appuser upfront since the app runs as
 # appuser and writes into it at runtime.

@@ -192,6 +192,18 @@ app.use((req, res, next) => {
     next();
 });
 
+// Self-hosted CSS/JS/fonts. Mounted here on purpose: the auth gate further down
+// redirects anything unauthenticated to /login, so mounting this after it would
+// leave the login page unable to load its own stylesheet. Static assets carry no
+// user data, so serving them before authentication is correct, not a shortcut.
+app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), {
+    maxAge: '7d',
+    immutable: false,
+    fallthrough: false,
+    index: false,
+    dotfiles: 'deny'
+}));
+
 function parseCookies(header = '') {
     return header.split(';').reduce((cookies, item) => {
         const separator = item.indexOf('=');
@@ -1704,10 +1716,15 @@ function ui(user, active, content, script = "") {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>NurseAid PRO</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- All assets are served from this host. A ward behind a firewall with no
+         outbound internet must still render a working UI, so nothing here may
+         point at an external origin. scripts/check-offline-assets.js enforces that.
+         tailwind.css is a committed build artifact: run "npm run build:css" after
+         changing any utility class in this file, or the new class ships unstyled. -->
+    <link rel="stylesheet" href="/assets/fonts.css">
+    <link rel="stylesheet" href="/assets/tailwind.css">
+    <script src="/assets/chart.umd.js"></script>
+    <script src="/assets/html5-qrcode.min.js"></script>
     <style>
         :root {
             /* Light Theme (Default) */
@@ -3752,7 +3769,12 @@ function ui(user, active, content, script = "") {
         </div>
     </div>
 
-    <audio id="alertSound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
+    <!-- Served locally: this is the fallback used when the WebAudio context has not
+         been unlocked yet (e.g. the first alert after a page load, before any user
+         gesture). It previously pointed at actions.google.com, so on a ward with no
+         outbound internet that first alert was silent. The file is a rendering of the
+         exact tone playDefaultBeep() synthesises, so what nurses hear is unchanged. -->
+    <audio id="alertSound" src="/assets/alert-default.wav" preload="auto"></audio>
 
     <script>
         let nurse = '';
@@ -8632,7 +8654,7 @@ app.get('/notification-settings', async (req, res) => {
             try {
                 const r = await fetch('/api/notification-settings/sound-info');
                 const info = await r.json();
-                const audio = new Audio(info.hasCustomSound ? '/api/notification-sound' : 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+                const audio = new Audio(info.hasCustomSound ? '/api/notification-sound' : '/assets/alert-default.wav');
                 audio.play().catch(() => showNotice('เล่นเสียงไม่ได้ในเบราว์เซอร์นี้', {kind:'error'}));
             } catch (e) {
                 showNotice('Connection error: ' + e.message, {kind:'error'});
@@ -8700,8 +8722,10 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>เข้าสู่ระบบ | NurseAid PRO</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;600;800&display=swap" rel="stylesheet">
+    <!-- Served locally so the login page still renders on a firewalled ward network.
+         /assets is mounted before the auth gate precisely so this page can load. -->
+    <link rel="stylesheet" href="/assets/fonts.css">
+    <link rel="stylesheet" href="/assets/tailwind.css">
     <style>
         html, body { min-height: 100%; }
         body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }

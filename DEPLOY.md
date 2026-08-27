@@ -13,6 +13,8 @@ build and run the docker-compose stack, nothing else:
 
 ```
 server.js, live-status.js          the app
+public/assets/                     locally-served CSS/JS/fonts (no CDN)
+src/, tailwind.config.js           Tailwind input + config (build-only)
 Dockerfile, docker-compose.yml     how it's built/run
 mosquitto-config/, mqtt-bridge/,   the other services' build
   ops/                             contexts
@@ -73,6 +75,13 @@ defaults to safe, working values and the app still boots without them.
 ## 1. Prerequisites
 - Docker + Docker Compose plugin installed
 - Ports free on the host: 3333 (app), 5432 (Postgres), 8086 (InfluxDB), 1883 (MQTT)
+- **No outbound internet access is required for the UI.** The app serves its
+  own CSS, JS and fonts from `public/assets/` (committed to this repo and
+  copied into the image), so `cdn.tailwindcss.com`, `cdn.jsdelivr.net`,
+  `unpkg.com` and `fonts.googleapis.com` no longer need to be reachable — the
+  interface renders fully on a firewalled or offline hospital LAN. Outbound
+  access is only still needed for the optional extras: LINE notifications, the
+  AI assistant, and `api.github.com` for Check for Updates.
 
 ## 2. Get the code
 ```sh

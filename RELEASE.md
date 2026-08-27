@@ -35,7 +35,23 @@ not the deployed machines themselves).
 Normal commits, or a branch merged into `main`. Nothing release-specific
 here — do this as many times as you like before cutting a release.
 
-### 2. Bump the version
+### 2. Rebuild the CSS if any UI class names changed
+
+`public/assets/tailwind.css` is a **committed build artifact** — it's generated
+by scanning `server.js` for the utility classes actually used, so a stale file
+means any class you just added silently renders with no styling.
+
+```sh
+npm run build:css
+git add public/assets/tailwind.css
+```
+
+Commit the regenerated file (as part of step 1's work, or its own commit)
+**before** you tag. Nothing regenerates it at image build time: the Dockerfile's
+builder stage runs `npm ci --only=production`, so `tailwindcss` — a
+devDependency — isn't installed there.
+
+### 3. Bump the version
 
 Pick the next version per semver (new feature → minor, fix-only → patch).
 Update it in **three places**, all of which must agree:
@@ -64,7 +80,7 @@ node -e "const p=require('./package-lock.json'); console.log(p.version, p.packag
 Both must print the same version, or `npm ci` will warn/drift out of sync
 with `package.json` on the next install.
 
-### 3. Add a CHANGELOG.md entry
+### 4. Add a CHANGELOG.md entry
 
 Add a new `## [X.Y.Z] - YYYY-MM-DD` section directly under `## [Unreleased]`,
 above the previous release. Follow the existing style — Thai descriptions,
@@ -72,7 +88,7 @@ above the previous release. Follow the existing style — Thai descriptions,
 as needed, one bullet per notable change. Look at the last couple of
 entries in `CHANGELOG.md` for the exact tone/format to match.
 
-### 4. Commit and tag
+### 5. Commit and tag
 
 ```sh
 git add package.json package-lock.json CHANGELOG.md
@@ -84,7 +100,7 @@ The tag **must** start with `v` and be `vMAJOR.MINOR.PATCH` — matches the
 existing tags (`v2.14.0`, `v2.16.0`, `v2.17.0`, `v2.18.0`...) and the
 regex `update-check` parses tags with.
 
-### 5. Push both the commit and the tag
+### 6. Push both the commit and the tag
 
 ```sh
 git push origin main
@@ -97,7 +113,7 @@ other machines. `git push --tags` also works if you have other unpushed
 tags you want to include, but prefer pushing the one tag explicitly so you
 don't accidentally push something half-finished.
 
-### 6. Deploy this machine too
+### 7. Deploy this machine too
 
 The machine you just pushed from will **never** see its own release as
 "available" via Check for Updates — it's already the source. Deploy it the
