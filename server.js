@@ -294,7 +294,7 @@ const ROLE_CAPABILITIES = {
     super_admin: new Set([
         'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
-        'users:manage:all','wards:manage','settings:global','audit:read:all','export:read'
+        'users:manage:all','wards:manage','settings:global','audit:read:all','export:read','devices:firmware:write'
     ]),
     ward_admin: new Set([
         'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
@@ -967,6 +967,28 @@ async function initDatabase() {
             updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             updated_at TIMESTAMP DEFAULT NOW()
         )`,
+        `CREATE TABLE IF NOT EXISTS firmware_versions (
+            id SERIAL PRIMARY KEY,
+            version VARCHAR(40) NOT NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            filename VARCHAR(255) NOT NULL,
+            file_size INTEGER NOT NULL,
+            download_token VARCHAR(64) NOT NULL UNIQUE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            uploaded_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS firmware_deployments (
+            id SERIAL PRIMARY KEY,
+            version_id INTEGER NOT NULL REFERENCES firmware_versions(id),
+            board_mac VARCHAR(17) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            reported_version VARCHAR(40),
+            detail TEXT,
+            requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            requested_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_firmware_deployments_version ON firmware_deployments(version_id)`,
         `CREATE TABLE IF NOT EXISTS user_notification_settings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) UNIQUE,
@@ -12063,5 +12085,6 @@ module.exports = {
     classifyVitalRange,
     parseSemver,
     compareSemver,
-    highestVersion
+    highestVersion,
+    roleHasCapability
 };
