@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-27T00:00:00Z",
+  "title": "Design System: NurseAid",
+  "extensions": {
+    "colorMeta": {
+      "ward-blue": {
+        "role": "primary",
+        "displayName": "Ward Blue",
+        "canonical": "#3b82f6",
+        "darkCanonical": "#58a6ff",
+        "tonalRamp": ["#172554", "#1e3a8a", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#dbeafe"]
+      },
+      "status-ok": {
+        "role": "secondary",
+        "displayName": "Status OK Green",
+        "canonical": "#22c55e",
+        "darkCanonical": "#3fb950",
+        "tonalRamp": ["#052e16", "#14532d", "#166534", "#15803d", "#22c55e", "#4ade80", "#86efac", "#dcfce7"]
+      },
+      "status-caution": {
+        "role": "secondary",
+        "displayName": "Status Caution Yellow",
+        "canonical": "#eab308",
+        "darkCanonical": "#d29922",
+        "tonalRamp": ["#422006", "#713f12", "#854d0e", "#a16207", "#eab308", "#facc15", "#fde047", "#fef9c3"]
+      },
+      "status-warning": {
+        "role": "secondary",
+        "displayName": "Status Warning Amber",
+        "canonical": "#f59e0b",
+        "darkCanonical": "#d29922",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#f59e0b", "#fbbf24", "#fcd34d", "#fef3c7"]
+      },
+      "status-critical": {
+        "role": "secondary",
+        "displayName": "Status Critical Red",
+        "canonical": "#ef4444",
+        "darkCanonical": "#f85149",
+        "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#ef4444", "#f87171", "#fca5a5", "#fee2e2"]
+      },
+      "priority-high": {
+        "role": "tertiary",
+        "displayName": "Priority High Purple",
+        "canonical": "#a855f7",
+        "darkCanonical": "#c084fc",
+        "tonalRamp": ["#3b0764", "#581c87", "#6b21a8", "#7e22ce", "#a855f7", "#c084fc", "#d8b4fe", "#f3e8ff"]
+      },
+      "surface-page": {
+        "role": "neutral",
+        "displayName": "Slate Page",
+        "canonical": "#f0f4f8",
+        "darkCanonical": "#010409",
+        "tonalRamp": ["#010409", "#0d1117", "#161b22", "#1e293b", "#475569", "#94a3b8", "#e2e8f0", "#f0f4f8"]
+      },
+      "surface-card": {
+        "role": "neutral",
+        "displayName": "Card Surface",
+        "canonical": "#ffffff",
+        "darkCanonical": "#161b22",
+        "tonalRamp": ["#010409", "#0d1117", "#161b22", "#1c2128", "#30363d", "#8b949e", "#c9d1d9", "#ffffff"]
+      },
+      "ink-primary": {
+        "role": "neutral",
+        "displayName": "Primary Ink",
+        "canonical": "#1e293b",
+        "darkCanonical": "#f0f6fc",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f1f5f9"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page and section titles." },
+      "title": { "displayName": "Title", "purpose": "Card headers and modal titles." },
+      "body": { "displayName": "Body", "purpose": "Default UI text, table cells, form labels." },
+      "label": { "displayName": "Label", "purpose": "Nav labels, badges, dense metadata." },
+      "mono": { "displayName": "Mono", "purpose": "Device IDs, MACs, bed numbers, timestamps — anything cross-checked against physical hardware." }
+    },
+    "shadows": [
+      { "name": "shadow-sm", "value": "0 1px 2px rgba(0,0,0,0.05)", "purpose": "Subtle separation: table headers, inline chips." },
+      { "name": "shadow-md", "value": "0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.03)", "purpose": "Default card elevation." },
+      { "name": "shadow-lg", "value": "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.03)", "purpose": "Dropdowns and popovers." },
+      { "name": "shadow-xl", "value": "0 20px 25px -5px rgba(0,0,0,0.08), 0 10px 10px -5px rgba(0,0,0,0.02)", "purpose": "Modals and dragged cards." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for state and theme transitions." },
+      { "name": "duration-fast", "value": "0.15s", "purpose": "List item and chip hover feedback." },
+      { "name": "duration-base", "value": "0.2s", "purpose": "Button and input state changes." },
+      { "name": "duration-theme", "value": "0.5s", "purpose": "Light/dark theme crossfade on html and body." }
+    ],
+    "breakpoints": [
+      { "name": "xs", "value": "374px" },
+      { "name": "sm", "value": "480px" },
+      { "name": "md", "value": "640px" },
+      { "name": "lg", "value": "768px" },
+      { "name": "xl", "value": "800px" },
+      { "name": "wide", "value": "1800px" },
+      { "name": "ultrawide", "value": "2500px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main confirming action on a form, wizard step, or modal.",
+      "html": "<button class=\"ds-btn-primary\">ยืนยัน</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-family:'Prompt',sans-serif; font-weight:800; font-size:.875rem; color:#fff; background:var(--accent-primary,#3b82f6); border:1px solid transparent; cursor:pointer; transition:opacity .2s ease, transform .1s ease; } .ds-btn-primary:hover { opacity:.9; } .ds-btn-primary:active { transform:translateY(1px); } .ds-btn-primary:focus-visible { outline:2px solid var(--border-focus,#3b82f6); outline-offset:2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Back, cancel, or alternate action beside a primary button.",
+      "html": "<button class=\"ds-btn-secondary\">ย้อนกลับ</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-family:'Prompt',sans-serif; font-weight:800; font-size:.875rem; color:var(--text-primary,#1e293b); background:var(--bg-card,#fff); border:1px solid var(--border-color,#e2e8f0); cursor:pointer; transition:background .2s ease, transform .1s ease; } .ds-btn-secondary:hover { background:var(--bg-card-hover,#f8fafc); } .ds-btn-secondary:focus-visible { outline:2px solid var(--border-focus,#3b82f6); outline-offset:2px; }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Device or alert state. Always pairs color with a text label so color is never the only signal.",
+      "html": "<span class=\"ds-chip ds-chip--ok\"><span class=\"ds-chip-dot\"></span>ออนไลน์</span>",
+      "css": ".ds-chip { display:inline-flex; align-items:center; gap:.35rem; font-family:'Prompt',sans-serif; font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:9999px; white-space:nowrap; } .ds-chip-dot { width:.4rem; height:.4rem; border-radius:9999px; background:currentColor; } .ds-chip--ok { color:var(--accent-green,#22c55e); background:color-mix(in srgb, var(--accent-green,#22c55e) 14%, transparent); border:1px solid color-mix(in srgb, var(--accent-green,#22c55e) 40%, var(--border-color,#e2e8f0)); } .ds-chip--critical { color:var(--accent-red,#ef4444); background:color-mix(in srgb, var(--accent-red,#ef4444) 14%, transparent); border:1px solid color-mix(in srgb, var(--accent-red,#ef4444) 40%, var(--border-color,#e2e8f0)); }"
+    },
+    {
+      "name": "Priority Badge",
+      "kind": "chip",
+      "refersTo": "priority-badge",
+      "description": "Alert priority ranking. Purple is reserved exclusively for high priority and never mixed with the OK/Caution/Warning/Critical status set.",
+      "html": "<span class=\"ds-priority-badge ds-priority-badge--high\">HIGH</span>",
+      "css": ".ds-priority-badge { display:inline-block; font-family:'Prompt',sans-serif; font-size:9px; font-weight:800; padding:2px 7px; border-radius:999px; text-transform:uppercase; letter-spacing:.02em; white-space:nowrap; } .ds-priority-badge--high { background:color-mix(in srgb, var(--priority-high,#a855f7) 15%, transparent); color:var(--priority-high,#a855f7); border:1px solid color-mix(in srgb, var(--priority-high,#a855f7) 45%, var(--border-color,#e2e8f0)); }"
+    },
+    {
+      "name": "Monitor Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Per-bed monitor tile in the ward grid. Flat at rest, lifts on hover, supports drag-reorder.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-head\"><strong>เตียง 12</strong><span class=\"ds-card-mono\">A4:C1:38:9F:2B:11</span></div><p class=\"ds-card-body\">สมชาย ใจดี</p></div>",
+      "css": ".ds-card { background:var(--bg-card,#fff); border:1px solid var(--border-card,#e2e8f0); border-radius:1.25rem; padding:1rem; box-shadow:var(--shadow-md,0 4px 6px -1px rgba(0,0,0,.07)); font-family:'Prompt',sans-serif; transition:box-shadow .3s cubic-bezier(.4,0,.2,1), transform .2s cubic-bezier(.4,0,.2,1); } .ds-card:hover { box-shadow:var(--shadow-lg,0 10px 15px -3px rgba(0,0,0,.08)); transform:translateY(-2px); } .ds-card-head { display:flex; align-items:baseline; justify-content:space-between; gap:.75rem; margin-bottom:.55rem; padding-bottom:.45rem; border-bottom:1px solid var(--border-light,#f1f5f9); } .ds-card-mono { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:.72rem; color:var(--text-tertiary,#94a3b8); } .ds-card-body { font-size:.875rem; line-height:1.6; color:var(--text-primary,#1e293b); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard form field used across ward, patient, device, and user management.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"เลข HN\" aria-label=\"เลข HN\">",
+      "css": ".ds-input { width:100%; box-sizing:border-box; border-radius:.85rem; padding:.75rem 1rem; font-family:'Prompt',sans-serif; font-size:.875rem; background:var(--bg-input,#f1f5f9); color:var(--text-primary,#1e293b); border:1px solid var(--border-color,#e2e8f0); transition:background .2s ease, border-color .2s ease; } .ds-input::placeholder { color:var(--text-tertiary,#94a3b8); } .ds-input:focus { outline:none; background:var(--bg-input-focus,#fff); border-color:var(--border-focus,#3b82f6); } .ds-input:focus-visible { outline:2px solid var(--border-focus,#3b82f6); outline-offset:1px; }"
+    },
+    {
+      "name": "Sidebar Nav Link",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Capability-gated sidebar entry. Collapses to icon-only when the sidebar is narrowed.",
+      "html": "<a href=\"#\" class=\"ds-nav-link ds-nav-link--active\"><span class=\"ds-nav-icon\" aria-hidden=\"true\">🛏️</span><span>Monitor</span></a>",
+      "css": ".ds-nav-link { display:flex; align-items:center; gap:.625rem; padding:.625rem; border-radius:.5rem; font-family:'Prompt',sans-serif; font-size:.75rem; font-weight:600; text-decoration:none; color:var(--text-secondary,#475569); transition:background .2s ease, color .2s ease; } .ds-nav-link:hover { background:var(--bg-card-hover,#f8fafc); color:var(--text-primary,#1e293b); } .ds-nav-link--active { color:var(--accent-primary,#3b82f6); background:color-mix(in srgb, var(--accent-primary,#3b82f6) 10%, transparent); } .ds-nav-icon { font-size:.875rem; } .ds-nav-link:focus-visible { outline:2px solid var(--border-focus,#3b82f6); outline-offset:2px; }"
+    },
+    {
+      "name": "Inline Alert",
+      "kind": "custom",
+      "refersTo": "inline-alert",
+      "description": "Form-level error or success banner. Uses role=\"alert\" and pairs color with an icon and text.",
+      "html": "<p class=\"ds-alert ds-alert--error\" role=\"alert\"><span aria-hidden=\"true\">⚠️</span> บันทึกไม่สำเร็จ</p>",
+      "css": ".ds-alert { display:flex; align-items:center; gap:.5rem; margin:0; border-radius:.75rem; padding:.75rem; font-family:'Prompt',sans-serif; font-size:.875rem; font-weight:600; } .ds-alert--error { color:var(--accent-red,#b91c1c); background:color-mix(in srgb, var(--accent-red,#ef4444) 12%, transparent); border:1px solid color-mix(in srgb, var(--accent-red,#ef4444) 45%, var(--border-color,#e2e8f0)); } .ds-alert--success { color:var(--accent-green,#15803d); background:color-mix(in srgb, var(--accent-green,#22c55e) 12%, transparent); border:1px solid color-mix(in srgb, var(--accent-green,#22c55e) 45%, var(--border-color,#e2e8f0)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Ward Console",
+    "overview": "NurseAid reads like an instrument panel built for a ward, not a marketing surface: calm, high-trust, and legible at a glance under time pressure. A single restrained blue carries navigation and action; a fixed, non-negotiable set of status colors (green / amber / red, plus a purple priority marker) carries clinical meaning and nothing else is allowed to compete with it. Cards sit on a soft slate-blue page background and lift with a light, consistent shadow scale — enough depth to separate content groups, never enough to feel decorative. Both a light and a high-contrast dark theme are first-class, token-driven, and already implemented.\n\nAnti-reference: consumer-app playfulness, marketing-site boldness, illustrative flourish, or any redesign impulse that treats visual excitement as the goal. This is Operate-mode software — a nurse scanning this screen mid-shift should find the one thing that needs attention immediately, not admire the interface.",
+    "keyCharacteristics": [
+      "One accent color (ward blue) for navigation/action; a fixed, separate status-color set for clinical signal.",
+      "Soft-shadow, rounded cards on a flat slate page background — layered but restrained.",
+      "Thai-language UI throughout (Prompt typeface, chosen for Thai + Latin coverage).",
+      "Full light/dark theme parity via CSS custom properties, not an afterthought."
+    ],
+    "rules": [
+      {
+        "name": "The Fixed Signal Rule",
+        "body": "Status colors (OK/Caution/Warning/Critical) and the priority marker map to one meaning each, system-wide. Never assign them to a new UI concept (e.g. \"featured,\" \"new,\" \"premium\") even when the hue would otherwise fit — a nurse's trust that red always means the same thing is the product's actual safety property.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Accent Rule",
+        "body": "Ward Blue is the only color that means \"click me\" or \"this is active.\" Introducing a second brand accent for variety dilutes the one visual signal staff can act on without reading.",
+        "section": "colors"
+      },
+      {
+        "name": "The Numerals-in-Mono Rule",
+        "body": "Any value staff cross-check against a physical device or wristband (device ID, MAC, bed number, timestamp) renders in the mono stack, not Prompt — ambiguous digit shapes are a real-world matching error, not a style nitpick.",
+        "section": "typography"
+      },
+      {
+        "name": "The Confident-Not-Playful Rule",
+        "body": "Elevation communicates hierarchy (this floats above that), never delight. No bounce, no exaggerated lift-on-hover beyond a small, functional shift.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep status colors (green/amber/red + priority purple) reserved exclusively for their existing clinical meaning.",
+      "Do pair color with an icon or text label on every alert/status indicator — never ship color as the only signal.",
+      "Do use the mono type stack for device IDs, MACs, bed numbers, and timestamps.",
+      "Do implement every new surface in both the light and [data-theme=\"dark\"] token sets — this codebase treats dark mode as first-class, not optional.",
+      "Do keep Ward Blue as the single accent; route all \"interactive/active\" signaling through it."
+    ],
+    "donts": [
+      "Don't introduce a second brand accent color, gradient hero treatment, or decorative illustration — this is Operate-mode software, not a marketing surface.",
+      "Don't repurpose a status color for a non-clinical UI concept (e.g. \"new,\" \"featured\") even if the hue would otherwise fit.",
+      "Don't add motion beyond small, functional transitions (0.15s–0.3s ease); no bounce, parallax, or attention-seeking animation on a screen someone monitors for real alerts.",
+      "Don't reword or translate existing Thai UI copy while doing visual work — copy changes are a separate, explicit decision."
+    ]
+  }
+}

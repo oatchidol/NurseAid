@@ -12,3 +12,8 @@ __pycache__
 *.pyc
 .vscode
 .idea
+# Tailwind build-only inputs — the generated CSS is committed under
+# public/assets/ and copied in by the Dockerfile; these never need to be
+# in the image.
+src
+tailwind.config.js
