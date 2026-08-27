@@ -12057,6 +12057,41 @@ function buildFirmwareFilename(versionId, _originalName) {
     return `fw_${versionId}.bin`;
 }
 
+function resolveNodeIdForMac(nodes, mac) {
+    const target = String(mac || '').toUpperCase();
+    const found = (nodes || []).find(n => String(n.boardMac || '').toUpperCase() === target);
+    return found ? found.nodeId : null;
+}
+
+function canDeployToTargets(deploymentRows, targetCount) {
+    if (targetCount <= 1) return { allowed: true, reason: null };
+    const hasSuccess = (deploymentRows || []).some(row => row.status === 'success');
+    if (hasSuccess) return { allowed: true, reason: null };
+    return {
+        allowed: false,
+        reason: 'ต้อง deploy สำเร็จกับเครื่อง canary (1 เครื่อง) ก่อน ถึงจะเลือกหลายเครื่องได้'
+    };
+}
+
+function isValidOtaUrl(url) {
+    return typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'));
+}
+
+function parseOtaStatusTopic(topic) {
+    const match = /^ble\/node\/([^/]+)\/ota$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+function parseOtaStatusPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object') return null;
+        return { state: data.state, detail: data.detail, version: data.version };
+    } catch (e) {
+        return null;
+    }
+}
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
@@ -12106,5 +12141,10 @@ module.exports = {
     highestVersion,
     roleHasCapability,
     generateFirmwareDownloadToken,
-    buildFirmwareFilename
+    buildFirmwareFilename,
+    resolveNodeIdForMac,
+    canDeployToTargets,
+    isValidOtaUrl,
+    parseOtaStatusTopic,
+    parseOtaStatusPayload
 };
