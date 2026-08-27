@@ -12039,6 +12039,24 @@ app.get('/api/system/apply-update/status', adminOnly, async (req, res) => {
     res.json(response);
 });
 
+// ─── ESP32 Firmware OTA ────────────────────────────────────────────
+// The firmware (firmware/nurseaid_esp32.ino) already supports pull-OTA:
+// an MQTT "ota <url>" command makes it HTTP-download a .bin and self-flash,
+// reporting progress back on ble/node/<id>/ota. This section is the
+// server-side half: upload, host, trigger, track.
+
+function generateFirmwareDownloadToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function buildFirmwareFilename(versionId, _originalName) {
+    // Ignore the original name/extension entirely — the stored filename is
+    // always server-generated, so a mislabeled or malicious upload can't
+    // control what lands on disk (same reasoning as the notification-sound
+    // uploader's user_<id>.<ext> naming).
+    return `fw_${versionId}.bin`;
+}
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
@@ -12086,5 +12104,7 @@ module.exports = {
     parseSemver,
     compareSemver,
     highestVersion,
-    roleHasCapability
+    roleHasCapability,
+    generateFirmwareDownloadToken,
+    buildFirmwareFilename
 };
