@@ -545,7 +545,7 @@ def process_apply_update_requests(now=None):
             atomic_response(response_path, {"actionId": action_id, "status": "failed", "error": str(error)[:500] or type(error).__name__}, chown_gid=APPLY_UPDATE_APP_GID)
 
 
-def http_json_request(url, method="POST", payload=None, headers=None, timeout=10):
+def http_json_request(url, method="POST", payload=None, headers=None, timeout=10, retries=3):
     headers = dict(headers or {})
     # Set default User-Agent and Accept, but allow explicit overrides
     if "User-Agent" not in headers:
@@ -555,9 +555,10 @@ def http_json_request(url, method="POST", payload=None, headers=None, timeout=10
     if payload is not None and "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    ctx = ssl.create_default_context()
-    try:
+
+    def _one_request():
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        ctx = ssl.create_default_context()
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             body = resp.read().decode("utf-8")
             try:
@@ -570,28 +571,42 @@ def http_json_request(url, method="POST", payload=None, headers=None, timeout=10
                     "_contentType": resp.headers.get("content-type", ""),
                     "_server": resp.headers.get("server", "")
                 }
-    except urllib.error.HTTPError as error:
+
+    # Retry transient failures (network errors and 5xx server responses) so a
+    # short blip to Central does not drop a heartbeat/log/action payload whose
+    # session would otherwise expire before we can resend it. Client errors
+    # (4xx) are permanent and returned immediately.
+    for attempt in range(retries + 1):
         try:
-            body = error.read().decode("utf-8")
+            status, res = _one_request()
+            return status, res
+        except urllib.error.HTTPError as error:
             try:
-                return error.code, json.loads(body) if body else {}
-            except (json.JSONDecodeError, ValueError):
-                # Non-JSON error response; preserve evidence
-                return error.code, {
+                body = error.read().decode("utf-8")
+                try:
+                    status, res = error.code, json.loads(body) if body else {}
+                except (json.JSONDecodeError, ValueError):
+                    status, res = error.code, {
+                        "_nonJson": True,
+                        "_body": body[:800],
+                        "_contentType": error.headers.get("content-type", ""),
+                        "_server": error.headers.get("server", "")
+                    }
+            except Exception:
+                status, res = error.code, {
                     "_nonJson": True,
-                    "_body": body[:800],
-                    "_contentType": error.headers.get("content-type", ""),
-                    "_server": error.headers.get("server", "")
+                    "_body": "",
+                    "_contentType": "",
+                    "_server": ""
                 }
-        except Exception:
-            return error.code, {
-                "_nonJson": True,
-                "_body": "",
-                "_contentType": "",
-                "_server": ""
-            }
-    except Exception as error:
-        return 0, {"error": str(error)}
+            if status < 500:
+                return status, res
+        except Exception as error:
+            # Network-level failure (DNS, connection reset, timeout).
+            status, res = 0, {"error": str(error)}
+        if attempt == retries:
+            return status, res
+        time.sleep(min(30, 2 ** (attempt + 1)) / 10)
 
 
 def _schedule_enroll_backoff(now):
@@ -737,7 +752,8 @@ def central_cycle(snap):
                 try:
                     req_file.write_text(json.dumps({"service": service, "expiresAt": expires_at}), encoding="utf-8")
                     process_log_requests()
-                except Exception: pass
+                except Exception as error:
+                    print(f"[Central] Failed to process log request {session_id}: {error}", flush=True)
             if resp_file.exists():
                 try:
                     resp_data = json.loads(resp_file.read_text(encoding="utf-8"))
@@ -748,13 +764,19 @@ def central_cycle(snap):
                         "content": resp_data.get("content", ""),
                         "error": resp_data.get("error")
                     }
-                    http_json_request(f"{CENTRAL_URL}/api/v1/devices/log-batches", payload=batch_payload, headers=headers)
+                    upload_status, upload_res = http_json_request(
+                        f"{CENTRAL_URL}/api/v1/devices/log-batches",
+                        payload=batch_payload, headers=headers)
+                    if upload_status == 200:
+                        req_file.unlink(missing_ok=True)
+                        resp_file.unlink(missing_ok=True)
+                        (SPOOL_DIR / f"{session_id}.cursor").unlink(missing_ok=True)
+                    else:
+                        # Keep the response + cursor so this log is retried next
+                        # cycle; deleting here would lose logs Central rejected.
+                        print(f"[Central] Log batch upload failed ({upload_status}) for {session_id}: {upload_res}", flush=True)
                 except Exception as error:
                     print(f"[Central] Log batch error: {error}", flush=True)
-                finally:
-                    req_file.unlink(missing_ok=True)
-                    resp_file.unlink(missing_ok=True)
-                    (SPOOL_DIR / f"{session_id}.cursor").unlink(missing_ok=True)
 
     # 3. Poll & handle action commands
     status, res = http_json_request(f"{CENTRAL_URL}/api/v1/devices/action-commands", payload={"deviceId": DEVICE_ID}, headers=headers)
@@ -782,12 +804,16 @@ def central_cycle(snap):
                         "result": resp_data.get("result"),
                         "error": resp_data.get("error")
                     }
-                    http_json_request(f"{CENTRAL_URL}/api/v1/devices/action-results", payload=result_payload, headers=headers)
+                    upload_status, upload_res = http_json_request(
+                        f"{CENTRAL_URL}/api/v1/devices/action-results",
+                        payload=result_payload, headers=headers)
+                    if upload_status == 200:
+                        req_file.unlink(missing_ok=True)
+                        resp_file.unlink(missing_ok=True)
+                    else:
+                        print(f"[Central] Action result upload failed ({upload_status}) for {action_id}: {upload_res}", flush=True)
                 except Exception as error:
                     print(f"[Central] Action result error: {error}", flush=True)
-                finally:
-                    req_file.unlink(missing_ok=True)
-                    resp_file.unlink(missing_ok=True)
 
 
 def collect_once():
