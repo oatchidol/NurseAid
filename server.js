@@ -12251,6 +12251,36 @@ app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), as
     }
 });
 
+app.get('/api/firmware/deployments', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.query.versionId, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+        const result = await pool.query(
+            `SELECT board_mac, status, reported_version, detail, requested_at, updated_at
+             FROM firmware_deployments WHERE version_id=$1 ORDER BY requested_at DESC`,
+            [versionId]
+        );
+        res.json({ deployments: result.rows });
+    } catch (error) {
+        console.error('[Firmware Deployments]', error.message);
+        res.status(500).json({ error: 'QUERY_FAILED' });
+    }
+});
+
+app.get('/api/firmware/versions', requireCapability('devices:firmware:write'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT fv.id, fv.version, fv.notes, fv.uploaded_at,
+                    EXISTS(SELECT 1 FROM firmware_deployments fd WHERE fd.version_id=fv.id AND fd.status='success') AS canary_passed
+             FROM firmware_versions fv ORDER BY fv.uploaded_at DESC`
+        );
+        res.json({ versions: result.rows });
+    } catch (error) {
+        console.error('[Firmware Versions]', error.message);
+        res.status(500).json({ error: 'QUERY_FAILED' });
+    }
+});
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
