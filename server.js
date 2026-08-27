@@ -2961,21 +2961,40 @@ ${ICON_SET}
            DECORATIVE stripes; this one is the opposite - it is the card's clinical-state signal
            (green normal / amber warning / red critical), moved from the top edge to the leading
            edge in this layout because a vertical stripe survives a narrow card better than a
-           horizontal one. The drop-* rules below are drag-insertion feedback, also functional. */
+           horizontal one. The drop-* indicator rules that used to sit below were removed: they
+           painted --accent-primary over this same border-left, so a critical card lost its red
+           stripe mid-drag; drag position is now shown by live grid displacement instead. */
         #monitor-grid > .card {
             padding: 0.75rem !important;
             border-top-width: 0 !important;
             border-left-width: 4px !important;
             border-radius: var(--r-lg) !important;
         }
-        .card.dragging { opacity: .92; position: relative; z-index: 20; box-shadow: var(--shadow-xl); cursor: grabbing; transition: none; }
-        /* Scoped to #monitor-grid > .card (1 id + 2 classes) so these beat the #monitor-grid >
-           .card border-top-width:0 / border-left-width:4px !important rules above (1 id + 1
-           class) — both sides are !important, so specificity decides the tie, not source order. */
-        #monitor-grid > .card.drop-before { border-top: 3px solid var(--accent-primary) !important; }
-        #monitor-grid > .card.drop-after { border-bottom: 3px solid var(--accent-primary) !important; }
-        #monitor-grid > .card.drop-left { border-left: 3px solid var(--accent-primary) !important; }
-        #monitor-grid > .card.drop-right { border-right: 3px solid var(--accent-primary) !important; }
+        #monitor-grid > .card.dragging {
+            position: relative; z-index: 20;
+            cursor: grabbing;
+            /* The held card lifts off the grid. The transform itself is driven per-pointer-sample
+               from JS (translate + scale), so it must not be transitioned here; what DOES ease in
+               is the lift styling — the elevation and the ring — so the card "picks up" over
+               ~120ms instead of popping. The ring is tinted with the card's own leading-edge
+               border color, which is its clinical-state stripe, so the halo reads as the
+               patient's state, not a generic accent. The stripe itself gains 1px for the lift;
+               the selector needs the #monitor-grid id because that rule's !important
+               border-left-width wins on specificity otherwise. */
+            border-left-width: 5px !important;
+            box-shadow: var(--shadow-xl), 0 0 0 2px color-mix(in srgb, var(--border-left-color, var(--accent-primary)) 30%, transparent);
+            /* Only the elevation eases in. The 1px stripe bump is not transitioned: animating a
+               border-width forces a layout pass, and a 1px change is imperceptible anyway — it
+               snaps while the elevation and ring glide in. */
+            transition: box-shadow 120ms ease-out;
+        }
+        /* Settle animation for cards displaced by a live drag reorder (FLIP). Ease-out-quint:
+           the cards stop dead in their slot rather than overshooting — a monitor wall is not a
+           place for bounce. The global prefers-reduced-motion catch-all (the *, *::before,
+           *::after rule near the end of this style block) already neutralises this on purpose:
+           with reduced motion the cards still displace to open the gap, they simply jump instead
+           of gliding, so no information is lost. */
+        #monitor-grid > .card.drag-settling { transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
 
         #monitor-grid > .card > div:first-child {
             margin-bottom: 0.55rem !important;
@@ -6595,11 +6614,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     let dragInProgress = false;
     let dragStartX = 0;
     let dragStartY = 0;
-    let dropTarget = null; // { node, before }
-
-    function clearDropIndicator() {
-        monitorGrid.querySelectorAll('.drop-before, .drop-after, .drop-left, .drop-right').forEach(n => n.classList.remove('drop-before', 'drop-after', 'drop-left', 'drop-right'));
-    }
+    let lastPointerX = 0, lastPointerY = 0;   // latest pointer position, needed after a live reorder
+    let dragOriginNext = null;                // sibling the card sat before at drag start, for cancel restore
+    let dragDidReorder = false;               // whether the live preview actually moved the card
+    let reorderQueued = false;                // rAF throttle for the expensive hit-test + reorder
 
     monitorGrid.addEventListener('pointerdown', (e) => {
         const handle = e.target.closest('[data-role="drag-handle"]');
@@ -6610,54 +6628,136 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         dragInProgress = true;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
-        dropTarget = null;
+        dragOriginNext = card.nextElementSibling;
+        dragDidReorder = false;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        // Remember where the card started so a cancel can put it back, and prime will-change on
+        // the siblings once (not per move) so the FLIP displacement below stays jank-free.
+        Array.from(monitorGrid.children).forEach(n => { if (n !== card && n.dataset.patientKey) n.style.willChange = 'transform'; });
+        // The lift ring reads the card's clinical-state stripe color; expose it as a custom
+        // property so the .dragging elevation can tint itself without hardcoding a state color.
+        card.style.setProperty('--border-left-color', getComputedStyle(card).borderLeftColor);
         card.classList.add('dragging');
     });
 
     monitorGrid.addEventListener('pointermove', (e) => {
         if (!dragInProgress || !dragSrcNode) return;
+        // PART 1 — runs on every sample and stays cheap so the card tracks the pointer 1:1. The
+        // transform must follow the pointer every frame, but PART 2 forces layout and only needs
+        // one pass per animation frame, so it is throttled with reorderQueued below.
         e.preventDefault();
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
         // Visually lift the card and have it follow the pointer on both axes — #monitor-grid is
         // a multi-column CSS Grid, so a Y-only transform left horizontal drags looking frozen.
-        dragSrcNode.style.transform = 'translate(' + (e.clientX - dragStartX) + 'px, ' + (e.clientY - dragStartY) + 'px)';
+        dragSrcNode.style.transform = 'translate(' + (lastPointerX - dragStartX) + 'px, ' + (lastPointerY - dragStartY) + 'px) scale(1.03)';
+        // PART 2 — rAF-throttled hit-test + live reorder. Runs at most once per animation frame.
+        if (reorderQueued) return;
+        reorderQueued = true;
+        requestAnimationFrame(() => { reorderQueued = false; if (dragInProgress && dragSrcNode) reorderPreview(); });
+    });
+
+    // Live drag preview: perform the real DOM reorder now (not at commit) and animate the cards
+    // displaced by it out of the way. The empty slot that opens up is the drop target, so there is
+    // no longer any need for the border indicators that used to mark it.
+    function reorderPreview() {
         // Pointer capture keeps e.target locked to the handle — elementFromPoint finds whatever
         // card is actually under the finger/cursor right now. The dragged card's own transform
         // tracks the pointer 1:1, so without this it would report itself as the hit target on
         // nearly every sample; hide it from hit-testing for just this one query.
         dragSrcNode.style.pointerEvents = 'none';
-        const under = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-patient-key]');
+        const under = document.elementFromPoint(lastPointerX, lastPointerY)?.closest('[data-patient-key]');
         dragSrcNode.style.pointerEvents = '';
-        clearDropIndicator();
-        if (!under || under === dragSrcNode) { dropTarget = null; return; }
+        if (!under || under === dragSrcNode || under.parentElement !== monitorGrid) return;
+
         // Ask the grid how many tracks are actually live right now instead of guessing from
         // viewport width — stays correct at the 640px/1800px/2500px breakpoints and for any
         // container-based narrowing or zoom in between.
         const colCount = getComputedStyle(monitorGrid).gridTemplateColumns.trim().split(/\\s+/).length;
         const rect = under.getBoundingClientRect();
-        let before, axisClass;
-        if (colCount > 1) {
-            before = (e.clientX - rect.left) < rect.width / 2;
-            axisClass = before ? 'drop-left' : 'drop-right';
-        } else {
-            before = (e.clientY - rect.top) < rect.height / 2;
-            axisClass = before ? 'drop-before' : 'drop-after';
-        }
-        under.classList.add(axisClass);
-        dropTarget = { node: under, before };
-    });
+        const horizontal = colCount > 1;
+        const mid = horizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+        const pos = horizontal ? lastPointerX : lastPointerY;
+        // Dead band. Cards are not uniform height (a card with no vitals renders its numbers at
+        // text-xs, one with data at text-3xl), so a bare midpoint test can oscillate between two
+        // neighbours on sub-pixel pointer jitter and thrash the grid.
+        if (Math.abs(pos - mid) < 6) return;
+        const ref = (pos < mid) ? under : under.nextElementSibling;
+        if (ref === dragSrcNode || dragSrcNode.nextElementSibling === ref) return; // already there
+
+        moveWithDisplacement(ref);
+    }
+
+    // Core FLIP: move the dragged card to sit before ref, then animate every displaced sibling
+    // back to its new slot. Getting this order right is what stops the card from jumping a whole
+    // slot on every reorder instead of gliding.
+    function moveWithDisplacement(ref) {
+        const sibs = Array.from(monitorGrid.children).filter(n => n !== dragSrcNode && n.dataset.patientKey);
+        const first = sibs.map(n => n.getBoundingClientRect());
+
+        // Neutralise the dragged card's transform so we measure its SLOT, not its lifted position.
+        dragSrcNode.style.transform = 'none';
+        const slotBefore = dragSrcNode.getBoundingClientRect();
+        monitorGrid.insertBefore(dragSrcNode, ref);
+        const slotAfter = dragSrcNode.getBoundingClientRect();
+        // The slot moved under the held card. Rebase the drag origin by the same delta so the card
+        // stays visually motionless under the pointer instead of jumping a whole slot on every reorder.
+        dragStartX += slotAfter.left - slotBefore.left;
+        dragStartY += slotAfter.top - slotBefore.top;
+        dragSrcNode.style.transform = 'translate(' + (lastPointerX - dragStartX) + 'px, ' + (lastPointerY - dragStartY) + 'px) scale(1.03)';
+        dragDidReorder = true;
+
+        // FLIP the displaced cards: apply the inverse offset with the transition off, flush
+        // once, then release. Do not write the bare word for that offset here — Tailwind's content
+        // scanner reads this file for class candidates and emits a matching utility from a comment.
+        const moved = [];
+        sibs.forEach((n, i) => {
+            const last = n.getBoundingClientRect();
+            const dx = first[i].left - last.left;
+            const dy = first[i].top - last.top;
+            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+            n.classList.remove('drag-settling');
+            // The card's base class eases every property over 150ms. Left active, the inverse
+            // offset below would ease in instead of snapping, so the card never renders at its
+            // old slot and the settle has nothing to glide from — it teleports. Kill the ease
+            // for this one frame so the offset lands instantly; the .drag-settling ease then
+            // takes over for the 200ms glide after the reflow.
+            n.style.transition = 'none';
+            n.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+            moved.push(n);
+        });
+        if (!moved.length) return;
+        void monitorGrid.offsetWidth; // one forced style flush for the whole batch, not one per card
+        moved.forEach(n => { n.style.transition = ''; n.classList.add('drag-settling'); n.style.transform = ''; });
+        // An interrupted settle composes correctly: getBoundingClientRect reports the in-flight
+        // animated position, so a new reorder mid-transition measures where the cards visually are
+        // and continues from there.
+    }
 
     async function endDrag(commit) {
         const node = dragSrcNode;
-        clearDropIndicator();
-        if (node) { node.classList.remove('dragging'); node.style.transform = ''; }
-        const target = dropTarget;
+        // !commit (pointercancel): synchronously restore the original position before anything
+        // else, because unlike the old border-only preview the card HAS already moved. A null or
+        // detached dragOriginNext means it was the last card, so insertBefore(null) appends it.
+        if (!commit && dragDidReorder && node) {
+            monitorGrid.insertBefore(node, dragOriginNext && dragOriginNext.parentElement === monitorGrid ? dragOriginNext : null);
+        }
+        // Clear all drag styling from every card in the grid; the dragged node's own transform is
+        // cleared here too.
+        Array.from(monitorGrid.children).forEach(n => {
+            n.classList.remove('drag-settling');
+            n.style.transform = '';
+            n.style.willChange = '';
+        });
+        if (node) { node.classList.remove('dragging'); }
         dragInProgress = false;
         dragSrcNode = null;
-        dropTarget = null;
-        if (commit && node && target) {
-            monitorGrid.insertBefore(node, target.before ? target.node : target.node.nextSibling);
-        }
-        if (!commit || !node || !target) { updateDash(); return; }
+        const didReorder = dragDidReorder;
+        dragDidReorder = false;
+        dragOriginNext = null;
+        // Nothing moved — this was a tap or a drag that ended where it started.
+        if (!commit || !node || !didReorder) { updateDash(); return; }
         const hns = Array.from(monitorGrid.querySelectorAll('[data-patient-key]')).map(n => n.dataset.hn).filter(Boolean);
         try {
             const response = await fetch('/api/patients/reorder', {

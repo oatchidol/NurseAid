@@ -346,7 +346,19 @@ deliberately because they are the opposite of decorative:
 - `#monitor-grid > .card` carries a 4px leading-edge border in the compact layout. That border
   **is** the clinical-state signal (green normal / amber warning / red critical), moved from the
   top edge because a vertical stripe survives a narrow card better than a horizontal one.
-- `.drop-left` / `.drop-right` / `.drop-before` / `.drop-after` are drag-insertion feedback.
+- Drag reordering on the monitor page shows its drop position by **live grid displacement**, not
+  by a painted indicator: while a card is held, the grid reorders in place and the displaced
+  siblings glide out of the way (FLIP, `.drag-settling`, 200ms ease-out-quint `transform`
+  transition — no overshoot, a monitor wall is not a place for bounce), leaving the empty slot as
+  the visible drop target. The held card itself lifts: a 1.03 `scale` (driven per-pointer-sample
+  from JS, so it is never transitioned) plus a `--shadow-xl` elevation and a 2px ring tinted with
+  the card's own clinical-state stripe, both easing in over 120ms so the card "picks up" instead
+  of popping. The stripe gains 1px for the lift but is not transitioned — animating a
+  border-width forces a layout pass for an imperceptible change. The earlier `.drop-left` /
+  `.drop-right` / `.drop-before` / `.drop-after` border rules were removed because `.drop-left`
+  painted `--accent-primary` over the 4px clinical-state stripe above, so a critical card lost its
+  red border mid-drag. With reduced motion the cards still displace — they simply jump instead of
+  gliding, so the drop position stays visible.
 
 Shadow and overlay values use raw `rgba(0,0,0,…)` by design — they are opacity over an unknown
 surface, not palette colours, and are enumerated in the Elevation & Depth vocabulary above.
