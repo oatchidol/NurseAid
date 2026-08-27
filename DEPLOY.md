@@ -196,3 +196,12 @@ old checkout that still has that leaked credential in its `.claude/`
 folder: that token should already have been rotated (revoked/regenerated
 via Claude Code login or the claude.ai account's session list) — if it
 hasn't, do that regardless of anything in this repo.
+
+### Troubleshooting Central Device Heartbeat Enrollment
+
+When the agent fails to enroll with Central, check `docker logs nurseaid-compose-collector` for the message `[Central] Auto-enroll failed`. When auto-enrollment fails, the agent obtains no credential and consequently sends **no heartbeat at all** — Central will show the device as silent rather than unhealthy.
+
+**HTTP 403 with error code 1010 (Cloudflare browser-signature ban)**: The request was blocked at the Cloudflare edge because the agent sent no User-Agent header. (Python's default `Python-urllib/3.12` is banned.) The same request with a normal User-Agent returns HTTP 409 instead. This has been fixed in the agent by sending a proper `NurseAid-Agent/<version>` header. Future Cloudflare WAF rule changes could reintroduce this; operators can verify by comparing a `curl` request with and without `-A`.
+
+**HTTP 409 with `{"error":"device_already_enrolled"}`**: Central has the device registered but this host has no `/run/nurseaid-compose/central-credential.json`. This file lives in the `compose_status` Docker volume and is lost if the volume is removed (e.g. `docker compose down -v`). The agent cannot self-heal — Central exposes no re-enroll, reset-credential, or rotate-credential endpoint. Resolution requires an operator to reset or remove the device record on Central so auto-enrollment can issue a fresh credential, or restore the credential file from backup. Protect the `compose_status` volume.
+

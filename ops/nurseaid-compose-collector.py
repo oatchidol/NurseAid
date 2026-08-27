@@ -27,6 +27,13 @@ INITIAL_LOG_HISTORY_MINUTES = min(
 CENTRAL_URL = os.getenv("NURSEAID_CENTRAL_URL", "https://nurseaid-central.softsquaregroup.com").strip().rstrip("/")
 HEARTBEAT_INTERVAL = max(10, int(os.getenv("NURSEAID_HEARTBEAT_INTERVAL", "60")))
 CREDENTIAL_FILE = SPOOL_DIR / "central-credential.json"
+NURSEAID_APP_VERSION = os.getenv("NURSEAID_APP_VERSION", "1.0.0")
+ENROLL_BACKOFF_MAX = 900
+
+# Backoff state for enrollment retries: (until_timestamp, current_backoff_seconds, last_logged_value)
+_enrollment_backoff_until = 0.0
+_enrollment_backoff_current = 0
+_last_enrollment_backoff_logged = None
 SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 def get_machine_device_id():
@@ -540,30 +547,76 @@ def process_apply_update_requests(now=None):
 
 def http_json_request(url, method="POST", payload=None, headers=None, timeout=10):
     headers = dict(headers or {})
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    # Set default User-Agent and Accept, but allow explicit overrides
+    if "User-Agent" not in headers:
+        headers["User-Agent"] = f"NurseAid-Agent/{NURSEAID_APP_VERSION} (device {DEVICE_ID})"
+    if "Accept" not in headers:
+        headers["Accept"] = "application/json"
     if payload is not None and "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     ctx = ssl.create_default_context()
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             body = resp.read().decode("utf-8")
-            return resp.status, json.loads(body) if body else {}
+            try:
+                return resp.status, json.loads(body) if body else {}
+            except (json.JSONDecodeError, ValueError):
+                # Non-JSON success response; preserve evidence
+                return resp.status, {
+                    "_nonJson": True,
+                    "_body": body[:800],
+                    "_contentType": resp.headers.get("content-type", ""),
+                    "_server": resp.headers.get("server", "")
+                }
     except urllib.error.HTTPError as error:
         try:
             body = error.read().decode("utf-8")
-            return error.code, json.loads(body) if body else {}
+            try:
+                return error.code, json.loads(body) if body else {}
+            except (json.JSONDecodeError, ValueError):
+                # Non-JSON error response; preserve evidence
+                return error.code, {
+                    "_nonJson": True,
+                    "_body": body[:800],
+                    "_contentType": error.headers.get("content-type", ""),
+                    "_server": error.headers.get("server", "")
+                }
         except Exception:
-            return error.code, {}
+            return error.code, {
+                "_nonJson": True,
+                "_body": "",
+                "_contentType": "",
+                "_server": ""
+            }
     except Exception as error:
         return 0, {"error": str(error)}
 
 
+def _schedule_enroll_backoff(now):
+    """Back off a failed Central enrolment: HEARTBEAT_INTERVAL, doubling up to ENROLL_BACKOFF_MAX."""
+    global _enrollment_backoff_until, _enrollment_backoff_current, _last_enrollment_backoff_logged
+    nxt = HEARTBEAT_INTERVAL if not _enrollment_backoff_current else _enrollment_backoff_current * 2
+    _enrollment_backoff_current = min(ENROLL_BACKOFF_MAX, nxt)
+    _enrollment_backoff_until = now + _enrollment_backoff_current
+    if _last_enrollment_backoff_logged != _enrollment_backoff_current:
+        print(f"[Central] Enrolment backoff: next attempt in {_enrollment_backoff_current}s", flush=True)
+        _last_enrollment_backoff_logged = _enrollment_backoff_current
+
+
 def get_central_credential():
+    global _enrollment_backoff_until, _enrollment_backoff_current, _last_enrollment_backoff_logged
+    
     if CREDENTIAL_FILE.exists():
         try:
             stored = json.loads(CREDENTIAL_FILE.read_text(encoding="utf-8"))
             if stored.get("deviceId") == DEVICE_ID and stored.get("credential"):
+                # Credential found, reset backoff on success
+                if _enrollment_backoff_current != 0:
+                    _enrollment_backoff_until = 0.0
+                    _enrollment_backoff_current = 0
+                    _last_enrollment_backoff_logged = None
                 return stored["credential"]
         except Exception as e:
             print(f"[Central] Error reading credential file: {e}", flush=True)
@@ -571,10 +624,27 @@ def get_central_credential():
     if not CENTRAL_URL:
         return None
 
+    # Check if we are in backoff state
+    now = time.monotonic()
+    if now < _enrollment_backoff_until:
+        # In backoff; do not attempt enrollment
+        if _last_enrollment_backoff_logged != _enrollment_backoff_current:
+            print(f"[Central] Enrollment backoff: next attempt in {int(_enrollment_backoff_until - now)}s", flush=True)
+            _last_enrollment_backoff_logged = _enrollment_backoff_current
+        return None
+
     url = f"{CENTRAL_URL}/api/v1/devices/auto-enroll"
-    status, res = http_json_request(url, payload={"deviceId": DEVICE_ID, "hostname": os.uname().nodename[:160]})
+    payload = {"deviceId": DEVICE_ID, "hostname": os.uname().nodename[:160]}
+
+    status, res = http_json_request(url, payload=payload)
+    
     if status in (200, 201) and res.get("credential"):
         cred = res["credential"]
+        # Reset backoff on success
+        _enrollment_backoff_until = 0.0
+        _enrollment_backoff_current = 0
+        _last_enrollment_backoff_logged = None
+        
         fd, name = tempfile.mkstemp(prefix=".cred-", dir=CREDENTIAL_FILE.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -589,9 +659,27 @@ def get_central_credential():
             except FileNotFoundError: pass
         return cred
     elif status == 409:
-        print(f"[Central] Device {DEVICE_ID} is already registered on Central server but missing local credential file", flush=True)
+        # Device already enrolled on Central but no local credential
+        print(f"[Central] Device {DEVICE_ID} is already enrolled on Central server but local credential file is missing. Operator must restore the credential file or reset the device on Central.", flush=True)
+        _schedule_enroll_backoff(now)
     else:
-        print(f"[Central] Auto-enroll failed ({status}): {res}", flush=True)
+        # Other error (403, 500, etc.)
+        evidence = res
+        body_preview = evidence.get("_body", "")[:200] if evidence.get("_nonJson") else ""
+        content_type = evidence.get("_contentType", "")
+        server = evidence.get("_server", "")
+        
+        if status == 403:
+            # Distinguish edge/WAF block from Central refusing unregistered device
+            if evidence.get("_nonJson") or "cloudflare" in server.lower():
+                print(f"[Central] Auto-enroll failed ({status}): request blocked at the edge/WAF, not by Central itself (a Cloudflare 'error code: 1010' here means the User-Agent is banned). URL={url} Device={DEVICE_ID} Server={server}", flush=True)
+            else:
+                print(f"[Central] Auto-enroll failed ({status}): Central rejected unregistered/unapproved device. Device={DEVICE_ID} Body={body_preview}", flush=True)
+        else:
+            print(f"[Central] Auto-enroll failed ({status}): URL={url} Device={DEVICE_ID} Body={body_preview} ContentType={content_type} Server={server}", flush=True)
+        
+        _schedule_enroll_backoff(now)
+    
     return None
 
 
