@@ -2503,6 +2503,73 @@ ${ICON_SET}
         .priority-editable { display: none !important; }
         body.can-prioritize .priority-editable { display: inline-flex !important; }
 
+        /* ── Patient priority: a three-step attention scale ────────────────────────────
+           Priority is an attention level staff assign, not a clinical measurement, so it may
+           not borrow green/amber/red (frozen for vitals) and it may not paint the card's 4px
+           leading edge, which IS the clinical stripe - a purple bar there would out-shout an
+           active red alert. The whole signal lives in this one chip instead.
+           The three steps separate on three channels at once - hue, fill and border weight -
+           so 'high' and 'medium' stay unmistakable at a glance across a ward wall, and stay
+           readable in greyscale or to a colour-blind reader. The Thai label inside the control
+           is the non-colour signal WCAG 2.2 AA requires. Every pairing below was measured
+           against --bg-card in BOTH themes: worst text 4.66 (light high), worst non-text
+           border 3.03 (light low). */
+        .priority-select, .priority-readonly {
+            font-family: inherit;
+            font-size: var(--fs-label);
+            line-height: 1.35;
+            font-weight: 600;
+            padding: 2px 20px 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            background-color: transparent;
+            /* Inline caret: appearance:none is what makes a <select> honour these colours in
+               every engine, and it takes the native arrow with it. Hardcoded rather than
+               tokenised because an SVG in background-image cannot read currentColor - #767e89
+               is the one neutral that clears 3:1 (1.4.11) on BOTH the white and the #161b22
+               card, so one glyph serves both themes. */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%23767e89' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 7px center;
+            background-size: 8px 5px;
+            color: var(--text-tertiary);
+            -webkit-appearance: none;
+            appearance: none;
+            transition: background-color .25s ease, border-color .25s ease, color .25s ease;
+        }
+        .priority-select { cursor: pointer; }
+        .priority-select:focus-visible { outline: 3px solid rgba(59,130,246,.42); outline-offset: 2px; }
+        /* A viewer holds patients:read but not patients:priority:write, so the <select> above
+           is hidden for them. They still need to see WHICH patients are being watched closely,
+           so the same chip is mirrored as static text - read-only, granting no new action. */
+        .priority-readonly {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            background-image: none;
+            cursor: default;
+        }
+        body.can-prioritize .priority-readonly { display: none !important; }
+
+        .priority-select[data-priority="high"], .priority-readonly[data-priority="high"] {
+            background-color: color-mix(in srgb, var(--priority-high) 12%, transparent);
+            border: 1.5px solid var(--priority-high-text);
+            color: var(--priority-high-text);
+            font-weight: 800;
+        }
+        .priority-select[data-priority="medium"], .priority-readonly[data-priority="medium"] {
+            background-color: color-mix(in srgb, var(--priority-medium) 10%, transparent);
+            border: 1px solid color-mix(in srgb, var(--priority-medium-text) 70%, transparent);
+            color: var(--priority-medium-text);
+            font-weight: 700;
+        }
+        .priority-select[data-priority="low"], .priority-readonly[data-priority="low"] {
+            background-color: transparent;
+            border: 1px dotted color-mix(in srgb, var(--priority-low-text) 70%, transparent);
+            color: var(--priority-low-text);
+            font-weight: 600;
+        }
+
         #sidebar {
             width: 13rem;
             min-width: 13rem;
@@ -5998,6 +6065,9 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     </aside>
 `, `
     let latestPatients = [];
+    // Exactly the words used by the <select> options in every card. The Thai copy is fixed:
+    // the badge must read identically to the control it mirrors.
+    const PRIORITY_LABELS = { high: 'สูง', medium: 'กลาง', low: 'ต่ำ' };
     let aiChatRequest = null;
     let aiChatRequestSeq = 0;
     let aiChatPreviousFocus = null;
@@ -6317,9 +6387,29 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
     let dashboardPollTimer = null;
     let dashboardRequestInFlight = false;
+    // Priority is a statement about how closely a patient is being watched, so it has to buy
+    // something real and not just a colour: it sets how often the ward snapshot is re-read.
+    // /api/live-status returns the whole ward in a single request (three Influx queries behind
+    // it), so a per-patient cadence is not available and would multiply that cost; instead the
+    // most urgent priority on the board sets the cadence for the board. That is what a nurse
+    // watching a 'high' patient actually wants - that card must not sit five seconds stale.
+    const DASHBOARD_POLL_MS = Object.freeze({ high: 2000, medium: 3500, none: 5000 });
+    let dashboardPollMs = DASHBOARD_POLL_MS.none;
+
+    function pollIntervalForPriorities(patients) {
+        if (!Array.isArray(patients)) return DASHBOARD_POLL_MS.none;
+        let sawMedium = false;
+        for (const patient of patients) {
+            const priority = String((patient && patient.priority) || '').toLowerCase();
+            if (priority === 'high') return DASHBOARD_POLL_MS.high;   // fastest step wins, stop looking
+            if (priority === 'medium') sawMedium = true;
+        }
+        return sawMedium ? DASHBOARD_POLL_MS.medium : DASHBOARD_POLL_MS.none;
+    }
+
     function scheduleDashboardUpdate() {
         clearTimeout(dashboardPollTimer);
-        dashboardPollTimer = setTimeout(updateDash, 5000);
+        dashboardPollTimer = setTimeout(updateDash, dashboardPollMs);
     }
 
     function reconcilePatientCards(grid, cards) {
@@ -6354,6 +6444,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 });
                 replacement.querySelector('[data-action="set-priority"]')?.addEventListener('change', async (e) => {
                     const value = e.target.value || null;
+                    e.target.dataset.priority = value || '';   // recolour immediately; the refetch only confirms
                     try {
                         const response = await fetch('/api/patients/priority', {
                             method: 'POST', headers: {'Content-Type':'application/json'},
@@ -6382,6 +6473,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             if (!r.ok) throw new Error(data.message || 'Live status request failed');
             if (!Array.isArray(data)) throw new Error('Live status response is invalid');
             latestPatients = data;
+            dashboardPollMs = pollIntervalForPriorities(data);
             syncAiPatientOptions();
             const grid = document.getElementById('monitor-grid');
             const globalBanner = document.getElementById('global-alert');
@@ -6468,6 +6560,14 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 const settingsColor = isInactive
                     ? 'text-gray-500 hover:text-gray-600'
                     : (isDark ? 'text-gray-600 hover:text-blue-400' : 'text-slate-500 hover:text-blue-600');
+                // Whitelist rather than trust the row: only these three ever reach a CSS
+                // selector or the DOM, whatever the column happens to hold.
+                const priorityKey = PRIORITY_LABELS[p.priority] ? p.priority : '';
+                const priorityBadge = priorityKey
+                    ? '<span class="priority-readonly shrink-0" data-priority="' + priorityKey
+                      + '" title="ความสำคัญ: ' + PRIORITY_LABELS[priorityKey] + '">'
+                      + PRIORITY_LABELS[priorityKey] + '</span>'
+                    : '';
                 const vitalBg = isDark ? 'style="background: var(--bg-vital);"' : 'class="bg-slate-50"';
                 const vitalTextColor = 'var(--text-vital-muted)';
                 const grayBg = 'style="background: var(--bg-input); border: 1px solid var(--border-color);"';
@@ -6545,7 +6645,8 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
-                        <select data-action="set-priority" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
+                        \${priorityBadge}
+                        <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
                             <option value="">ไม่ระบุ</option>
                             <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
                             <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
@@ -6592,13 +6693,20 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 globalBanner.classList.add('hidden');
                 stopAlertLoop();
             }
-            document.getElementById('last-sync').innerText = 'Last Sync: ' + new Date().toLocaleTimeString();
+            const pollSeconds = dashboardPollMs % 1000 === 0
+                ? String(dashboardPollMs / 1000)
+                : (dashboardPollMs / 1000).toFixed(1);
+            document.getElementById('last-sync').innerText =
+                'Last Sync: ' + new Date().toLocaleTimeString() + ' · ทุก ' + pollSeconds + ' วิ';
         } catch(e) {
             console.error('Dashboard Update Error:', e);
             const grid = document.getElementById('monitor-grid');
             if (grid && latestPatients.length === 0) {
                 grid.innerHTML = '<div class="card col-span-full p-8 text-center border border-red-300"><p class="font-bold text-red-500">ไม่สามารถโหลดข้อมูลได้</p><p class="text-xs mt-1" style="color: var(--text-tertiary);">ระบบจะลองเชื่อมต่อใหม่อัตโนมัติ</p></div>';
             }
+            // Back off to the base cadence while the endpoint is failing: a 'high' patient
+            // must not turn an outage into a 2s retry storm against a server already in trouble.
+            dashboardPollMs = DASHBOARD_POLL_MS.none;
             const lastSync = document.getElementById('last-sync');
             if (lastSync) lastSync.innerText = latestPatients.length ? 'การเชื่อมต่อขัดข้อง · แสดงข้อมูลล่าสุด' : 'Live data unavailable';
         } finally {
