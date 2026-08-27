@@ -333,6 +333,10 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
          WHERE board_mac = $3`,
         [ip || null, version || null, boardMac]
     );
+    // Auto-restore a revoked board when it proves it is alive via heartbeat.
+    // The bare heartbeat topic (ble/node/<id>) is NOT retained, so this only
+    // fires on genuine live heartbeats — not on broker replay after a restart.
+    await restoreEsp32NodeIfRevoked(boardMac, nodeId, 'heartbeat');
     await pool.query(
         `INSERT INTO esp32_node_status
              (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at)
@@ -355,6 +359,12 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
 // message on every subscribe (server restart, MQTT reconnect), so the monotonic
 // bootCount guard is essential: only a strictly greater count (or a counter
 // reset after reflashing) counts as a genuine reboot event.
+//
+// Deliberately NOT auto-restoring revoked boards from here. The retained /boot
+// topic is re-delivered on every server restart and MQTT reconnect, so an
+// auto-restore trigger in this handler would resurrect every hidden board on
+// every deploy — making the revoke feature useless. Auto-restore lives only in
+// the non-retained heartbeat (ble/node/<id>) and inventory (ble/esp32) paths.
 //
 // Deliberately NOT implementing uptime-goes-backwards detection as a second
 // heuristic. The retained /boot message plus the monotonic counter guard is
@@ -1273,7 +1283,9 @@ async function initDatabase() {
             last_boot_count INTEGER,
             last_fw_version VARCHAR(40),
             first_seen_at TIMESTAMP DEFAULT NOW(),
-            last_seen_at TIMESTAMP
+            last_seen_at TIMESTAMP,
+            revoked_at TIMESTAMP,
+            revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL
         )`,
         // esp32_node_events is an append-only transition log. A board is "currently
         // offline" when its latest online/offline event is `offline`. Used to drive
@@ -1383,6 +1395,14 @@ async function initDatabase() {
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_path TEXT;
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_original_name TEXT;
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_uploaded_at TIMESTAMP;
+        `);
+        // Per-board revoke/restore tracking. Revoked boards are hidden from the
+        // dashboard and alerting but remain in the registry so they auto-restore
+        // when they prove they are alive again (see handleHeartbeatMessage and
+        // upsertEsp32NodeIdentity).
+        await pool.query(`
+            ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP;
+            ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
         `);
     } catch (e) { console.error("Migration error:", e.message); }
     await pool.query(`
@@ -6054,6 +6074,58 @@ async function recordEsp32Event(boardMac, nodeId, eventType, detail) {
 }
 
 /**
+ * Clear the revoke markers on a board that has just proven it is alive, and log
+ * a `restored` event. Safe to call unconditionally: the guarded UPDATE is a
+ * no-op on a board that is not revoked, so callers need no pre-check. Doing it
+ * as one guarded UPDATE rather than SELECT-then-UPDATE also closes the race
+ * where two messages arriving together each logged their own restore event.
+ *
+ * Call this ONLY from non-retained MQTT paths — the bare heartbeat topic
+ * (ble/node/<id>) and the inventory topic (ble/esp32). The retained /boot topic
+ * is re-delivered on every server restart and broker reconnect, so restoring
+ * from there would resurrect every hidden board on every deploy.
+ *
+ * Never throws. Auto-restore is a convenience; it must not fail the
+ * heartbeat/inventory path that calls it.
+ */
+async function restoreEsp32NodeIfRevoked(boardMac, nodeId, reason) {
+    try {
+        const result = await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NULL, revoked_by = NULL
+             WHERE board_mac = $1 AND revoked_at IS NOT NULL`,
+            [String(boardMac)]
+        );
+        if (result.rowCount > 0) {
+            await recordEsp32Event(boardMac, nodeId, 'restored', { reason });
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.error('[ESP32 Restore] auto-restore failed:', err.message);
+        return false;
+    }
+}
+
+// Minimum silence before a receiver board may be permanently deleted. A board
+// that is still publishing is a working patient monitor — destroying its
+// history on a misclick is unacceptable, so the delete route refuses and tells
+// the operator to hide (revoke) it instead.
+const ESP32_DELETE_MIN_SILENCE_MS = 10 * 60 * 1000;
+
+/**
+ * True when a board has been seen recently enough that permanent deletion must
+ * be refused. A board with no usable last_seen_at has never proven it was alive,
+ * so there is no history worth protecting and deletion is allowed — otherwise
+ * a board that never reported would be undeletable forever.
+ */
+function esp32DeleteBlockedByRecentActivity(lastSeenAt, nowMs = Date.now()) {
+    if (lastSeenAt === null || lastSeenAt === undefined || lastSeenAt === '') return false;
+    const seenMs = new Date(lastSeenAt).getTime();
+    if (!Number.isFinite(seenMs)) return false;
+    return nowMs - seenMs < ESP32_DELETE_MIN_SILENCE_MS;
+}
+
+/**
  * Return the most recent liveness event_type for a board, or null when there
  * is no history. The id DESC tiebreak handles the case where two events share
  * the same created_at timestamp.
@@ -6126,8 +6198,10 @@ async function runEsp32ReceiverSweep() {
         if (Date.now() < esp32SweepGraceUntilMs) return;
 
         // Per-board sweep: detect online/offline transitions only.
+        // Revoked boards are excluded at the SQL level — a hidden board must never
+        // raise an offline event, even if it goes silent.
         const nodesResult = await pool.query(
-            `SELECT board_mac, node_id, last_seen_at FROM esp32_nodes`
+            `SELECT board_mac, node_id, last_seen_at FROM esp32_nodes WHERE revoked_at IS NULL`
         );
         for (const row of nodesResult.rows) {
             // Skip boards that have never sent a heartbeat — no evidence they were ever alive.
@@ -7598,6 +7672,43 @@ async function esp32NodesForUi(req) {
         'SELECT board_mac, node_id, ip_address, last_fw_version, last_seen_at FROM esp32_nodes'
     );
     const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    // Revoked (hidden) boards are excluded from the main nodes array and from
+    // every summary count below, including offlineCount — a hidden board must
+    // never contribute to the offline alarm. They are returned as their own list
+    // so the page can offer restore/delete without the operator needing DB
+    // access, and because a hidden board has no card to hang an action off.
+    const revokedResult = await pool.query(
+        `SELECT n.board_mac, n.node_id, n.ip_address, n.last_fw_version, n.last_seen_at,
+                n.revoked_at, u.username AS revoked_by_username, m.description
+           FROM esp32_nodes n
+           LEFT JOIN users u ON u.id = n.revoked_by
+           LEFT JOIN esp32_node_metadata m ON m.board_mac = n.board_mac
+          WHERE n.revoked_at IS NOT NULL
+          ORDER BY n.revoked_at DESC`
+    );
+    const revokedNowMs = Date.now();
+    const revokedNodes = revokedResult.rows.map(row => {
+        const lastSeenAt = row.last_seen_at || null;
+        const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+        return {
+            boardMac: String(row.board_mac || '').toUpperCase(),
+            nodeId: row.node_id || null,
+            ipAddress: row.ip_address || null,
+            fwVersion: row.last_fw_version || null,
+            description: String(row.description || '').trim(),
+            lastSeenAt,
+            lastSeenAgeSeconds: Number.isFinite(lastSeenMs)
+                ? Math.max(0, Math.round((revokedNowMs - lastSeenMs) / 1000))
+                : null,
+            revokedAt: row.revoked_at || null,
+            revokedByUsername: row.revoked_by_username || null,
+            // Whether DELETE /api/esp32-nodes/:mac will accept this board right
+            // now, so the UI can disable the button rather than let the operator
+            // click it and collect a 409.
+            deletable: !esp32DeleteBlockedByRecentActivity(lastSeenAt, revokedNowMs)
+        };
+    });
+    const revokedCount = revokedNodes.length;
 
     // The collector observes established TCP sessions to Mosquitto from host /proc.
     // This is only a diagnostic signal: the firmware publishes ble/esp32 on a fixed
@@ -7631,7 +7742,12 @@ async function esp32NodesForUi(req) {
         }
     }
 
-    const nodes = topology.nodes.map(node => {
+    // Exclude revoked boards from the dashboard. A revoked board is hidden but
+    // still in the registry so it auto-restores when it proves it is alive again.
+    const activeTopologyNodes = topology.nodes.filter(
+        node => !registryByMac.get(String(node.boardMac || '').toUpperCase())?.revoked_at
+    );
+    const nodes = activeTopologyNodes.map(node => {
         const meta = metadataByMac.get(node.boardMac) || {};
         const health = healthByMac.get(node.boardMac) || {};
         const reg = registryByMac.get(node.boardMac) || {};
@@ -7704,10 +7820,12 @@ async function esp32NodesForUi(req) {
     const nowMs = Date.now();
     for (const node of nodes) {
         const boardEvents = eventsByMac.get(node.boardMac) || [];
-        // summariseEsp32Uptime expects ONLY online/offline transitions — reboot
-        // rows would corrupt its outage maths if left in the array. Filter them
-        // out before passing to the uptime helper.
-        const livenessOnly = boardEvents.filter(e => e.event_type !== 'reboot');
+        // summariseEsp32Uptime expects ONLY online/offline transitions — any
+        // other row type corrupts its outage maths. This is an allowlist, not a
+        // denylist of 'reboot': the events table has since grown 'revoked' and
+        // 'restored' types, and a denylist silently leaks every future type into
+        // the uptime arithmetic.
+        const livenessOnly = boardEvents.filter(e => e.event_type === 'online' || e.event_type === 'offline');
 
         // Determine the board's current liveness state from the LIVENESS events
         // only. Reading the raw array here would let a reboot row that landed
@@ -7741,6 +7859,7 @@ async function esp32NodesForUi(req) {
         mqttSessionSignalAvailable,
         nodes,
         unidentifiedNodes,
+        revokedNodes,
         summary: {
             total: nodes.length,
             connected: nodes.filter(node => node.status === 'connected').length,
@@ -7748,7 +7867,8 @@ async function esp32NodesForUi(req) {
             unknown: nodes.filter(node => node.status === 'unknown').length,
             connectedJstyle: nodes.reduce((sum, node) => sum + node.connectedJstyleCount, 0),
             patients: nodes.reduce((sum, node) => sum + node.patients.length, 0),
-            offlineCount: nodes.filter(node => node.currentlyOffline === true).length
+            offlineCount: nodes.filter(node => node.currentlyOffline === true).length,
+            revokedCount
         }
     };
 }
@@ -7795,8 +7915,111 @@ app.put('/api/esp32-nodes/:mac/description', requireCapability('devices:location
     }
 });
 
+// Hide (revoke) a receiver board. The board stays in the registry but is hidden
+// from the dashboard and alerting. It auto-restores when it proves it is alive
+// again via heartbeat or inventory message, so this is a soft delete — not a
+// permanent one. Use DELETE /api/esp32-nodes/:mac for that (requires the board
+// to have been silent for at least 10 minutes).
+app.post('/api/esp32-nodes/:mac/revoke', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NOW(), revoked_by = $1 WHERE board_mac = $2`,
+            [req.user.id, boardMac]
+        );
+        await recordEsp32Event(boardMac, nodeId, 'revoked', { by: req.user.id });
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { revoked: true }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[ESP32 Revoke]', error.message);
+        res.status(500).json({ error: 'Unable to revoke ESP32 node' });
+    }
+});
+
+// Restore a previously revoked board. Clears the revoke markers and records a
+// restored event. The UI will not expose this yet, but the endpoint exists so an
+// operator can un-hide a board without direct DB access (e.g. after a mistaken
+// revoke).
+app.post('/api/esp32-nodes/:mac/restore', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NULL, revoked_by = NULL WHERE board_mac = $1`,
+            [boardMac]
+        );
+        await recordEsp32Event(boardMac, nodeId, 'restored', { by: req.user.id });
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { revoked: false }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[ESP32 Restore]', error.message);
+        res.status(500).json({ error: 'Unable to restore ESP32 node' });
+    }
+});
+
+// Permanently delete a receiver board and all its associated event/status/metadata rows.
+// SAFETY: refuses to delete a board that is currently alive (last_seen_at within
+// the last 10 minutes). A misclick must never destroy the history of a working
+// patient monitor — use revoke instead in that case.
+app.delete('/api/esp32-nodes/:mac', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id, last_seen_at FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        const lastSeenAt = existing.rows[0].last_seen_at;
+
+        // Safety guard: refuse to delete a board that is currently alive.
+        if (esp32DeleteBlockedByRecentActivity(lastSeenAt)) {
+            return res.status(409).json({ error: 'ตัวรับสัญญาณนี้ยังส่งสัญญาณอยู่ ไม่สามารถลบถาวรได้ กรุณาซ่อนแทน' });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const eventsResult = await client.query('DELETE FROM esp32_node_events WHERE board_mac = $1', [boardMac]);
+            const statusResult = await client.query('DELETE FROM esp32_node_status WHERE board_mac = $1', [boardMac]);
+            const metadataResult = await client.query('DELETE FROM esp32_node_metadata WHERE board_mac = $1', [boardMac]);
+            await client.query('DELETE FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+            await client.query('COMMIT');
+            logAudit(req, 'DELETE', 'esp32_node', boardMac, {
+                nodeId,
+                rowsRemoved: {
+                    events: eventsResult.rowCount,
+                    status: statusResult.rowCount,
+                    metadata: metadataResult.rowCount
+                }
+            }).catch(console.error);
+            res.json({ success: true, removed: { events: eventsResult.rowCount, status: statusResult.rowCount, metadata: metadataResult.rowCount } });
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error('[ESP32 Delete]', error.message);
+        res.status(500).json({ error: 'Unable to delete ESP32 node' });
+    }
+});
+
 app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
     const canEditLocation = roleHasCapability(req.user?.role, 'devices:location:write');
+    // Hide / restore / permanent-delete are gated behind devices:write, which
+    // staff_nurse deliberately does not hold — the same capability that guards
+    // the rest of device administration.
+    const canManageReceivers = roleHasCapability(req.user?.role, 'devices:write');
     res.send(ui(req.user, 'esp32', `
         <style>
             .receiver-page { max-width: 1280px; margin: 0 auto; }
@@ -7847,6 +8070,16 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             .receiver-unidentified-item { display:flex; align-items:center; gap:.6rem; padding:.55rem .7rem; border-radius:.8rem; background:var(--bg-input); margin-bottom:.4rem; font-size:.76rem; }
             .receiver-unidentified-id { font-weight:800; color:var(--text-heading); }
             .receiver-unidentified-age { color:var(--text-tertiary); font-size:.68rem; }
+            .receiver-revoked { border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
+            .receiver-revoked-title { font-size:.82rem; font-weight:850; color:var(--text-heading); margin-bottom:.35rem; }
+            .receiver-revoked-desc { font-size:.72rem; color:var(--text-tertiary); margin-bottom:.75rem; }
+            .receiver-revoked-item { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.6rem .7rem; border-radius:.8rem; background:var(--bg-input); margin-bottom:.45rem; font-size:.76rem; }
+            .receiver-revoked-main { flex:1 1 14rem; min-width:0; }
+            .receiver-revoked-id { font-weight:800; color:var(--text-heading); }
+            .receiver-revoked-meta { color:var(--text-tertiary); font-size:.68rem; margin-top:.15rem; }
+            .receiver-revoked-actions { display:flex; align-items:center; gap:.45rem; flex-shrink:0; }
+            .receiver-danger-btn { display:inline-flex; align-items:center; gap:.35rem; padding:.4rem .75rem; border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--status-critical-text) 35%, var(--border-color)); background:transparent; color:var(--status-critical-text); font-size:.7rem; font-weight:800; cursor:pointer; }
+            .receiver-danger-btn:disabled { opacity:.4; cursor:not-allowed; }
             @media (max-width: 640px) {
                 .receiver-card-top { padding:1rem; gap:.75rem; }
                 .receiver-device-art { width:3.55rem; height:3.55rem; border-radius:1rem; }
@@ -7902,6 +8135,12 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                 <div class="receiver-unidentified-desc">บอร์ดเหล่านี้กำลังส่ง heartbeat มาทาง MQTT แต่ NurseAid ยังไม่สามารถจับคู่ board_mac ได้ — อาจเป็นเพราะเฟิร์มแวร์เก่าหรือการตั้งค่าที่ยังไม่สมบูรณ์</div>
                 <div id="receiverUnidentifiedList"></div>
             </div>
+            <div id="receiverRevokedSection" class="hidden receiver-revoked" role="region" aria-label="ตัวรับสัญญาณที่ซ่อนไว้">
+                <div class="receiver-revoked-title">ตัวรับสัญญาณที่ซ่อนไว้ (<span id="receiverRevokedCount">0</span>)</div>
+                <div class="receiver-revoked-desc">บอร์ดเหล่านี้ถูกซ่อนออกจากหน้าหลักและไม่แจ้งเตือนเมื่อออฟไลน์ แต่ยังอยู่ในระบบครบทั้งข้อมูลและประวัติ — หากบอร์ดกลับมาส่งสัญญาณเอง ระบบจะกู้คืนให้อัตโนมัติ</div>
+                <div id="receiverRevokedList"></div>
+            </div>
+
             <section id="receiverGrid" class="grid xl:grid-cols-2 gap-4" aria-label="รายการตัวรับสัญญาณ"></section>
         </div>
     `, `
@@ -7910,6 +8149,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
         const receiverUpdated = document.getElementById('receiverUpdated');
         const receiverToast = document.getElementById('receiverToast');
         const canEditReceiverLocation = ${canEditLocation ? 'true' : 'false'};
+        const canManageReceivers = ${canManageReceivers ? 'true' : 'false'};
         let receiverTimer = null;
         let receiverLoading = false;
         let receiverToastTimer = null;
@@ -7978,6 +8218,13 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const editButton = canEditReceiverLocation
                 ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
                 : '';
+            // Only "hide" is offered on a visible card. Permanent delete lives in
+            // the hidden-boards section below: a board with a card is usually
+            // still publishing, and the delete route refuses those anyway — so
+            // showing the button here would just hand out 409s.
+            const hideButton = canManageReceivers
+                ? '<button type="button" data-revoke-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-node="' + escapeHTML(node.nodeId || '') + '" class="receiver-edit-btn" aria-label="ซ่อนตัวรับสัญญาณ ' + escapeHTML(node.nodeId) + '">ซ่อน</button>'
+                : '';
             const jstyleCount = Number.isFinite(Number(node.connectedJstyleCount)) ? Number(node.connectedJstyleCount) : 0;
             return '<article class="receiver-card' + problemClass + '">' +
                 '<div class="receiver-card-top">' +
@@ -7994,7 +8241,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                                 '<div class="receiver-location break-words">' + escapeHTML(locationText) + '</div>' +
                                 '<div class="receiver-node-meta">ตัวรับ ' + escapeHTML(node.nodeId) + '</div>' +
                             '</div>' +
-                            '<div class="shrink-0">' + editButton + '</div>' +
+                            '<div class="shrink-0 flex items-center gap-2">' + editButton + hideButton + '</div>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
@@ -8064,6 +8311,8 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                 unidentifiedSection.classList.add('hidden');
             }
 
+            renderRevokedReceivers(data);
+
             const nodes = Array.isArray(data.nodes) ? [...data.nodes] : [];
             const rank = { disconnected:0, unknown:1, connected:2 };
             nodes.sort((a,b) => (rank[a.status] ?? 1) - (rank[b.status] ?? 1) || String(a.description || a.nodeId).localeCompare(String(b.description || b.nodeId), 'th'));
@@ -8078,6 +8327,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             receiverGrid.innerHTML = nodes.map(receiverCard).join('');
             receiverGrid.querySelectorAll('[data-edit-receiver]').forEach(button => {
                 button.addEventListener('click', () => editReceiverLocation(button.dataset.mac, button.dataset.description || ''));
+            });
+            receiverGrid.querySelectorAll('[data-revoke-receiver]').forEach(button => {
+                button.addEventListener('click', () => revokeReceiver(button.dataset.mac, button.dataset.node || ''));
             });
         }
 
@@ -8134,6 +8386,97 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const updateCount = () => { if (count) count.textContent = String(input?.value?.length || 0) + '/200'; };
             input?.addEventListener('input', updateCount);
             updateCount();
+        };
+
+        function renderRevokedReceivers(data) {
+            const section = document.getElementById('receiverRevokedSection');
+            const list = document.getElementById('receiverRevokedList');
+            const countEl = document.getElementById('receiverRevokedCount');
+            const revoked = Array.isArray(data.revokedNodes) ? data.revokedNodes : [];
+            if (!revoked.length) {
+                list.innerHTML = '';
+                section.classList.add('hidden');
+                return;
+            }
+            countEl.textContent = String(revoked.length);
+            list.innerHTML = revoked.map(item => {
+                const label = item.description || item.nodeId || item.boardMac || '-';
+                const revokedAtText = item.revokedAt
+                    ? new Date(item.revokedAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'})
+                    : 'ไม่ทราบเวลา';
+                const byText = item.revokedByUsername ? ' โดย ' + escapeHTML(item.revokedByUsername) : '';
+                // The delete button is disabled from the server-computed
+                // deletable flag so the operator never clicks into a 409.
+                const actions = canManageReceivers
+                    ? '<div class="receiver-revoked-actions">' +
+                        '<button type="button" class="receiver-edit-btn" data-restore-receiver="1" data-mac="' + escapeHTML(item.boardMac) + '" data-node="' + escapeHTML(item.nodeId || '') + '">กู้คืน</button>' +
+                        '<button type="button" class="receiver-danger-btn" data-delete-receiver="1" data-mac="' + escapeHTML(item.boardMac) + '" data-node="' + escapeHTML(item.nodeId || '') + '"' + (item.deletable ? '' : ' disabled title="บอร์ดนี้ยังส่งสัญญาณภายใน 10 นาทีที่ผ่านมา จึงยังลบถาวรไม่ได้"') + '>ลบถาวร</button>' +
+                      '</div>'
+                    : '';
+                return '<div class="receiver-revoked-item">' +
+                    '<div class="receiver-revoked-main">' +
+                        '<div class="receiver-revoked-id">' + escapeHTML(label) + '</div>' +
+                        '<div class="receiver-revoked-meta font-mono">' + escapeHTML(item.boardMac || '-') + (item.nodeId ? ' · ' + escapeHTML(item.nodeId) : '') + '</div>' +
+                        '<div class="receiver-revoked-meta">ซ่อนเมื่อ ' + escapeHTML(revokedAtText) + byText + ' · heartbeat ล่าสุด ' + escapeHTML(receiverLastSeenText(item.lastSeenAt, item.lastSeenAgeSeconds)) + '</div>' +
+                    '</div>' + actions +
+                '</div>';
+            }).join('');
+            section.classList.remove('hidden');
+            list.querySelectorAll('[data-restore-receiver]').forEach(button => {
+                button.addEventListener('click', () => restoreReceiver(button.dataset.mac, button.dataset.node || ''));
+            });
+            list.querySelectorAll('[data-delete-receiver]').forEach(button => {
+                button.addEventListener('click', () => deleteReceiver(button.dataset.mac, button.dataset.node || ''));
+            });
+        }
+
+        window.revokeReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'ซ่อนตัวรับสัญญาณ',
+                body: '<p>ซ่อนตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> ออกจากหน้าหลักใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> ข้อมูลและประวัติยังอยู่ครบ ระบบจะหยุดแจ้งเตือนเมื่อบอร์ดนี้ออฟไลน์ และหากบอร์ดกลับมาส่งสัญญาณเอง ระบบจะกู้คืนให้อัตโนมัติ</div>',
+                confirmText: 'ซ่อน',
+                loadingText: 'กำลังซ่อน…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/revoke', { method: 'POST' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถซ่อนตัวรับสัญญาณได้'));
+                    showReceiverToast('ซ่อนตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
+        };
+
+        window.restoreReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'กู้คืนตัวรับสัญญาณ',
+                body: '<p>นำตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> กลับมาแสดงบนหน้าหลักใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> บอร์ดนี้จะกลับเข้าระบบแจ้งเตือนออฟไลน์อีกครั้ง</div>',
+                kind: 'info',
+                confirmText: 'กู้คืน',
+                loadingText: 'กำลังกู้คืน…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/restore', { method: 'POST' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถกู้คืนตัวรับสัญญาณได้'));
+                    showReceiverToast('กู้คืนตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
+        };
+
+        window.deleteReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'ลบตัวรับสัญญาณถาวร',
+                body: '<p>ลบตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> ออกจากระบบถาวรใช่หรือไม่?</p><div class="dialog-note"><strong>คำเตือน:</strong> การลบไม่สามารถย้อนกลับได้ ประวัติออนไลน์/ออฟไลน์ ประวัติรีบูต สถานะเฟิร์มแวร์ และจุดติดตั้งของบอร์ดนี้จะถูกลบทั้งหมด หากเพียงต้องการเอาออกจากหน้าจอ ให้ใช้การซ่อนแทน</div>',
+                confirmText: 'ลบถาวร',
+                loadingText: 'กำลังลบ…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac), { method: 'DELETE' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถลบตัวรับสัญญาณได้'));
+                    showReceiverToast('ลบตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
         };
 
         loadReceivers();
@@ -13250,6 +13593,15 @@ async function upsertEsp32NodeIdentity(boardMac, nodeId, ipAddress) {
     } finally {
         client.release();
     }
+    // Auto-restore a revoked board when the authoritative ble/esp32 inventory
+    // message arrives. This topic is NOT retained, so this only fires on genuine
+    // live inventory reports — not on broker replay after a restart.
+    //
+    // Deliberately OUTSIDE the try/finally above. Inside it, a failure here hit
+    // the `catch`, which issued a ROLLBACK against an already-committed
+    // transaction and then rethrew — turning a successful identity upsert into
+    // a reported failure.
+    await restoreEsp32NodeIfRevoked(boardMac, nodeId, 'inventory');
 }
 
 // Return an array of { nodeId, lastSeenAt, ageSeconds } for heartbeats that have
@@ -13654,5 +14006,7 @@ module.exports = {
     listUnidentifiedEsp32Nodes,
     runEsp32ReceiverSweep,
     recordEsp32Event,
-    latestEsp32LivenessEvent
+    latestEsp32LivenessEvent,
+    esp32DeleteBlockedByRecentActivity,
+    ESP32_DELETE_MIN_SILENCE_MS
 };
