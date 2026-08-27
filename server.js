@@ -1671,14 +1671,34 @@ async function resolveOfflineAlert(status, deviceSettings, thresholdMinutes, not
 const adminOnly = requireCapability('settings:global');
 
 // ─── Wards Management Routes ─────────────────────────────────────────
+function navIcon(name) {
+    const P = {
+        monitor: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+        report: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>',
+        setup: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+        device: '<circle cx="12" cy="12" r="6"/><path d="M12 10v2l1 1"/><path d="m16.13 7.66-.81-4.05a2 2 0 0 0-2-1.61h-2.68a2 2 0 0 0-2 1.61l-.78 4.05"/><path d="m7.88 16.36.8 4a2 2 0 0 0 2 1.61h2.72a2 2 0 0 0 2-1.61l.81-4.05"/>',
+        patient: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        pairing: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+        ward: '<path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9h.01"/><path d="M9 12h.01"/><path d="M9 15h.01"/>',
+        users: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+        notify: '<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/>',
+        sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
+        history: '<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
+        audit: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+        system: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+        logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>'
+    };
+    return '<svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + (P[name] || '') + '</svg>';
+}
+
 function renderNavLinks(user, active) {
     if (!user) return { main: '', alerts: '' };
     const role = user.role;
     let main = '';
     let alerts = '';
     
-    if (roleHasCapability(role, 'patients:read')) main += `<a href="/" title="Monitor" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'dash' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📊</span><span class="sidebar-hide">Monitor</span></a>\n`;
-    if (roleHasCapability(role, 'export:read')) main += `<a href="/export" title="Report" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'export' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📥</span><span class="sidebar-hide">Report</span></a>\n`;
+    if (roleHasCapability(role, 'patients:read')) main += `<a href="/" title="มอนิเตอร์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'dash' ? '' : 'color: var(--text-secondary);'}">${navIcon('monitor')}<span class="sidebar-hide">มอนิเตอร์</span></a>\n`;
+    if (roleHasCapability(role, 'export:read')) main += `<a href="/export" title="รายงาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'export' ? '' : 'color: var(--text-secondary);'}">${navIcon('report')}<span class="sidebar-hide">รายงาน</span></a>\n`;
     // Quick Setup Wizard (Device -> Patient -> Pair) — placed right after Report,
     // ahead of the individual Devices/Patients/Pairing pages, since it's the
     // faster/guided path most admins reach for first. The three write
@@ -1686,23 +1706,23 @@ function renderNavLinks(user, active) {
     // pairing:write) are always co-granted to the same roles in
     // ROLE_CAPABILITIES, so gating on any one of them is equivalent to
     // requiring all three.
-    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="Quick Setup" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🚀</span><span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
+    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="เริ่มต้นใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}">${navIcon('setup')}<span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
 
-    if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="Devices" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📟</span><span class="sidebar-hide">Devices</span></a>\n`;
-    if (roleHasCapability(role, 'patients:write')) main += `<a href="/patients-mgmt" title="Patients" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'pats' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">👥</span><span class="sidebar-hide">Patients</span></a>\n`;
-    if (roleHasCapability(role, 'pairing:write')) main += `<a href="/matching" title="Pairing" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'match' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">⌚</span><span class="sidebar-hide">Pairing</span></a>\n`;
+    if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="อุปกรณ์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}">${navIcon('device')}<span class="sidebar-hide">อุปกรณ์</span></a>\n`;
+    if (roleHasCapability(role, 'patients:write')) main += `<a href="/patients-mgmt" title="ผู้ป่วย" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'pats' ? '' : 'color: var(--text-secondary);'}">${navIcon('patient')}<span class="sidebar-hide">ผู้ป่วย</span></a>\n`;
+    if (roleHasCapability(role, 'pairing:write')) main += `<a href="/matching" title="จับคู่อุปกรณ์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'match' ? '' : 'color: var(--text-secondary);'}">${navIcon('pairing')}<span class="sidebar-hide">จับคู่อุปกรณ์</span></a>\n`;
 
-    if (roleHasCapability(role, 'wards:manage')) main += `<a href="/wards-mgmt" title="Wards" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'wards' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🏥</span><span class="sidebar-hide">Wards</span></a>\n`;
-    if (roleHasCapability(role, 'users:manage:ward') || roleHasCapability(role, 'users:manage:all')) main += `<a href="/users-mgmt" title="Users" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'users' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🛡️</span><span class="sidebar-hide">Users</span></a>\n`;
+    if (roleHasCapability(role, 'wards:manage')) main += `<a href="/wards-mgmt" title="หอผู้ป่วย" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'wards' ? '' : 'color: var(--text-secondary);'}">${navIcon('ward')}<span class="sidebar-hide">หอผู้ป่วย</span></a>\n`;
+    if (roleHasCapability(role, 'users:manage:ward') || roleHasCapability(role, 'users:manage:all')) main += `<a href="/users-mgmt" title="ผู้ใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'users' ? '' : 'color: var(--text-secondary);'}">${navIcon('users')}<span class="sidebar-hide">ผู้ใช้งาน</span></a>\n`;
 
-    alerts += `<a href="/notification-settings" title="Notification" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'notif' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📱</span><span class="sidebar-hide">Notification</span></a>\n`;
+    alerts += `<a href="/notification-settings" title="การแจ้งเตือน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'notif' ? '' : 'color: var(--text-secondary);'}">${navIcon('notify')}<span class="sidebar-hide">การแจ้งเตือน</span></a>\n`;
     
-    if (roleHasCapability(role, 'alerts:settings:write')) alerts += `<a href="/alert-settings" title="Alert Settings" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'alert' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">🔔</span><span class="sidebar-hide">Alert Settings</span></a>\n`;
-    if (roleHasCapability(role, 'alerts:read')) alerts += `<a href="/alert-history" title="Alert History" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'ahist' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📋</span><span class="sidebar-hide">Alert History</span></a>\n`;
+    if (roleHasCapability(role, 'alerts:settings:write')) alerts += `<a href="/alert-settings" title="ตั้งค่าการแจ้งเตือน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'alert' ? '' : 'color: var(--text-secondary);'}">${navIcon('sliders')}<span class="sidebar-hide">ตั้งค่าการแจ้งเตือน</span></a>\n`;
+    if (roleHasCapability(role, 'alerts:read')) alerts += `<a href="/alert-history" title="ประวัติการแจ้งเตือน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'ahist' ? '' : 'color: var(--text-secondary);'}">${navIcon('history')}<span class="sidebar-hide">ประวัติการแจ้งเตือน</span></a>\n`;
     
-    if (roleHasCapability(role, 'audit:read:all') || roleHasCapability(role, 'audit:read:ward')) alerts += `<a href="/audit-log" title="Audit Log" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'audit' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">📜</span><span class="sidebar-hide">Audit Log</span></a>\n`;
+    if (roleHasCapability(role, 'audit:read:all') || roleHasCapability(role, 'audit:read:ward')) alerts += `<a href="/audit-log" title="บันทึกการใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'audit' ? '' : 'color: var(--text-secondary);'}">${navIcon('audit')}<span class="sidebar-hide">บันทึกการใช้งาน</span></a>\n`;
 
-    if (roleHasCapability(role, 'settings:global')) alerts += `<a href="/system-mgmt" title="System" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'system' ? '' : 'color: var(--text-secondary);'}"><span class="nav-icon text-sm">⚙️</span><span class="sidebar-hide">System</span></a>\n`;
+    if (roleHasCapability(role, 'settings:global')) alerts += `<a href="/system-mgmt" title="ระบบ" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'system' ? '' : 'color: var(--text-secondary);'}">${navIcon('system')}<span class="sidebar-hide">ระบบ</span></a>\n`;
 
     return { main, alerts };
 }
@@ -1722,7 +1742,6 @@ function ui(user, active, content, script = "") {
          tailwind.css is a committed build artifact: run "npm run build:css" after
          changing any utility class in this file, or the new class ships unstyled. -->
     <link rel="stylesheet" href="/assets/fonts.css">
-    <link rel="stylesheet" href="/assets/tailwind.css">
     <script src="/assets/chart.umd.js"></script>
     <script src="/assets/html5-qrcode.min.js"></script>
     <style>
@@ -2256,6 +2275,8 @@ function ui(user, active, content, script = "") {
             margin: 0 auto;
             font-size: 1.1rem;
         }
+
+        .nav-icon { flex-shrink: 0; }
 
         /* Theme Toggle Switch - Simple & Compact */
         .theme-toggle-container {
@@ -3596,8 +3617,12 @@ function ui(user, active, content, script = "") {
         #appMain:focus { outline: none; }
 
         /* A single visible focus treatment; several components previously had none. */
+        /* A focus indicator is a WCAG requirement and must stay visible, so this
+           outline carries !important. Without it, Tailwind's .outline-none
+           (specificity 0,1,0) loads later at equal specificity and silently
+           cancels the ring, leaving keyboard users with no focus marker. */
         :focus-visible {
-            outline: 2px solid var(--border-focus);
+            outline: 2px solid var(--border-focus) !important;
             outline-offset: 2px;
             border-radius: 4px;
         }
@@ -3612,7 +3637,7 @@ function ui(user, active, content, script = "") {
         /* Exempt controls whose own geometry is deliberate: dense table row actions,
            and the theme switch (48x26 already clears WCAG 2.5.8 AA at 24x24). */
         table button, td button, th button, .inline-action,
-        .theme-toggle-switch { min-height: 0; }
+        button.theme-toggle-switch { min-height: 0; }
 
         /* Catch-all: any component added later inherits the reduced-motion contract
            without needing its own media query. State changes stay instant, not lost. */
@@ -3625,13 +3650,20 @@ function ui(user, active, content, script = "") {
             }
         }
     </style>
+    <!-- Loaded AFTER the inline <style> on purpose. The Tailwind Play CDN used to
+         inject its stylesheet at runtime, which put it after these rules in the
+         cascade; utilities therefore beat same-specificity app rules. Linking it
+         before the inline block silently flipped that and changed real padding and
+         margins (qs-primary, qs-stepper). Keeping it last preserves the original
+         behaviour. The dark-theme override above still wins: it is !important. -->
+    <link rel="stylesheet" href="/assets/tailwind.css">
 </head>
 <body class="flex flex-col md:flex-row min-h-screen">
     <a href="#appMain" class="skip-link">ข้ามไปยังเนื้อหาหลัก</a>
     <header id="mobileHeader">
         <button id="mobileMenuButton" type="button" onclick="openMobileMenu()" aria-label="เปิดเมนู" aria-controls="sidebar" aria-expanded="false">☰</button>
         <div class="min-w-0 text-center">
-            <p class="font-black italic uppercase truncate" style="color: var(--accent-primary);">Nurse <span style="color: var(--text-primary);">Aid</span></p>
+            <p class="font-extrabold tracking-tight truncate" style="color: var(--accent-primary);">Nurse<span style="color: var(--text-primary);">Aid</span></p>
             <p class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
         </div>
         <button id="mobileThemeButton" type="button" onclick="toggleTheme()" aria-label="สลับโหมดสี" title="สลับโหมดสี">◐</button>
@@ -3640,7 +3672,7 @@ function ui(user, active, content, script = "") {
     <aside id="sidebar" class="p-6 flex flex-col shadow-sm z-50" style="background: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
         <div class="flex items-center justify-between mb-3 gap-2">
             <div class="text-center sidebar-hide min-w-0">
-                <h1 class="text-xl font-black italic uppercase whitespace-nowrap" style="color: var(--accent-primary);">Nurse <span style="color: var(--text-primary);">Aid</span></h1>
+                <h1 class="text-xl font-extrabold tracking-tight whitespace-nowrap" style="color: var(--accent-primary);">Nurse<span style="color: var(--text-primary);">Aid</span></h1>
                 <p class="text-[10px] font-bold uppercase whitespace-nowrap" style="color: var(--text-tertiary); letter-spacing: 0.15em;">Hospital System</p>
             </div>
 
@@ -3665,12 +3697,12 @@ function ui(user, active, content, script = "") {
         </nav>
 
         <div class="sidebar-hide mt-4 pt-4 border-t" style="border-color: var(--border-color);">
-            <p class="text-[10px] font-bold uppercase tracking-widest mb-2 px-2" style="color: var(--text-tertiary);">Alerts</p>
+            <p class="text-[11px] font-bold tracking-wide mb-2 px-2" style="color: var(--text-tertiary);">การแจ้งเตือน</p>
             ${navs.alerts}
         </div>
 
-        <button onclick="logout()" title="Logout" class="nav-link font-bold p-2.5 border-t mt-3 rounded-lg transition-all flex items-center gap-2.5 text-xs" style="color: var(--accent-red); border-color: var(--border-color);">
-            <span class="nav-icon text-sm">🚪</span><span class="sidebar-hide">Logout</span>
+        <button onclick="logout()" title="ออกจากระบบ" class="nav-link font-bold p-2.5 border-t mt-3 rounded-lg transition-all flex items-center gap-2.5 text-xs" style="color: var(--accent-red); border-color: var(--border-color);">
+            ${navIcon('logout')}<span class="sidebar-hide">ออกจากระบบ</span>
         </button>
 
         <div class="app-version sidebar-hide" aria-label="v${APP_VERSION}" title="v${APP_VERSION}">
@@ -5563,14 +5595,14 @@ app.get('/api/patient-trend-24h/:hn', patientTrendHandler);
 app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     <div class="dashboard-topbar flex justify-between items-center mb-3 gap-3">
         <div>
-            <h2 class="dashboard-title text-xl font-black uppercase leading-none" style="color: var(--text-heading);">Patient Dashboard</h2>
-            <p class="dashboard-subtitle text-[10px] font-bold mt-1" style="color: var(--text-tertiary);">INDIVIDUAL MONITORING</p>
+            <h2 class="dashboard-title text-2xl font-bold tracking-tight leading-tight" style="color: var(--text-heading);">มอนิเตอร์ผู้ป่วย</h2>
+            <p class="dashboard-subtitle text-xs font-medium mt-1" style="color: var(--text-secondary);">ติดตามสัญญาณชีพรายบุคคลแบบเรียลไทม์</p>
         </div>
 
         <div class="flex items-center gap-2">
-            ${roleHasCapability(req.user?.role, 'devices:write') ? `<a href="/quick-setup" class="qs-primary" style="font-size:.68rem; padding:.5rem 1rem; border-radius:9999px;"><span aria-hidden="true">🚀</span> เริ่มต้นใช้งาน</a>` : ''}
-            <div id="patient-count" class="dashboard-sync text-[10px] font-bold px-4 py-2 rounded-full font-mono italic shadow-sm" style="background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);">0 Patients</div>
-            <div id="last-sync" class="dashboard-sync text-[10px] font-bold px-4 py-2 rounded-full font-mono italic shadow-sm" style="background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border-color);">🔄 Syncing...</div>
+            ${roleHasCapability(req.user?.role, 'devices:write') ? `<a href="/quick-setup" class="qs-primary" style="font-size:.68rem; padding:.5rem 1rem; border-radius:9999px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:inline-block;vertical-align:-2px;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> เริ่มต้นใช้งาน</a>` : ''}
+            <div id="patient-count" class="dashboard-sync text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm" style="background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);">0 Patients</div>
+            <div id="last-sync" class="dashboard-sync text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm" style="background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border-color);">🔄 Syncing...</div>
         </div>
     </div>
 
@@ -6028,10 +6060,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             const grid = document.getElementById('monitor-grid');
             const globalBanner = document.getElementById('global-alert');
             const patientCountEl = document.getElementById('patient-count');
-            if (patientCountEl) patientCountEl.innerText = (data && data.length ? data.length : 0) + ' Patients';
+            if (patientCountEl) patientCountEl.innerText = 'ผู้ป่วย ' + (data && data.length ? data.length : 0) + ' คน';
 
             if(!data || data.length === 0) {
-                grid.innerHTML = '<p class="col-span-full text-center p-12 italic" style="color: var(--text-tertiary);">ไม่มีข้อมูลคนไข้ในขณะนี้</p>';
+                grid.innerHTML = '<div class="col-span-full flex flex-col items-center justify-center text-center" style="padding:4rem 1.5rem;"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--text-muted);margin-bottom:1rem;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><p style="color:var(--text-primary);font-weight:700;font-size:1rem;margin-bottom:.35rem;">ยังไม่มีผู้ป่วยที่กำลังติดตาม</p><p style="color:var(--text-secondary);font-size:.875rem;max-width:34ch;line-height:1.6;">เมื่อจับคู่อุปกรณ์กับผู้ป่วยแล้ว ข้อมูลสัญญาณชีพจะแสดงที่นี่แบบเรียลไทม์</p></div>';
                 return;
             }
 
@@ -8725,7 +8757,6 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
     <!-- Served locally so the login page still renders on a firewalled ward network.
          /assets is mounted before the auth gate precisely so this page can load. -->
     <link rel="stylesheet" href="/assets/fonts.css">
-    <link rel="stylesheet" href="/assets/tailwind.css">
     <style>
         html, body { min-height: 100%; }
         body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
@@ -8733,6 +8764,8 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
         button, input { min-height: 3rem; touch-action: manipulation; }
         #loginNotice[hidden] { display:none; }
     </style>
+    <!-- Tailwind must load AFTER the inline <style> above. The Tailwind Play CDN used to inject its stylesheet at runtime, i.e. after inline styles, so loading it earlier flips same-specificity cascade rules. -->
+    <link rel="stylesheet" href="/assets/tailwind.css">
 </head>
 <body class="flex items-center justify-center min-h-[100dvh] bg-slate-900 font-['Prompt']">
     <main class="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[2.5rem] w-full max-w-sm shadow-2xl">
