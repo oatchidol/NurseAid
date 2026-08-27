@@ -11139,7 +11139,26 @@ async function startServer() {
     app.listen(PORT, '0.0.0.0', () => console.log('✅ SERVER RUNNING ON PORT ' + PORT));
 }
 
-startServer().catch(err => {
-    console.error('Server startup failed:', err);
-    process.exit(1);
-});
+// Only boot when run directly (`node server.js`), not when imported by tests.
+// Importing the module for unit tests must not start the DB/MQTT stack or the
+// sync timer. The pure helpers below are exported so tests can exercise them
+// without a live server.
+if (require.main === module) {
+    startServer().catch(err => {
+        console.error('Server startup failed:', err);
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    validateAiChatPayload,
+    consumeAiChatRateLimit,
+    summarizeTrendMetric,
+    extractUserReportedVitals,
+    parseHeartRateFromText,
+    classifyAiQuestion,
+    classifyVitalRange,
+    parseSemver,
+    compareSemver,
+    highestVersion
+};
