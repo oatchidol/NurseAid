@@ -3,17 +3,21 @@ name: NurseAid
 description: Ward-console UI for real-time patient alert monitoring and device pairing
 colors:
   ward-blue: "#3b82f6"
+  ward-blue-strong: "#2563eb"
   ward-blue-dark: "#58a6ff"
   ward-blue-light: "#60a5fa"
   status-ok: "#22c55e"
   status-caution: "#eab308"
   status-warning: "#f59e0b"
   status-critical: "#ef4444"
-  status-critical-soft: "#fecaca"
-  status-ok-soft: "#bbf7d0"
+  status-critical-text: "#c81e1e"
+  status-success-text: "#137a39"
+  status-warning-text: "#946005"
+  status-temp-text: "#c2410c"
   priority-high: "#a855f7"
-  priority-medium: "#64748b"
-  priority-low: "#94a3b8"
+  priority-high-text: "#9333ea"
+  priority-medium-text: "#475569"
+  priority-low-text: "#5b6777"
   surface-page: "#f0f4f8"
   surface-card: "#ffffff"
   surface-input: "#f1f5f9"
@@ -21,46 +25,61 @@ colors:
   ink-heading: "#0f172a"
   ink-primary: "#1e293b"
   ink-secondary: "#475569"
-  ink-tertiary: "#94a3b8"
+  ink-tertiary: "#5b6777"
   line-default: "#e2e8f0"
   line-focus: "#3b82f6"
 typography:
-  display:
+  label:
     fontFamily: "'Prompt', sans-serif"
-    fontSize: "1.5rem"
-    fontWeight: 600
-    lineHeight: 1.25
-  title:
+    fontSize: "0.6875rem"
+    fontWeight: 700
+  small:
     fontFamily: "'Prompt', sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 600
-    lineHeight: 1.3
+    fontSize: "0.75rem"
+    fontWeight: 400
   body:
     fontFamily: "'Prompt', sans-serif"
     fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.6
-  label:
+  bodyLarge:
     fontFamily: "'Prompt', sans-serif"
-    fontSize: "0.68rem"
-    fontWeight: 700
-    letterSpacing: "normal"
+    fontSize: "1rem"
+    fontWeight: 400
+  title:
+    fontFamily: "'Prompt', sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 600
+    lineHeight: 1.3
+  display:
+    fontFamily: "'Prompt', sans-serif"
+    fontSize: "1.5rem"
+    fontWeight: 600
+    lineHeight: 1.25
+  vital:
+    fontFamily: "'Prompt', sans-serif"
+    fontSize: "1.875rem"
+    fontWeight: 900
   mono:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-    fontSize: "0.72rem"
+    fontSize: "0.75rem"
     fontWeight: 400
 rounded:
+  xs: "2px"
   sm: "0.5rem"
   md: "0.75rem"
   lg: "1rem"
   xl: "1.25rem"
   pill: "9999px"
 spacing:
-  xs: "0.5rem"
-  sm: "0.75rem"
-  md: "1rem"
-  lg: "1.25rem"
-  xl: "1.75rem"
+  1: "0.25rem"
+  2: "0.5rem"
+  3: "0.75rem"
+  4: "1rem"
+  5: "1.25rem"
+  6: "1.5rem"
+  8: "2rem"
+  10: "2.5rem"
 components:
   button-primary:
     backgroundColor: "{colors.ward-blue}"
@@ -143,7 +162,22 @@ A single blue carries brand/action; a separate, fixed status palette carries cli
 - **Mono** (400, 0.72rem): IDs, timestamps, technical/tabular values — switches out of Prompt so numerals and codes stay unambiguous.
 
 ### Named Rules
-**The Numerals-in-Mono Rule.** Any value staff cross-check against a physical device or wristband (device ID, MAC, bed number, timestamp) renders in the mono stack, not Prompt — ambiguous digit shapes are a real-world matching error, not a style nitpick.
+**The Numerals-in-Mono Rule.** Any value staff cross-check against a physical device or wristband
+(device ID, MAC, bed number, HN, timestamp) renders in `--font-mono`, not Prompt — ambiguous digit
+shapes are a real-world matching error, not a style nitpick.
+
+**The Tabular-Figures Rule.** Any figure compared against another figure — a vital, a threshold, a
+bed or device number, a timestamp — sets `font-variant-numeric: tabular-nums`. Proportional digits
+render two readings of the same length at different widths, which is exactly the comparison being
+made.
+
+**The 11px Floor.** No UI text renders below `--fs-label` (11px). Thai tone marks (ไม้เอก, ไม้โท)
+stack above the baseline and merge into the glyph below roughly that size, so the 10px web
+minimum is not low enough for this product's script. Verified by rendering, not by inspection.
+
+**The Fixed-Scale Rule.** Type is a fixed rem ramp, never `clamp()`/viewport-fluid. Two ward
+screens of different widths must render the same reading at the same size.
+
 
 ## Layout
 
@@ -206,3 +240,66 @@ Consistently rounded, never sharp: most containers use `rounded-xl` (`0.75rem`)�
 - **Don't** repurpose a status color for a non-clinical UI concept (e.g. "new," "featured") even if the hue would otherwise fit.
 - **Don't** add motion beyond small, functional transitions (`0.15s`–`0.3s` ease); no bounce, parallax, or attention-seeking animation on a screen someone monitors for real alerts.
 - **Don't** reword or translate existing Thai UI copy while doing visual work — copy changes are a separate, explicit decision.
+
+
+## Icons
+
+One drawn set, not a font. 24×24 grid, 2px stroke, round caps and joins, masked so every icon
+inherits `currentColor` and therefore themes automatically. Inlined as data URIs so they render
+on a ward network with no outbound access.
+
+Sizes come from a scale that is deliberately **separate from the type ramp** — an icon is not
+text, and sizing one with `font-size` is what let glyph sizes and type sizes drift into a single
+undifferentiated pile:
+
+- `--icon-sm` 14px — inline with label/body text
+- `--icon-md` 18px — nav, buttons, chips
+- `--icon-lg` 24px — panel headers, dialogs
+- `--icon-xl` 40px — empty states
+
+### Named Rules
+**The No-Emoji Rule.** An emoji is not an icon. Its glyph, weight, and colour are whatever font
+the viewer's OS ships, and a colour emoji fights the status palette beside it. PRODUCT.md requires
+every status to pair colour **with** an icon; that icon half cannot be outsourced to a font.
+
+## Text Colour vs. Fill Colour
+
+The single most common accessibility failure in this codebase was using a saturated status hue as
+small text. A hue readable as a **fill** is routinely unreadable as **text** on the same surface.
+
+Every status therefore has two tokens, and they are not interchangeable:
+
+| Meaning | Fill (marks, borders, ≥3:1) | Text / white-bearing fill (≥4.5:1) |
+|---|---|---|
+| Critical | `--accent-red` | `--status-critical-text` |
+| Success | `--accent-green` | `--status-success-text` |
+| Caution | `--accent-yellow` | `--status-warning-text` |
+| Temperature | `--accent-amber` | `--status-temp-text` |
+| Action / brand | `--accent-primary` | `--accent-primary-strong` |
+| Priority high | `--priority-high` | `--priority-high-text` |
+
+### Named Rules
+**Tune against the worst surface, not the best.** The original text tokens were tuned against
+`--bg-card` (#ffffff) and then used on `--bg-primary` (#f0f4f8), where they measured 4.37–4.54 and
+missed AA. Every value is now verified against the darkest light surface it can land on.
+
+**Never `color: white` on an accent fill.** Accents are dark in the light theme and *light* in the
+dark theme, so literal white measures ~2.5:1 there. Use `--text-inverse`, which is `#ffffff` in
+light and `#0d1117` in dark and is correct in both.
+
+**Tint a badge from its own text colour.** A badge fill written as
+`color-mix(in srgb, <its text token> 15%, transparent)` keeps its contrast ratio in both themes
+automatically. A fixed hex for either half breaks the other theme.
+
+## Documented Deviations
+
+Two patterns here would be flagged as decorative side-borders by a generic rule, and are kept
+deliberately because they are the opposite of decorative:
+
+- `#monitor-grid > .card` carries a 4px leading-edge border in the compact layout. That border
+  **is** the clinical-state signal (green normal / amber warning / red critical), moved from the
+  top edge because a vertical stripe survives a narrow card better than a horizontal one.
+- `.drop-left` / `.drop-right` / `.drop-before` / `.drop-after` are drag-insertion feedback.
+
+Shadow and overlay values use raw `rgba(0,0,0,…)` by design — they are opacity over an unknown
+surface, not palette colours, and are enumerated in the Elevation & Depth vocabulary above.

@@ -273,10 +273,10 @@ function roleHasCapability(role, cap) { return ROLE_CAPABILITIES[role]?.has(cap)
 function accessDeniedPage(req) {
     return ui(req.user, 'Access Denied', `
         <div class="empty-state" style="padding: 40px; text-align: center;">
-            <div class="empty-icon" style="color:var(--danger); font-size: 3rem; margin-bottom: 20px;">⚠️</div>
+            <div class="empty-icon" style="color:var(--danger); font-size: var(--icon-xl); margin-bottom: 20px;"><span class="ic ic-warning" aria-hidden="true"></span></div>
             <h2>ไม่มีสิทธิ์เข้าถึง</h2>
             <p>You do not have permission to access this page.</p>
-            <a href="/" class="btn-primary" style="margin-top:20px; display:inline-block; padding: 10px 20px; border-radius: 8px; text-decoration: none;">Return to Dashboard</a>
+            <a href="/" class="btn-primary" style="margin-top:20px; display:inline-block; padding: 10px 20px; border-radius: var(--r-sm); text-decoration: none;">Return to Dashboard</a>
         </div>
     `, '');
 }
@@ -1769,12 +1769,12 @@ function ui(user, active, content, script = "") {
 
             --text-primary: #1e293b;
             --text-secondary: #475569;
-            --text-tertiary: #64748b;
+            --text-tertiary: #5b6777;   /* AA on --bg-card-hover (5.50) and --bg-input (5.25) */
             --text-muted: #94a3b8;
             --text-inverse: #ffffff;
             --text-badge: #475569;
             --text-vital: #334155;
-            --text-vital-muted: #64748b;
+            --text-vital-muted: #5b6777; /* vital labels sit on --bg-input; #64748b was 4.34 */
             --text-heading: #0f172a;
 
             --border-color: #e2e8f0;
@@ -1806,9 +1806,72 @@ function ui(user, active, content, script = "") {
                hue readable as a fill is often unreadable as small text on the same
                surface. Each value is tuned to clear WCAG AA against --bg-card in its
                own theme. */
-            --status-critical-text: #dc2626;
-            --status-success-text: #15803d;
-            --status-warning-text: #a16207;
+            /* Retuned 2026-08-27: these were tuned against --bg-card (#ffffff) only, but are
+               also used on --bg-primary (#f0f4f8) and --bg-input (#f1f5f9), where the old
+               values measured 4.37 / 4.54 / 4.45 and missed AA. Each value below clears
+               4.5:1 on the WORST light surface, and also clears 4.5:1 with white text on it
+               when used as a fill. */
+            --status-critical-text: #c81e1e;   /* worst 5.19 · white-on-it 5.74 */
+            --status-success-text: #137a39;    /* worst 4.91 · white-on-it 5.43 */
+            --status-warning-text: #946005;    /* worst 4.83 · white-on-it 5.34 */
+            --status-temp-text: #c2410c;       /* worst 4.69 · Body Temperature readings */
+            --priority-high-text: #9333ea;     /* worst 4.87 · priority marker AS TEXT */
+            --priority-medium-text: #475569;   /* worst 6.92 */
+            --priority-low-text: #5b6777;      /* worst 5.25 */
+
+            /* --accent-primary (#3b82f6) is correct for borders, focus rings, icons and chart
+               lines, where the 3:1 non-text threshold applies. It is NOT safe as small text
+               (3.33) or as a fill behind white text (3.68). This is its text-safe companion;
+               the One Accent Rule holds because it is the same hue, one step darker. */
+            --accent-primary-strong: #2563eb;  /* worst 4.68 · white-on-it 5.17 */
+
+            /* ── Structural scales ───────────────────────────────────────────
+               Theme-independent: type, icon, radius and spacing carry no colour,
+               so they are defined once here and are NOT repeated in the dark
+               block. See .impeccable/REDESIGN-SPEC.md for the role of each step
+               and the mapping from the literals these replace. */
+
+            /* Type ramp. --fs-label is the floor: 11px clears the 10px product
+               minimum, and Thai diacritics (ไม้เอก / ไม้โท) stack above the
+               baseline and merge into the glyph below roughly that size. */
+            --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+            --fs-label: 0.6875rem;   /* 11px  chips, badges, nav + field labels, column heads */
+            --fs-sm: 0.75rem;        /* 12px  secondary UI text, field labels, small controls,
+                                        and the mono stack for device IDs / MAC / timestamps */
+            --fs-body: 0.875rem;     /* 14px  default UI text, table cells, inputs */
+            --fs-body-lg: 1rem;      /* 16px  emphasised body, modal body, prose */
+            --fs-title: 1.125rem;    /* 18px  card headers, modal titles, mobile page title */
+            --fs-display: 1.5rem;    /* 24px  page titles */
+            --fs-vital: 1.875rem;    /* 30px  vital-sign readouts (matches text-3xl) */
+
+            /* Icon sizing. Deliberately separate from the type ramp: an icon is
+               not text, and sizing one with font-size is what let glyph sizes and
+               type sizes drift into the same undifferentiated pile. */
+            --icon-sm: 14px;         /* inline with label/body text */
+            --icon-md: 18px;         /* nav, buttons, chips */
+            --icon-lg: 24px;         /* panel headers, dialogs */
+            --icon-xl: 40px;         /* empty states */
+
+            /* Radius. --r-xs exists only for progress-track hairlines, which are
+               3px tall; any card radius applied to them would round them away. */
+            --r-xs: 2px;
+            --r-sm: 0.5rem;          /* 8px   chips, badges, small controls */
+            --r-md: 0.75rem;         /* 12px  buttons, inputs, small cards */
+            --r-lg: 1rem;            /* 16px  cards, panels */
+            --r-xl: 1.25rem;         /* 20px  modals, sheets, side panel */
+            --r-pill: 9999px;        /* pills, status chips, avatars */
+
+            /* Spacing, 4px base. The 4-unit base keeps the middle steps that an
+               8-only scale has to round away. */
+            --sp-1: 0.25rem;   /* 4px  */
+            --sp-2: 0.5rem;    /* 8px  */
+            --sp-3: 0.75rem;   /* 12px */
+            --sp-4: 1rem;      /* 16px */
+            --sp-5: 1.25rem;   /* 20px */
+            --sp-6: 1.5rem;    /* 24px */
+            --sp-8: 2rem;      /* 32px */
+            --sp-10: 2.5rem;   /* 40px */
         }
 
         [data-theme="dark"] {
@@ -1836,7 +1899,7 @@ function ui(user, active, content, script = "") {
             --text-primary: #f0f6fc;
             --text-secondary: #c9d1d9;
             --text-tertiary: #8b949e;
-            --text-muted: #7d8590;
+            --text-muted: #949da7;      /* was #7d8590 = 4.34 on --bg-input */
             --text-inverse: #0d1117;
             --text-badge: #8b949e;
             --text-vital: #f0f6fc;
@@ -1869,10 +1932,84 @@ function ui(user, active, content, script = "") {
             --bg-card-paired: #0d1a2a;
             --border-card-paired: #1c3a5f;
 
-            --status-critical-text: #f85149;
-            --status-success-text: #3fb950;
-            --status-warning-text: #d29922;
+            --status-critical-text: #f85149;   /* worst 4.83 on dark surfaces */
+            --status-success-text: #3fb950;    /* worst 6.37 */
+            --status-warning-text: #d29922;    /* worst 6.41 */
+            --status-temp-text: #ffa657;       /* worst 8.36 */
+            --priority-high-text: #c084fc;     /* worst 6.12 */
+            --priority-medium-text: #b6bec9;   /* worst 7.4 on dark surfaces */
+            --priority-low-text: #9aa4b0;      /* worst 5.6 */
+
+            /* Dark accents are LIGHT, so text on them must be --text-inverse (#0d1117),
+               never white. White on #58a6ff measures 2.53; #0d1117 on it measures 7.49. */
+            --accent-primary-strong: #58a6ff;  /* worst 6.41 · --text-inverse on it 7.49 */
         }
+
+
+        /* ── Browser surfaces ────────────────────────────────────────────────
+           The parts of the page nobody draws still carry the design. Left alone
+           these ship with UA defaults that belong to no design system and, in the
+           dark theme, are frequently unreadable. */
+        ::selection { background: color-mix(in srgb, var(--accent-primary-strong) 28%, transparent); color: var(--text-heading); }
+        input, textarea, select, [contenteditable] { caret-color: var(--accent-primary-strong); }
+        * { scrollbar-color: var(--bg-scrollbar) transparent; scrollbar-width: thin; }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--bg-scrollbar); border-radius: var(--r-pill); border: 2px solid transparent; background-clip: content-box; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); background-clip: content-box; }
+        a { text-underline-offset: 0.18em; }
+
+        /* Any figure a nurse compares against another figure - a vital, a threshold, a bed or
+           device number, a timestamp - is tabular. Proportional digits make two readings of the
+           same length render at different widths, which is exactly the comparison being made. */
+        .font-mono, [style*="--font-mono"], table, .qs-list-item-sub,
+        #monitor-grid .grid.grid-cols-3 p, .range-field input, .range-normal-preview strong,
+        .range-midpoint strong, .range-patient-value strong {
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum" 1;
+        }
+
+        /* ── Icon set ────────────────────────────────────────────────────────
+           124 Unicode glyphs and emoji used to stand in for icons here. An emoji is
+           whatever the viewer's OS ships: different glyph, different weight, and often a
+           fixed colour that fights the status palette beside it. PRODUCT.md requires every
+           status to pair colour WITH an icon, so the icon half cannot be outsourced to a
+           font. These are drawn on one 24x24 grid at one stroke weight, masked so they
+           inherit currentColor, and inlined so they still render with no network. */
+        .ic { display:inline-block; width:1em; height:1em; vertical-align:-0.125em; flex:none;
+              background-color:currentColor;
+              -webkit-mask:var(--ic) center/contain no-repeat; mask:var(--ic) center/contain no-repeat; }
+        .ic-warning { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10.3%203.9%201.8%2018a2%202%200%200%200%201.7%203h17a2%202%200%200%200%201.7-3L13.7%203.9a2%202%200%200%200-3.4%200z%22%2F%3E%3Cpath%20d%3D%22M12%209v4M12%2017h.01%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-check { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%206%209%2017l-5-5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-close { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M18%206%206%2018M6%206l12%2012%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-arrow-r { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012h14M12%205l7%207-7%207%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-arrow-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M19%2012H5M12%2019l-7-7%207-7%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-chevron-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15%2018l-6-6%206-6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-refresh { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2012a9%209%200%201%201-3-6.7L21%208%22%2F%3E%3Cpath%20d%3D%22M21%203v5h-5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-download { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2015v4a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2v-4M7%2010l5%205%205-5M12%2015V3%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-gear { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%2F%3E%3Cpath%20d%3D%22M19.4%2015a1.7%201.7%200%200%200%20.3%201.9l.1.1a2%202%200%201%201-2.8%202.8l-.1-.1a1.7%201.7%200%200%200-1.9-.3%201.7%201.7%200%200%200-1%201.5V21a2%202%200%201%201-4%200v-.1A1.7%201.7%200%200%200%209%2019.4a1.7%201.7%200%200%200-1.9.3l-.1.1a2%202%200%201%201-2.8-2.8l.1-.1a1.7%201.7%200%200%200%20.3-1.9%201.7%201.7%200%200%200-1.5-1H3a2%202%200%201%201%200-4h.1A1.7%201.7%200%200%200%204.6%209a1.7%201.7%200%200%200-.3-1.9l-.1-.1a2%202%200%201%201%202.8-2.8l.1.1a1.7%201.7%200%200%200%201.9.3H9a1.7%201.7%200%200%200%201-1.5V3a2%202%200%201%201%204%200v.1a1.7%201.7%200%200%200%201%201.5%201.7%201.7%200%200%200%201.9-.3l.1-.1a2%202%200%201%201%202.8%202.8l-.1.1a1.7%201.7%200%200%200-.3%201.9V9a1.7%201.7%200%200%200%201.5%201H21a2%202%200%201%201%200%204h-.1a1.7%201.7%200%200%200-1.5%201z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-sound { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M11%205%206%209H2v6h4l5%204V5z%22%2F%3E%3Cpath%20d%3D%22M15.5%208.5a5%205%200%200%201%200%207M19%205a9%209%200%200%201%200%2014%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-alert { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%208a6%206%200%200%201%2012%200c0%207%203%209%203%209H3s3-2%203-9%22%2F%3E%3Cpath%20d%3D%22M10.3%2021a2%202%200%200%200%203.4%200%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-heart { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20.8%204.6a5.5%205.5%200%200%200-7.8%200L12%205.7l-1-1.1a5.5%205.5%200%200%200-7.8%207.8l1%201.1L12%2021.2l7.8-7.7%201-1.1a5.5%205.5%200%200%200%200-7.8z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-thermo { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M14%2014.8V4a2%202%200%201%200-4%200v10.8a4%204%200%201%200%204%200z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-droplet { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%202.7%206.3%208.4a8%208%200%201%200%2011.4%200z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-signal { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012.5a7%207%200%200%201%200-9M19%203.5a7%207%200%200%201%200%209M8%2010a3%203%200%200%201%200-4M16%206a3%203%200%200%201%200%204%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%228%22%20r%3D%221%22%2F%3E%3Cpath%20d%3D%22M12%209v12%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-battery { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222%22%20y%3D%227%22%20width%3D%2216%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M22%2011v2%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-camera { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%209a2%202%200%200%201%202-2h1.9l1-1.5A2%202%200%200%201%209.6%204h4.8a2%202%200%200%201%201.7.9l1%201.6H19a2%202%200%200%201%202%202v9a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%223%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-search { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2211%22%20cy%3D%2211%22%20r%3D%227%22%2F%3E%3Cpath%20d%3D%22m20%2020-3.5-3.5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-key { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%227.5%22%20cy%3D%2215.5%22%20r%3D%224.5%22%2F%3E%3Cpath%20d%3D%22m10.7%2012.3%209.3-9.3M17%206l2.5%202.5M14.5%208.5%2017%2011%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-clipboard { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%228%22%20y%3D%222%22%20width%3D%228%22%20height%3D%224%22%20rx%3D%221%22%2F%3E%3Cpath%20d%3D%22M16%204h2a2%202%200%200%201%202%202v14a2%202%200%200%201-2%202H6a2%202%200%200%201-2-2V6a2%202%200%200%201%202-2h2%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-link { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10%2013a5%205%200%200%200%207.5.5l3-3A5%205%200%200%200%2013.5%203.5l-1.7%201.7%22%2F%3E%3Cpath%20d%3D%22M14%2011a5%205%200%200%200-7.5-.5l-3%203A5%205%200%200%200%2010.5%2020.5l1.7-1.7%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-plus { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%205v14M5%2012h14%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-edit { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%2020h9%22%2F%3E%3Cpath%20d%3D%22M16.5%203.5a2.1%202.1%200%200%201%203%203L7%2019l-4%201%201-4z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-person { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%2021v-2a4%204%200%200%200-4-4H8a4%204%200%200%200-4%204v2%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%227%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-menu { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%206h18M3%2012h18M3%2018h18%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-sparkle { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v4M12%2017v4M3%2012h4M17%2012h4M6.2%206.2%209%209M15%2015l2.8%202.8M6.2%2017.8%209%2015M15%209l2.8-2.8%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-target { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%229%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%225%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-bulb { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018h6M10%2022h4%22%2F%3E%3Cpath%20d%3D%22M12%202a7%207%200%200%200-4%2012.7V17h8v-2.3A7%207%200%200%200%2012%202z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-hospital { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2021h18M5%2021V7l7-4%207%204v14%22%2F%3E%3Cpath%20d%3D%22M12%209v6M9%2012h6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-watch { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22%2F%3E%3Cpath%20d%3D%22M9%203h6l.5%203M9%2021h6l.5-3M12%2010v2.5l1.5%201%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }
 
         /*
          * Dark-theme override for hard-coded Tailwind palette utilities.
@@ -1884,12 +2021,38 @@ function ui(user, active, content, script = "") {
          * night-shift dark mode renders correctly. No markup or class names change.
          *
          * Specificity: [data-theme="dark"] .X (0,2,0) beats Tailwind's .X (0,1,0);
-         * !important is added anyway because the Tailwind Play CDN injects its
-         * stylesheet at runtime.
+         * !important is added anyway because tailwind.css is <link>ed AFTER this
+         * inline block (see the comment on that <link> for why that order is load-
+         * bearing), so utilities win same-specificity ties on source order.
+         *
+         * NOTE: the Play CDN this originally guarded against is gone — everything
+         * is served from /assets now. The link order above is the reason today.
+         *
+         * Tailwind VARIANTS still escape these rules: Tailwind emits
+         * a selector like .hover(backslash-colon)bg-slate-50:hover, which the plain
+         * .bg-slate-50 rule never matches. Variants
+         * are covered explicitly below; add to that list, not to this one.
          */
 
         /* Light neutral surfaces -> dark surface tokens */
         [data-theme="dark"] .bg-slate-50 { background-color: var(--bg-card) !important; }
+        .audit-act-login  { color: var(--status-success-text); }
+        .audit-act-delete { color: var(--status-critical-text); }
+        .audit-act-create { color: var(--accent-primary-strong); }
+        .audit-act-other  { color: var(--text-secondary); }
+        /* Tailwind VARIANTS emit their own selectors (.hover\:bg-slate-50:hover), which the
+           plain .bg-slate-50 rules above never match. Untreated, hovering a table row in the
+           dark theme painted it light while the text stayed light — 1.04:1 on /audit-log. */
+        [data-theme="dark"] .hover\\:bg-slate-50:hover { background-color: var(--bg-card-hover) !important; }
+        [data-theme="dark"] .hover\\:bg-slate-200:hover { background-color: var(--bg-card-hover) !important; }
+        [data-theme="dark"] .hover\\:bg-slate-300:hover { background-color: var(--bg-card-hover) !important; }
+        [data-theme="dark"] .hover\\:bg-slate-900:hover { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .hover\\:bg-blue-700:hover,
+        [data-theme="dark"] .active\\:bg-blue-700:active { background-color: var(--accent-primary-light) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .hover\\:text-red-800:hover { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .hover\\:text-gray-600:hover { color: var(--text-secondary) !important; }
+        [data-theme="dark"] .hover\\:text-blue-600:hover,
+        [data-theme="dark"] .hover\\:text-blue-400:hover { color: var(--accent-primary-strong) !important; }
         [data-theme="dark"] .bg-slate-100 { background-color: var(--bg-input) !important; }
         [data-theme="dark"] .bg-slate-200 { background-color: var(--bg-input) !important; }
         [data-theme="dark"] .bg-slate-300 { background-color: var(--bg-card-hover) !important; }
@@ -1899,10 +2062,10 @@ function ui(user, active, content, script = "") {
 
         /* Already-dark neutral backgrounds (button-like on light theme): keep them
          * visible on a dark page by mapping to the accent-primary button color. */
-        [data-theme="dark"] .bg-slate-800 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-slate-900 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-gray-700 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-gray-800 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-slate-800 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-slate-900 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-gray-700 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-gray-800 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
 
         /* Neutral text */
         [data-theme="dark"] .text-slate-800 { color: var(--text-primary) !important; }
@@ -1920,32 +2083,32 @@ function ui(user, active, content, script = "") {
         [data-theme="dark"] .border-slate-50 { border-color: var(--border-color) !important; }
 
         /* Semantic status text (hue preserved via dark accent tokens) */
-        [data-theme="dark"] .text-red-400 { color: var(--accent-red) !important; }
-        [data-theme="dark"] .text-red-500 { color: var(--accent-red) !important; }
-        [data-theme="dark"] .text-red-600 { color: var(--accent-red) !important; }
-        [data-theme="dark"] .text-red-700 { color: var(--accent-red) !important; }
-        [data-theme="dark"] .text-red-800 { color: var(--accent-red) !important; }
-        [data-theme="dark"] .text-green-500 { color: var(--accent-green) !important; }
-        [data-theme="dark"] .text-green-600 { color: var(--accent-green) !important; }
-        [data-theme="dark"] .text-green-700 { color: var(--accent-green) !important; }
-        [data-theme="dark"] .text-green-800 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-red-400 { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .text-red-500 { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .text-red-600 { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .text-red-700 { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .text-red-800 { color: var(--status-critical-text) !important; }
+        [data-theme="dark"] .text-green-500 { color: var(--status-success-text) !important; }
+        [data-theme="dark"] .text-green-600 { color: var(--status-success-text) !important; }
+        [data-theme="dark"] .text-green-700 { color: var(--status-success-text) !important; }
+        [data-theme="dark"] .text-green-800 { color: var(--status-success-text) !important; }
         [data-theme="dark"] .text-amber-500 { color: var(--accent-amber) !important; }
         [data-theme="dark"] .text-amber-800 { color: var(--accent-amber) !important; }
-        [data-theme="dark"] .text-blue-400 { color: var(--accent-primary) !important; }
-        [data-theme="dark"] .text-blue-500 { color: var(--accent-primary) !important; }
-        [data-theme="dark"] .text-blue-600 { color: var(--accent-primary) !important; }
-        [data-theme="dark"] .text-blue-800 { color: var(--accent-primary) !important; }
+        [data-theme="dark"] .text-blue-400 { color: var(--accent-primary-strong) !important; }
+        [data-theme="dark"] .text-blue-500 { color: var(--accent-primary-strong) !important; }
+        [data-theme="dark"] .text-blue-600 { color: var(--accent-primary-strong) !important; }
+        [data-theme="dark"] .text-blue-800 { color: var(--accent-primary-strong) !important; }
         [data-theme="dark"] .text-purple-700 { color: var(--accent-secondary) !important; }
-        [data-theme="dark"] .text-yellow-700 { color: var(--accent-yellow) !important; }
-        [data-theme="dark"] .text-emerald-600 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-yellow-700 { color: var(--status-warning-text) !important; }
+        [data-theme="dark"] .text-emerald-600 { color: var(--status-success-text) !important; }
 
         /* Saturated status button backgrounds (hue preserved) */
         [data-theme="dark"] .bg-red-400 { background-color: var(--accent-red) !important; }
         [data-theme="dark"] .bg-red-600 { background-color: var(--accent-red) !important; }
         [data-theme="dark"] .bg-green-500 { background-color: var(--accent-green) !important; }
         [data-theme="dark"] .bg-green-600 { background-color: var(--accent-green) !important; }
-        [data-theme="dark"] .bg-blue-600 { background-color: var(--accent-primary) !important; }
-        [data-theme="dark"] .bg-blue-700 { background-color: var(--accent-primary) !important; }
+        [data-theme="dark"] .bg-blue-600 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }  /* dark accent is LIGHT: white text on it is 2.53 */
+        [data-theme="dark"] .bg-blue-700 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }  /* dark accent is LIGHT: white text on it is 2.53 */
 
         /* Pale status tints -> low-alpha tints of the same hue */
         [data-theme="dark"] .bg-red-50 { background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important; }
@@ -2065,7 +2228,7 @@ function ui(user, active, content, script = "") {
             padding-top: 0.75rem;
             border-top: 1px solid var(--border-color);
             color: var(--text-tertiary);
-            font-size: 0.55rem;
+            font-size: var(--fs-label);
             font-weight: 600;
             letter-spacing: 0.08em;
             line-height: 1;
@@ -2079,11 +2242,11 @@ function ui(user, active, content, script = "") {
             min-height: 1.25rem;
             padding: 0.2rem 0.45rem;
             border: 1px solid var(--border-color);
-            border-radius: 999px;
+            border-radius: var(--r-pill);
             background: var(--bg-badge);
             color: var(--text-secondary);
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 0.6rem;
+            font-family: var(--font-mono);
+            font-size: var(--fs-label);
             font-weight: 700;
             letter-spacing: 0.02em;
             text-transform: none;
@@ -2187,28 +2350,28 @@ function ui(user, active, content, script = "") {
             transition: all 0.3s ease;
         }
 
-        .critical-banner { background: var(--accent-red); color: white; font-weight: 900; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; border-radius: 6px; }
-        .warning-banner { background: #eab308; color: #713f12; font-weight: 900; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; border-radius: 6px; }
+        .critical-banner { background: var(--status-critical-text); color: var(--text-inverse); font-weight: 900; text-align: center; padding: 6px; font-size: var(--fs-sm); letter-spacing: 1px; margin-bottom: 10px; border-radius: var(--r-sm); }
+        .warning-banner { background: var(--status-warning-text); color: var(--text-inverse); font-weight: 900; text-align: center; padding: 6px; font-size: var(--fs-sm); letter-spacing: 1px; margin-bottom: 10px; border-radius: var(--r-sm); }
 
-        .nav-active { background: var(--accent-primary); color: var(--text-inverse); border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3); }
+        .nav-active { background: var(--accent-primary-strong); color: var(--text-inverse); border-radius: var(--r-md); box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3); }
         .modal { display:none; position:fixed; inset:0; z-index:2100; align-items:center; justify-content:center; padding:1rem; backdrop-filter:blur(6px); overscroll-behavior:contain; }
         .modal.is-open { display:flex; }
-        .modal-card { width:100%; max-width:28rem; max-height:calc(100dvh - 2rem); overflow-y:auto; border:1px solid var(--border-color); border-radius:1.5rem; background:var(--bg-card); box-shadow:0 24px 70px rgba(0,0,0,.35); transform:translateY(10px) scale(.98); transition:transform .2s ease, opacity .2s ease; }
+        .modal-card { width:100%; max-width:28rem; max-height:calc(100dvh - 2rem); overflow-y:auto; border:1px solid var(--border-color); border-radius: var(--r-xl); background:var(--bg-card); box-shadow:0 24px 70px rgba(0,0,0,.35); transform:translateY(10px) scale(.98); transition:transform .2s ease, opacity .2s ease; }
         .modal.is-open .modal-card { transform:translateY(0) scale(1); }
-        .dialog-icon { display:none; width:3rem; height:3rem; flex:0 0 auto; align-items:center; justify-content:center; border-radius:1rem; font-size:1.35rem; }
+        .dialog-icon { display:none; width:3rem; height:3rem; flex:0 0 auto; align-items:center; justify-content:center; border-radius: var(--r-lg); font-size: var(--icon-lg); }
         .modal--notice .dialog-icon { display:inline-flex; }
         .modal--info .dialog-icon { color:#2563eb; background:rgba(59,130,246,.14); }
         .modal--success .dialog-icon { color:var(--status-success-text); background:rgba(34,197,94,.14); }
         .modal--warning .dialog-icon { color:var(--status-warning-text); background:rgba(234,179,8,.16); }
         .modal--error .dialog-icon, .modal--danger .dialog-icon { color:var(--status-critical-text); background:rgba(239,68,68,.14); }
         .modal--danger #modalSubmit { background:var(--accent-red) !important; }
-        .dialog-note { border:1px solid rgba(239,68,68,.28); border-radius:1rem; padding:.9rem 1rem; background:rgba(239,68,68,.08); color:var(--text-secondary); }
-        .dialog-note strong { color:var(--accent-red); }
+        .dialog-note { border:1px solid rgba(239,68,68,.28); border-radius: var(--r-lg); padding:.9rem 1rem; background:rgba(239,68,68,.08); color:var(--text-secondary); }
+        .dialog-note strong { color:var(--status-critical-text); }
         .modal-button:focus-visible { outline:3px solid rgba(59,130,246,.42); outline-offset:2px; }
         .modal-button:disabled { cursor:wait; opacity:.7; }
         @media (prefers-reduced-motion:reduce) { .modal, .modal-card { transition:none !important; } }
         .card {
-            border-radius: 1.25rem;
+            border-radius: var(--r-xl);
             border: 1px solid var(--border-card);
             background: var(--bg-card);
             box-shadow: var(--shadow-md);
@@ -2219,15 +2382,23 @@ function ui(user, active, content, script = "") {
             border-color: var(--border-strong);
         }
         th {
-            font-size: 0.7rem;
+            font-size: var(--fs-label);
             text-transform: uppercase;
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
         }
-        td { padding: 12px; border-bottom: 1px solid var(--border-light); font-size: 0.85rem; }
+        td { padding: 12px; border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
         .admin-only { display: none !important; }
         body.is-admin .admin-only { display: block !important; }
+        /* A ward list is scanned vertically, so every card must present its vitals at the same
+           y-offset. Thai names run long (and wrap), which otherwise made each row ragged and
+           forced the eye to re-find the numbers on every card. Reserving two lines of identity
+           keeps the vital row on a shared baseline whether the name wraps or not. */
+        #monitor-grid .card > div:first-child { min-height: 3.25rem; }
+        #monitor-grid .card { display: flex; flex-direction: column; }
+        #monitor-grid .card > div:last-child { margin-top: auto; }
+
         .priority-editable { display: none !important; }
         body.can-prioritize .priority-editable { display: inline-flex !important; }
 
@@ -2273,7 +2444,7 @@ function ui(user, active, content, script = "") {
 
         #sidebar.collapsed .nav-icon {
             margin: 0 auto;
-            font-size: 1.1rem;
+            font-size: var(--icon-md);
         }
 
         .nav-icon { flex-shrink: 0; }
@@ -2309,7 +2480,7 @@ function ui(user, active, content, script = "") {
             padding: 2px;
             margin: 0;
             border: 1px solid var(--border-color);
-            border-radius: 0.7rem;
+            border-radius: var(--r-md);
             background: var(--bg-input);
             cursor: pointer;
             font-family: inherit;
@@ -2322,8 +2493,8 @@ function ui(user, active, content, script = "") {
             justify-content: center;
             gap: 0.3rem;
             padding: 0.3rem 0;
-            border-radius: 0.55rem;
-            font-size: 0.65rem;
+            border-radius: var(--r-sm);
+            font-size: var(--fs-label);
             font-weight: 700;
             white-space: nowrap;
             color: var(--text-tertiary);
@@ -2376,7 +2547,7 @@ function ui(user, active, content, script = "") {
             border: 1px solid var(--border-color);
         }
         #sidebarToggle:hover {
-            background: var(--accent-primary);
+            background: var(--accent-primary-strong);
             color: var(--text-inverse);
             border-color: var(--accent-primary);
         }
@@ -2487,11 +2658,11 @@ function ui(user, active, content, script = "") {
                 width: 2.75rem;
                 height: 2.75rem;
                 flex: 0 0 2.75rem;
-                border-radius: 0.75rem;
+                border-radius: var(--r-md);
                 background: var(--bg-badge);
                 color: var(--text-primary);
                 border: 1px solid var(--border-color);
-                font-size: 1.2rem;
+                font-size: var(--icon-md);
             }
 
             /* Show only the active theme's icon, same rule shape as the sidebar
@@ -2518,7 +2689,7 @@ function ui(user, active, content, script = "") {
             }
 
             #appMain > h2, #appMain > div > h2 {
-                font-size: 1.25rem !important;
+                font-size: var(--fs-title) !important;
                 margin-bottom: 1.25rem !important;
             }
 
@@ -2527,10 +2698,10 @@ function ui(user, active, content, script = "") {
             #appMain .p-8 { padding: 1rem !important; }
             #appMain .p-6 { padding: 1rem !important; }
 
-            .card { border-radius: 1rem; }
+            .card { border-radius: var(--r-lg); }
 
             .card:has(> table) {
-                border-radius: 1rem;
+                border-radius: var(--r-lg);
             }
 
             .card > table, .card table {
@@ -2544,7 +2715,7 @@ function ui(user, active, content, script = "") {
 
             input, select, textarea {
                 max-width: 100%;
-                font-size: 16px !important;
+                font-size: var(--fs-body-lg) !important;
             }
 
             .modal {
@@ -2557,7 +2728,7 @@ function ui(user, active, content, script = "") {
                 max-height: calc(100dvh - 1.5rem - env(safe-area-inset-bottom));
                 overflow-y: auto;
                 padding: 1.25rem !important;
-                border-radius: 1.25rem !important;
+                border-radius: var(--r-xl) !important;
             }
 
             #modalTitle { margin-bottom: 1rem !important; }
@@ -2600,7 +2771,7 @@ function ui(user, active, content, script = "") {
             }
 
             #monitor-grid .grid.grid-cols-3 p.text-3xl {
-                font-size: clamp(1.25rem, 7vw, 1.55rem) !important;
+                font-size: var(--fs-display) !important;
             }
 
             .theme-toggle-container { margin-bottom: 0.5rem; }
@@ -2629,7 +2800,7 @@ function ui(user, active, content, script = "") {
             overflow: hidden;
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 1.5rem;
+            border-radius: var(--r-xl);
             color: var(--text-primary);
         }
         #sidePanel.active { right: 1rem; }
@@ -2645,24 +2816,24 @@ function ui(user, active, content, script = "") {
         }
 
         .dashboard-title {
-            font-size: 1.15rem !important;
+            font-size: var(--fs-title) !important;
             letter-spacing: 0.02em;
         }
 
         .dashboard-subtitle {
-            font-size: 0.58rem !important;
+            font-size: var(--fs-label) !important;
         }
 
         .dashboard-sync {
             padding: 0.45rem 0.8rem !important;
-            font-size: 0.62rem !important;
+            font-size: var(--fs-label) !important;
         }
 
         #global-alert {
             padding: 0.55rem 0.75rem !important;
             margin-bottom: 0.75rem !important;
-            border-radius: 0.9rem !important;
-            font-size: 0.9rem !important;
+            border-radius: var(--r-lg) !important;
+            font-size: var(--fs-body) !important;
             line-height: 1.1 !important;
         }
 
@@ -2685,23 +2856,16 @@ function ui(user, active, content, script = "") {
             }
         }
 
+        /* DELIBERATE side border. The generic rule against thick side borders targets
+           DECORATIVE stripes; this one is the opposite - it is the card's clinical-state signal
+           (green normal / amber warning / red critical), moved from the top edge to the leading
+           edge in this layout because a vertical stripe survives a narrow card better than a
+           horizontal one. The drop-* rules below are drag-insertion feedback, also functional. */
         #monitor-grid > .card {
             padding: 0.75rem !important;
             border-top-width: 0 !important;
             border-left-width: 4px !important;
-            border-radius: 1rem !important;
-        }
-
-        .priority-badge {
-            font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
-            text-transform: uppercase; letter-spacing: .02em; white-space: nowrap;
-        }
-        .priority-badge--high   { background: color-mix(in srgb, var(--priority-high) 15%, transparent);   color: var(--priority-high);   border: 1px solid color-mix(in srgb, var(--priority-high) 45%, var(--border-color)); }
-        .priority-badge--medium { background: color-mix(in srgb, var(--priority-medium) 12%, transparent); color: var(--priority-medium); border: 1px solid color-mix(in srgb, var(--priority-medium) 40%, var(--border-color)); }
-        .priority-badge--low    { background: color-mix(in srgb, var(--priority-low) 10%, transparent);    color: var(--priority-low);    border: 1px solid color-mix(in srgb, var(--priority-low) 35%, var(--border-color)); }
-
-        .priority-ring-high {
-            box-shadow: 0 0 0 2px var(--priority-high), 0 0 16px 2px color-mix(in srgb, var(--priority-high) 35%, transparent);
+            border-radius: var(--r-lg) !important;
         }
         .card.dragging { opacity: .92; position: relative; z-index: 20; box-shadow: var(--shadow-xl); cursor: grabbing; transition: none; }
         /* Scoped to #monitor-grid > .card (1 id + 2 classes) so these beat the #monitor-grid >
@@ -2718,7 +2882,7 @@ function ui(user, active, content, script = "") {
         }
 
         #monitor-grid h4 {
-            font-size: 0.82rem !important;
+            font-size: var(--fs-body) !important;
             line-height: 1.1 !important;
         }
 
@@ -2728,16 +2892,16 @@ function ui(user, active, content, script = "") {
 
         #monitor-grid .grid.grid-cols-3 > div {
             padding: 0.45rem 0.35rem !important;
-            border-radius: 0.75rem !important;
+            border-radius: var(--r-md) !important;
         }
 
         #monitor-grid .grid.grid-cols-3 p.text-3xl {
-            font-size: 1.55rem !important;
+            font-size: var(--fs-display) !important;
             line-height: 1.05 !important;
         }
 
         #monitor-grid .grid.grid-cols-3 p.text-\\[8px\\] {
-            font-size: 0.48rem !important;
+            font-size: var(--fs-label) !important;
         }
 
         @media (max-width: 640px) {
@@ -2763,7 +2927,7 @@ function ui(user, active, content, script = "") {
         }
 
         #sidePanel #p-title {
-            font-size: clamp(1.35rem, 2vw, 1.85rem) !important;
+            font-size: var(--fs-display) !important;
             line-height: 1.25 !important;
             white-space: nowrap;
             overflow: hidden;
@@ -2775,7 +2939,7 @@ function ui(user, active, content, script = "") {
         #sidePanel .panel-kicker {
             margin-bottom: 0.2rem;
             color: var(--text-tertiary);
-            font-size: 0.66rem;
+            font-size: var(--fs-label);
             font-weight: 700;
             letter-spacing: 0.18em;
         }
@@ -2787,8 +2951,8 @@ function ui(user, active, content, script = "") {
             width: 2.85rem;
             height: 2.85rem;
             flex: 0 0 2.85rem;
-            border-radius: 0.9rem;
-            font-size: 1.15rem;
+            border-radius: var(--r-lg);
+            font-size: var(--icon-md);
             box-shadow: var(--shadow-sm);
         }
 
@@ -2813,16 +2977,16 @@ function ui(user, active, content, script = "") {
             gap: 0.4rem;
             padding: 0.55rem 0.8rem;
             border: 1px solid var(--border-color);
-            border-radius: 0.9rem;
+            border-radius: var(--r-lg);
             background: var(--bg-badge);
             color: var(--text-secondary);
-            font-size: 0.7rem;
+            font-size: var(--fs-label);
             font-weight: 700;
         }
 
         #sidePanel .panel-settings-btn:hover {
             border-color: var(--accent-primary);
-            color: var(--accent-primary);
+            color: var(--accent-primary-strong);
             transform: translateY(-1px);
         }
 
@@ -2844,7 +3008,7 @@ function ui(user, active, content, script = "") {
 
         #sidePanel #p-hn {
             padding: 0.35rem 0.75rem;
-            border-radius: 9999px;
+            border-radius: var(--r-pill);
             background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
             border: 1px solid color-mix(in srgb, var(--accent-primary) 32%, transparent);
         }
@@ -2861,7 +3025,7 @@ function ui(user, active, content, script = "") {
             gap: 0.45rem;
             min-height: 2rem;
             padding: 0.18rem 0.28rem 0.18rem 0.7rem;
-            border-radius: 9999px;
+            border-radius: var(--r-pill);
             background: var(--bg-input);
             border: 1px solid var(--border-color);
             color: var(--text-secondary);
@@ -2871,8 +3035,8 @@ function ui(user, active, content, script = "") {
             min-width: 6rem;
             padding: 0.3rem 1.55rem 0.3rem 0.55rem;
             border: 0;
-            border-radius: 9999px;
-            font-size: 0.72rem;
+            border-radius: var(--r-pill);
+            font-size: var(--fs-sm);
             font-weight: 700;
             line-height: 1.25;
             background: var(--bg-card);
@@ -2887,8 +3051,8 @@ function ui(user, active, content, script = "") {
 
         #sidePanel #panel-trend-status {
             padding: 0.65rem 0.85rem;
-            border-radius: 0.8rem;
-            font-size: 0.78rem;
+            border-radius: var(--r-md);
+            font-size: var(--fs-sm);
             font-weight: 600;
             text-align: center;
             background: var(--bg-badge);
@@ -2913,7 +3077,7 @@ function ui(user, active, content, script = "") {
             flex-direction: column;
             overflow: hidden;
             padding: 0.7rem 1rem 0.8rem !important;
-            border-radius: 1rem !important;
+            border-radius: var(--r-lg) !important;
             box-shadow: var(--shadow-sm);
         }
 
@@ -2954,7 +3118,7 @@ function ui(user, active, content, script = "") {
             width: 2rem;
             height: 2rem;
             flex: 0 0 2rem;
-            border-radius: 0.65rem;
+            border-radius: var(--r-md);
             background: color-mix(in srgb, var(--trend-color) 12%, transparent);
         }
 
@@ -2962,7 +3126,7 @@ function ui(user, active, content, script = "") {
             display: block;
             margin-top: 0.08rem;
             color: var(--text-tertiary);
-            font-size: 0.66rem;
+            font-size: var(--fs-label);
             font-weight: 500;
             letter-spacing: 0.02em;
         }
@@ -2981,17 +3145,17 @@ function ui(user, active, content, script = "") {
         }
 
         #sidePanel .trend-card-head p {
-            font-size: 0.82rem !important;
+            font-size: var(--fs-body) !important;
         }
 
         #sidePanel .trend-card-head span {
-            font-size: 0.72rem !important;
+            font-size: var(--fs-sm) !important;
         }
 
         #sidePanel .trend-summary {
             flex: 0 0 auto;
             padding: 0.35rem 0.65rem;
-            border-radius: 9999px;
+            border-radius: var(--r-pill);
             background: var(--bg-badge);
             border: 1px solid var(--border-color);
             color: var(--text-secondary) !important;
@@ -3024,7 +3188,7 @@ function ui(user, active, content, script = "") {
             right: -4rem;
             width: 13rem;
             height: 13rem;
-            border-radius: 9999px;
+            border-radius: var(--r-pill);
             background: color-mix(in srgb, var(--accent-primary) 9%, transparent);
             pointer-events: none;
         }
@@ -3040,8 +3204,7 @@ function ui(user, active, content, script = "") {
             z-index: 1;
             padding: 1rem;
             border: 1px solid var(--border-color);
-            border-left: 4px solid var(--metric-color, var(--accent-primary));
-            border-radius: 1rem;
+            border-radius: var(--r-lg);
             background: color-mix(in srgb, var(--bg-vital) 88%, transparent);
         }
 
@@ -3073,7 +3236,7 @@ function ui(user, active, content, script = "") {
             align-items: end;
             gap: 0.45rem;
             padding: 0.48rem;
-            border-radius: 0.8rem;
+            border-radius: var(--r-md);
         }
 
         .range-tier-row--single {
@@ -3092,13 +3255,13 @@ function ui(user, active, content, script = "") {
 
         .range-tier-label {
             align-self: center;
-            font-size: 0.58rem;
+            font-size: var(--fs-label);
             font-weight: 900;
             letter-spacing: 0.04em;
         }
 
-        .range-tier-row--warning .range-tier-label { color: var(--accent-yellow); }
-        .range-tier-row--critical .range-tier-label { color: var(--accent-red); }
+        .range-tier-row--warning .range-tier-label { color: var(--status-warning-text); }
+        .range-tier-row--critical .range-tier-label { color: var(--status-critical-text); }
 
         .range-normal-preview {
             display: flex;
@@ -3108,23 +3271,23 @@ function ui(user, active, content, script = "") {
             min-height: 2.25rem;
             padding: 0.45rem 0.65rem;
             border: 1px dashed color-mix(in srgb, var(--accent-green) 48%, var(--border-color));
-            border-radius: 0.75rem;
+            border-radius: var(--r-md);
             background: color-mix(in srgb, var(--accent-green) 9%, transparent);
-            color: var(--accent-green);
-            font-size: 0.64rem;
+            color: var(--status-success-text);
+            font-size: var(--fs-label);
             font-weight: 900;
         }
 
         .range-normal-preview strong {
             color: var(--text-primary);
-            font-size: 0.74rem;
+            font-size: var(--fs-sm);
         }
 
         .range-field label {
             display: block;
             margin-bottom: 0.25rem;
             color: var(--text-tertiary);
-            font-size: 0.62rem;
+            font-size: var(--fs-label);
             font-weight: 700;
         }
 
@@ -3133,8 +3296,8 @@ function ui(user, active, content, script = "") {
             min-height: 2.65rem;
             padding: 0.55rem 0.65rem;
             border: 1px solid var(--border-color);
-            border-radius: 0.75rem;
-            font-size: 0.88rem;
+            border-radius: var(--r-md);
+            font-size: var(--fs-body);
             font-weight: 700;
             text-align: center;
         }
@@ -3147,14 +3310,14 @@ function ui(user, active, content, script = "") {
             justify-content: center;
             padding: 0.35rem;
             border: 1px dashed color-mix(in srgb, var(--accent-green) 48%, var(--border-color));
-            border-radius: 0.75rem;
+            border-radius: var(--r-md);
             background: color-mix(in srgb, var(--accent-green) 9%, transparent);
             color: var(--text-secondary);
             text-align: center;
         }
 
-        .range-midpoint span { font-size: 0.55rem; font-weight: 600; }
-        .range-midpoint strong { color: var(--accent-green); font-size: 0.82rem; }
+        .range-midpoint span { font-size: var(--fs-label); font-weight: 600; }
+        .range-midpoint strong { color: var(--status-success-text); font-size: var(--fs-body); }
 
         .range-patient-grid {
             display: grid;
@@ -3164,7 +3327,7 @@ function ui(user, active, content, script = "") {
 
         .range-patient-card {
             padding: 1rem !important;
-            border-radius: 1rem !important;
+            border-radius: var(--r-lg) !important;
         }
 
         .range-patient-values {
@@ -3175,7 +3338,7 @@ function ui(user, active, content, script = "") {
 
         .range-patient-value {
             padding: 0.55rem 0.45rem;
-            border-radius: 0.7rem;
+            border-radius: var(--r-md);
             background: var(--bg-vital);
             border: 1px solid var(--border-light);
             text-align: center;
@@ -3184,13 +3347,13 @@ function ui(user, active, content, script = "") {
         .range-patient-value span {
             display: block;
             color: var(--text-tertiary);
-            font-size: 0.56rem;
+            font-size: var(--fs-label);
             font-weight: 700;
         }
 
         .range-patient-value strong {
             color: var(--text-primary);
-            font-size: 0.72rem;
+            font-size: var(--fs-sm);
         }
 
         @media (max-height: 850px) {
@@ -3231,7 +3394,7 @@ function ui(user, active, content, script = "") {
             #sidePanel .panel-kicker { display: none; }
             #sidePanel #p-title {
                 max-width: calc(100vw - 4.5rem);
-                font-size: 1.15rem !important;
+                font-size: var(--fs-title) !important;
             }
             #sidePanel .panel-close-btn {
                 width: 2.5rem;
@@ -3253,7 +3416,7 @@ function ui(user, active, content, script = "") {
                 min-width: 0;
                 padding: 0.25rem 0.55rem;
                 overflow: hidden;
-                font-size: 0.68rem;
+                font-size: var(--fs-label);
                 text-overflow: ellipsis;
                 white-space: nowrap;
             }
@@ -3266,7 +3429,7 @@ function ui(user, active, content, script = "") {
             }
             #sidePanel #panel-export-btn::after {
                 content: '⬇ CSV';
-                font-size: 0.66rem;
+                font-size: var(--fs-label);
             }
 
             .range-tier-row {
@@ -3288,12 +3451,12 @@ function ui(user, active, content, script = "") {
                 width: 100%;
                 min-width: 0;
                 padding: 0.2rem 1.35rem 0.2rem 0.45rem;
-                font-size: 0.7rem !important;
+                font-size: var(--fs-label) !important;
             }
             #sidePanel .trend-grid { gap: 0.45rem !important; }
             #sidePanel .trend-card {
                 padding: 0.45rem 0.65rem 0.5rem !important;
-                border-radius: 0.85rem !important;
+                border-radius: var(--r-md) !important;
             }
             #sidePanel .trend-card-head {
                 align-items: stretch;
@@ -3306,11 +3469,11 @@ function ui(user, active, content, script = "") {
                 width: 1.65rem;
                 height: 1.65rem;
                 flex-basis: 1.65rem;
-                border-radius: 0.5rem;
-                font-size: 0.72rem;
+                border-radius: var(--r-sm);
+                font-size: var(--fs-sm);
             }
-            #sidePanel .trend-card-head p { font-size: 0.72rem !important; }
-            #sidePanel .trend-card-subtitle { font-size: 0.58rem !important; }
+            #sidePanel .trend-card-head p { font-size: var(--fs-sm) !important; }
+            #sidePanel .trend-card-subtitle { font-size: var(--fs-label) !important; }
             #sidePanel .trend-summary {
                 align-self: stretch;
                 width: 100%;
@@ -3364,15 +3527,15 @@ function ui(user, active, content, script = "") {
             #sidePanel .trend-summary {
                 width: auto;
                 flex: 0 0 auto;
-                font-size: 0.58rem !important;
+                font-size: var(--fs-label) !important;
             }
         }
 
         @media (max-width: 374px) {
             #appMain { padding: 0.75rem !important; }
-            .dashboard-title { font-size: 1rem !important; }
+            .dashboard-title { font-size: var(--fs-body-lg) !important; }
             #monitor-grid > .card { padding: 0.65rem !important; }
-            #monitor-grid .grid.grid-cols-3 p.text-3xl { font-size: 1.2rem !important; }
+            #monitor-grid .grid.grid-cols-3 p.text-3xl { font-size: var(--fs-title) !important; }
             .modal { padding: 0.5rem; }
             .modal > div { padding: 1rem !important; }
         }
@@ -3436,7 +3599,7 @@ function ui(user, active, content, script = "") {
             #globalModal.modal--wide > div {
                 width: 100%;
                 max-height: calc(100dvh - 1rem - env(safe-area-inset-bottom));
-                border-radius: 1.25rem !important;
+                border-radius: var(--r-xl) !important;
             }
 
             #globalModal.modal--wide #modalTitle,
@@ -3453,8 +3616,8 @@ function ui(user, active, content, script = "") {
             position: fixed; right: max(1rem, env(safe-area-inset-right));
             bottom: max(1rem, env(safe-area-inset-bottom)); z-index: 980;
             display: inline-flex; align-items: center; gap: .55rem; min-height: 3rem;
-            padding: .75rem 1rem; border: 1px solid rgba(255,255,255,.32); border-radius: 999px;
-            background: linear-gradient(135deg,#2563eb,#4f46e5); color: #fff; font-weight: 800;
+            padding: .75rem 1rem; border: 1px solid rgba(255,255,255,.32); border-radius: var(--r-pill);
+            background: var(--accent-primary-strong); color: var(--text-inverse); font-weight: 800;
             box-shadow: 0 14px 36px rgba(37,99,235,.38); touch-action: manipulation;
         }
         .ai-chat-launcher:hover { filter: brightness(1.08); transform: translateY(-1px); }
@@ -3474,31 +3637,31 @@ function ui(user, active, content, script = "") {
         .ai-chat-panel.is-open { transform: translateX(0); visibility: visible; }
         .ai-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.1rem; border-bottom: 1px solid var(--border-color); background:var(--bg-card); }
         .ai-chat-brand { display:flex; align-items:center; gap:.75rem; min-width:0; }
-        .ai-chat-brand-icon { display:grid; place-items:center; width:2.65rem; height:2.65rem; flex:0 0 auto; border-radius:.9rem; color:#fff; background:linear-gradient(135deg,#2563eb,#4f46e5); box-shadow:0 8px 22px rgba(37,99,235,.28); }
-        .ai-chat-status { display:inline-flex; align-items:center; gap:.35rem; margin-top:.22rem; color:var(--text-tertiary); font-size:.68rem; font-weight:700; }
+        .ai-chat-brand-icon { display:grid; place-items:center; width:2.65rem; height:2.65rem; flex:0 0 auto; border-radius: var(--r-lg); color:var(--text-inverse); background:var(--accent-primary-strong); box-shadow:0 8px 22px rgba(37,99,235,.28); }
+        .ai-chat-status { display:inline-flex; align-items:center; gap:.35rem; margin-top:.22rem; color:var(--text-tertiary); font-size: var(--fs-label); font-weight:700; }
         .ai-chat-status-dot { width:.45rem; height:.45rem; border-radius:50%; background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.14); }
         .ai-chat-header-actions { display:flex; gap:.45rem; }
-        .ai-chat-icon-button { display:inline-flex; align-items:center; justify-content:center; width:2.75rem; height:2.75rem; border-radius:.8rem; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); }
-        .ai-chat-icon-button:hover { color:var(--accent-primary); border-color:var(--accent-primary); }
-        .ai-chat-close { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; border-radius: .8rem; background: var(--bg-secondary); border: 1px solid var(--border-color); }
+        .ai-chat-icon-button { display:inline-flex; align-items:center; justify-content:center; width:2.75rem; height:2.75rem; border-radius: var(--r-md); background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-secondary); }
+        .ai-chat-icon-button:hover { color:var(--accent-primary-strong); border-color:var(--accent-primary); }
+        .ai-chat-close { display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; border-radius: var(--r-md); background: var(--bg-secondary); border: 1px solid var(--border-color); }
         .ai-chat-controls { display: grid; gap: .7rem; padding: .85rem 1rem; border-bottom: 1px solid var(--border-color); background:var(--bg-card); }
         .ai-chat-context-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; align-items:end; }
         .ai-chat-field { display:grid; gap:.35rem; min-width:0; }
-        .ai-chat-field-label { color:var(--text-tertiary); font-size:.66rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
-        .ai-chat-select, .ai-chat-input { width: 100%; border: 1px solid var(--border-color); border-radius: .8rem; background: var(--bg-input); color: var(--text-primary); }
+        .ai-chat-field-label { color:var(--text-tertiary); font-size: var(--fs-label); font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+        .ai-chat-select, .ai-chat-input { width: 100%; border: 1px solid var(--border-color); border-radius: var(--r-md); background: var(--bg-input); color: var(--text-primary); }
         .ai-chat-select { min-height: 2.75rem; padding: .55rem .7rem; }
-        .ai-chat-periods { display:flex; gap:.35rem; overflow-x:auto; padding:.15rem; border:1px solid var(--border-color); border-radius:.85rem; background:var(--bg-secondary); scrollbar-width:none; }
+        .ai-chat-periods { display:flex; gap:.35rem; overflow-x:auto; padding:.15rem; border:1px solid var(--border-color); border-radius: var(--r-md); background:var(--bg-secondary); scrollbar-width:none; }
         .ai-chat-periods::-webkit-scrollbar { display:none; }
-        .ai-chat-period { flex:0 0 auto; min-height:2.25rem; padding:.4rem .62rem; border-radius:.65rem; color:var(--text-tertiary); font-size:.7rem; font-weight:800; }
-        .ai-chat-period[aria-pressed="true"] { color:#fff; background:var(--accent-primary); box-shadow:0 4px 12px rgba(37,99,235,.22); }
+        .ai-chat-period { flex:0 0 auto; min-height:2.25rem; padding:.4rem .62rem; border-radius: var(--r-md); color:var(--text-tertiary); font-size: var(--fs-label); font-weight:800; }
+        .ai-chat-period[aria-pressed="true"] { color:var(--text-inverse); background:var(--accent-primary-strong); box-shadow:0 4px 12px rgba(37,99,235,.22); }
         .ai-chat-period:disabled { opacity:.4; cursor:not-allowed; }
-        .ai-chat-context-summary { display:flex; align-items:center; gap:.45rem; min-width:0; color:var(--text-secondary); font-size:.72rem; }
-        .ai-chat-context-pill { display:inline-flex; align-items:center; min-width:0; max-width:100%; padding:.35rem .58rem; border-radius:999px; background:rgba(59,130,246,.1); color:var(--accent-primary); font-weight:800; overflow-wrap:anywhere; }
+        .ai-chat-context-summary { display:flex; align-items:center; gap:.45rem; min-width:0; color:var(--text-secondary); font-size: var(--fs-sm); }
+        .ai-chat-context-pill { display:inline-flex; align-items:center; min-width:0; max-width:100%; padding:.35rem .58rem; border-radius: var(--r-pill); background:rgba(59,130,246,.1); color:var(--accent-primary-strong); font-weight:800; overflow-wrap:anywhere; }
         .ai-chat-quick { display: flex; gap: .45rem; overflow-x: auto; padding-bottom: .2rem; scrollbar-width: thin; }
-        .ai-chat-quick button { flex: 0 0 auto; padding: .48rem .65rem; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .72rem; font-weight: 700; }
-        .ai-chat-quick button:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+        .ai-chat-quick button { flex: 0 0 auto; padding: .48rem .65rem; border: 1px solid var(--border-color); border-radius: var(--r-pill); background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); font-weight: 700; }
+        .ai-chat-quick button:hover { border-color: var(--accent-primary); color: var(--accent-primary-strong); }
         .ai-chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: .9rem; padding: 1rem; overscroll-behavior: contain; }
-        .ai-chat-message { max-width: 90%; padding: .75rem .85rem; border-radius: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; font-size: .86rem; }
+        .ai-chat-message { max-width: 90%; padding: .75rem .85rem; border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; font-size: var(--fs-body); }
         .ai-chat-message--assistant { align-self: flex-start; background: var(--bg-secondary); border: 1px solid var(--border-color); white-space: normal; }
         .ai-chat-message--assistant p { margin: 0; }
         .ai-chat-message--assistant p + p, .ai-chat-message--assistant p + ul, .ai-chat-message--assistant p + ol,
@@ -3506,64 +3669,64 @@ function ui(user, active, content, script = "") {
         .ai-chat-message--assistant ul, .ai-chat-message--assistant ol { margin: .55rem 0 0; padding-left: 1.3rem; }
         .ai-chat-message--assistant li { margin: .28rem 0; padding-left: .12rem; }
         .ai-chat-message--assistant strong { color: var(--text-heading); font-weight: 800; }
-        .ai-chat-message--user { align-self: flex-end; background: var(--accent-primary); color: var(--text-inverse); }
-        .ai-chat-message--error { align-self: stretch; max-width: 100%; color: var(--accent-red); background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); }
-        .ai-chat-message--fallback { border-left: 3px solid var(--accent-amber); }
-        .ai-chat-message--system { align-self: center; max-width: 92%; font-size: .74rem; font-style: italic; color: var(--text-muted); background: transparent; border: none; padding: .2rem .5rem; text-align: center; }
-        .ai-chat-message-kicker { display: block; font-size: .68rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--text-muted); margin-bottom: .3rem; }
+        .ai-chat-message--user { align-self: flex-end; background: var(--accent-primary-strong); color: var(--text-inverse); }
+        .ai-chat-message--error { align-self: stretch; max-width: 100%; color: var(--status-critical-text); background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); }
+        .ai-chat-message--fallback { background: color-mix(in srgb, var(--status-warning-text) 8%, transparent); }
+        .ai-chat-message--system { align-self: center; max-width: 92%; font-size: var(--fs-sm); font-style: italic; color: var(--text-muted); background: transparent; border: none; padding: .2rem .5rem; text-align: center; }
+        .ai-chat-message-kicker { display: block; font-size: var(--fs-label); font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--text-muted); margin-bottom: .3rem; }
         .ai-welcome { display:grid; gap:.9rem; padding:.3rem 0; }
-        .ai-welcome-hero { padding:1.1rem; border:1px solid rgba(59,130,246,.2); border-radius:1.1rem; background:linear-gradient(145deg,rgba(59,130,246,.12),rgba(79,70,229,.06)); }
-        .ai-welcome-hero h3 { color:var(--text-heading); font-size:1rem; font-weight:900; text-wrap:balance; }
-        .ai-welcome-hero p { margin-top:.4rem; color:var(--text-secondary); font-size:.78rem; line-height:1.6; }
+        .ai-welcome-hero { padding:1.1rem; border:1px solid rgba(59,130,246,.2); border-radius: var(--r-lg); background:color-mix(in srgb, var(--accent-primary) 10%, transparent); }
+        .ai-welcome-hero h3 { color:var(--text-heading); font-size: var(--fs-body-lg); font-weight:900; text-wrap:balance; }
+        .ai-welcome-hero p { margin-top:.4rem; color:var(--text-secondary); font-size: var(--fs-sm); line-height:1.6; }
         .ai-answer { display:grid; gap:.7rem; width:100%; }
-        .ai-answer-card { overflow:hidden; border:1px solid var(--border-color); border-radius:1.1rem; background:var(--bg-card); box-shadow:var(--shadow-sm); }
-        .ai-answer-head { padding:1rem; border-left:4px solid #3b82f6; }
+        .ai-answer-card { overflow:hidden; border:1px solid var(--border-color); border-radius: var(--r-lg); background:var(--bg-card); box-shadow:var(--shadow-sm); }
+        .ai-answer-head { padding:1rem; }
         .ai-answer[data-risk="warning"] .ai-answer-head { border-left-color:#eab308; }
         .ai-answer[data-risk="critical"] .ai-answer-head { border-left-color:#ef4444; }
         .ai-answer[data-risk="normal"] .ai-answer-head { border-left-color:#22c55e; }
         .ai-answer-kicker { display:flex; align-items:center; justify-content:space-between; gap:.7rem; margin-bottom:.55rem; }
-        .ai-risk-badge { display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .55rem; border-radius:999px; font-size:.66rem; font-weight:900; }
+        .ai-risk-badge { display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .55rem; border-radius: var(--r-pill); font-size: var(--fs-label); font-weight:900; }
         .ai-risk-badge--normal { color:#15803d; background:rgba(34,197,94,.13); }
         .ai-risk-badge--warning { color:#a16207; background:rgba(234,179,8,.16); }
         .ai-risk-badge--critical { color:var(--status-critical-text); background:rgba(239,68,68,.13); }
         .ai-risk-badge--insufficient_data { color:#475569; background:rgba(100,116,139,.13); }
-        .ai-answer h3 { color:var(--text-heading); font-size:1rem; font-weight:900; line-height:1.35; text-wrap:balance; }
-        .ai-answer-summary { margin-top:0; color:var(--text-secondary); font-size:.82rem; line-height:1.65; }
+        .ai-answer h3 { color:var(--text-heading); font-size: var(--fs-body-lg); font-weight:900; line-height:1.35; text-wrap:balance; }
+        .ai-answer-summary { margin-top:0; color:var(--text-secondary); font-size: var(--fs-body); line-height:1.65; }
         .ai-answer-risklabel--normal { color:#15803d; }
         .ai-answer-risklabel--warning { color:#a16207; }
         .ai-answer-risklabel--critical { color:var(--status-critical-text); }
         .ai-answer-risklabel--insufficient_data { color:#475569; }
         .ai-answer-typetext { margin-top:.5rem; color:var(--text-tertiary); }
         .ai-answer-section { padding:.9rem 1rem; border-top:1px solid var(--border-color); }
-        .ai-answer-section h4 { margin-bottom:.55rem; color:var(--text-tertiary); font-size:.65rem; font-weight:900; letter-spacing:.05em; text-transform:uppercase; }
+        .ai-answer-section h4 { margin-bottom:.55rem; color:var(--text-tertiary); font-size: var(--fs-label); font-weight:900; letter-spacing:.05em; text-transform:uppercase; }
         .ai-observation { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.65rem; padding:.65rem 0; }
         .ai-observation + .ai-observation { border-top:1px dashed var(--border-color); }
-        .ai-observation-icon { display:grid; place-items:center; width:1.75rem; height:1.75rem; border-radius:.58rem; font-size:.7rem; font-weight:900; background:var(--bg-secondary); }
-        .ai-observation strong { display:block; color:var(--text-primary); font-size:.78rem; }
-        .ai-observation p { margin-top:.2rem; color:var(--text-secondary); font-size:.74rem; line-height:1.55; }
+        .ai-observation-icon { display:grid; place-items:center; width:1.75rem; height:1.75rem; border-radius: var(--r-sm); font-size: var(--fs-label); font-weight:900; background:var(--bg-secondary); }
+        .ai-observation strong { display:block; color:var(--text-primary); font-size: var(--fs-sm); }
+        .ai-observation p { margin-top:.2rem; color:var(--text-secondary); font-size: var(--fs-sm); line-height:1.55; }
         .ai-check-list,.ai-limit-list { display:grid; gap:.45rem; list-style:none; }
-        .ai-check-list li,.ai-limit-list li { position:relative; padding-left:1.35rem; color:var(--text-secondary); font-size:.75rem; line-height:1.55; }
+        .ai-check-list li,.ai-limit-list li { position:relative; padding-left:1.35rem; color:var(--text-secondary); font-size: var(--fs-sm); line-height:1.55; }
         .ai-check-list li::before { content:'✓'; position:absolute; left:0; color:var(--status-success-text); font-weight:900; }
-        .ai-limit-list li::before { content:'!'; position:absolute; left:.15rem; color:#d97706; font-weight:900; }
+        .ai-limit-list li::before { content:'!'; position:absolute; left:.15rem; color:var(--status-warning-text); font-weight:900; }
         .ai-evidence { border-top:1px solid var(--border-color); }
-        .ai-evidence summary { cursor:pointer; padding:.8rem 1rem; color:var(--accent-primary); font-size:.72rem; font-weight:800; list-style:none; }
+        .ai-evidence summary { cursor:pointer; padding:.8rem 1rem; color:var(--accent-primary-strong); font-size: var(--fs-sm); font-weight:800; list-style:none; }
         .ai-evidence summary::-webkit-details-marker { display:none; }
         .ai-evidence-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem; padding:0 1rem 1rem; }
-        .ai-evidence-item { min-width:0; padding:.6rem; border-radius:.75rem; background:var(--bg-secondary); }
-        .ai-evidence-item span { display:block; color:var(--text-tertiary); font-size:.6rem; line-height:1.35; }
-        .ai-evidence-item strong { display:block; margin-top:.2rem; color:var(--text-primary); font-size:.75rem; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+        .ai-evidence-item { min-width:0; padding:.6rem; border-radius: var(--r-md); background:var(--bg-secondary); }
+        .ai-evidence-item span { display:block; color:var(--text-tertiary); font-size: var(--fs-label); line-height:1.35; }
+        .ai-evidence-item strong { display:block; margin-top:.2rem; color:var(--text-primary); font-size: var(--fs-sm); overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
         .ai-answer-actions { display:flex; flex-wrap:wrap; gap:.45rem; padding:.7rem 1rem; border-top:1px solid var(--border-color); }
-        .ai-answer-action { min-height:2.2rem; padding:.4rem .62rem; border-radius:.65rem; color:var(--text-secondary); background:var(--bg-secondary); font-size:.68rem; font-weight:800; }
-        .ai-thinking { align-self:flex-start; display:flex; align-items:center; gap:.6rem; padding:.75rem .9rem; border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); color:var(--text-secondary); font-size:.76rem; }
+        .ai-answer-action { min-height:2.2rem; padding:.4rem .62rem; border-radius: var(--r-md); color:var(--text-secondary); background:var(--bg-secondary); font-size: var(--fs-label); font-weight:800; }
+        .ai-thinking { align-self:flex-start; display:flex; align-items:center; gap:.6rem; padding:.75rem .9rem; border:1px solid var(--border-color); border-radius: var(--r-lg); background:var(--bg-card); color:var(--text-secondary); font-size: var(--fs-sm); }
         .ai-thinking-dots { display:flex; gap:.2rem; }
-        .ai-thinking-dots i { width:.35rem; height:.35rem; border-radius:50%; background:var(--accent-primary); animation:ai-dot 1s infinite alternate; }
+        .ai-thinking-dots i { width:.35rem; height:.35rem; border-radius:50%; background:var(--accent-primary-strong); animation:ai-dot 1s infinite alternate; }
         .ai-thinking-dots i:nth-child(2){animation-delay:.2s}.ai-thinking-dots i:nth-child(3){animation-delay:.4s}
         @keyframes ai-dot { to { opacity:.25; transform:translateY(-2px); } }
         .ai-chat-form { display: grid; grid-template-columns: 1fr auto; gap: .6rem; padding: .85rem 1rem max(.85rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border-color); background: var(--bg-card); }
         .ai-chat-input { min-height: 3rem; max-height: 8rem; resize: vertical; padding: .72rem .8rem; }
-        .ai-chat-send { align-self: end; min-width: 4.5rem; min-height: 3rem; padding: .65rem .8rem; border-radius: .8rem; background: var(--accent-primary); color: var(--text-inverse); font-weight: 800; }
+        .ai-chat-send { align-self: end; min-width: 4.5rem; min-height: 3rem; padding: .65rem .8rem; border-radius: var(--r-md); background: var(--accent-primary-strong); color: var(--text-inverse); font-weight: 800; }
         .ai-chat-send:disabled, .ai-chat-quick button:disabled { cursor: wait; opacity: .62; }
-        .ai-chat-disclaimer { padding: .5rem 1rem; color: var(--text-tertiary); background: var(--bg-secondary); border-top: 1px solid var(--border-color); font-size: .62rem; line-height: 1.45; text-align:center; }
+        .ai-chat-disclaimer { padding: .5rem 1rem; color: var(--text-tertiary); background: var(--bg-secondary); border-top: 1px solid var(--border-color); font-size: var(--fs-label); line-height: 1.45; text-align:center; }
         body.ai-chat-open { overflow: hidden; }
         @media (max-width: 640px) { .ai-chat-launcher span:last-child { display: none; } .ai-chat-launcher { width: 3.25rem; justify-content: center; padding: .75rem; } .ai-chat-context-row{grid-template-columns:1fr}.ai-evidence-grid{grid-template-columns:1fr}.ai-chat-panel{border-left:0}.ai-chat-header{padding-top:max(1rem,env(safe-area-inset-top));} }
         @media (prefers-reduced-motion: reduce) { .ai-chat-panel, .ai-chat-launcher, .ai-thinking-dots i { transition: none !important; animation:none !important; } }
@@ -3571,48 +3734,48 @@ function ui(user, active, content, script = "") {
         /* Quick Setup Wizard stepper */
         .qs-stepper { display:flex; align-items:flex-start; justify-content:space-between; gap:0; width:100%; max-width:520px; margin:0 auto; position:relative; }
         .qs-step { flex:1 1 0; display:flex; flex-direction:column; align-items:center; text-align:center; min-width:0; }
-        .qs-step-ring { position:relative; width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-bold font-nums; font-size:.95rem; transition:background-color .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease; background:var(--bg-card); }
+        .qs-step-ring { position:relative; width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-bold font-nums; font-size: var(--fs-body); transition:background-color .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease; background:var(--bg-card); }
         .qs-step-ring::before { content:""; position:absolute; inset:0; border-radius:50%; border:2px solid var(--border-color); }
         .qs-step--pending .qs-step-ring { color:var(--text-tertiary); background:var(--bg-badge); }
-        .qs-step--active .qs-step-ring { color:var(--accent-primary); box-shadow:0 0 0 4px color-mix(in srgb, var(--accent-primary) 18%, transparent); }
+        .qs-step--active .qs-step-ring { color:var(--accent-primary-strong); box-shadow:0 0 0 4px color-mix(in srgb, var(--accent-primary) 18%, transparent); }
         .qs-step--active .qs-step-ring::before { border-color:var(--accent-primary); }
-        .qs-step--complete .qs-step-ring { color:#fff; background:var(--accent-primary); }
+        .qs-step--complete .qs-step-ring { color:var(--text-inverse); background:var(--accent-primary-strong); }
         .qs-step--complete .qs-step-ring::before { border-color:var(--accent-primary); }
-        .qs-step-label { margin-top:.55rem; font-size:.78rem; font-weight:700; color:var(--text-tertiary); line-height:1.25; transition:color .25s ease; min-width:0; }
+        .qs-step-label { margin-top:.55rem; font-size: var(--fs-sm); font-weight:700; color:var(--text-tertiary); line-height:1.25; transition:color .25s ease; min-width:0; }
         .qs-step--active .qs-step-label { color:var(--text-heading); }
         .qs-step--complete .qs-step-label { color:var(--text-secondary); }
-        .qs-step-emoji { font-size:.9rem; display:block; margin-bottom:1px; }
+        .qs-step-emoji { font-size: var(--icon-md); display:block; margin-bottom:1px; }
         .qs-step-num { font-variant-numeric:tabular-nums; }
         .qs-step-check { display:none; }
         .qs-step--complete .qs-step-num { display:none; }
         .qs-step--complete .qs-step-check { display:block; }
         .qs-step-connector { position:relative; flex:0 0 auto; height:44px; width:min(64px, calc(100% - 44px)); align-self:center; margin-left:-2px; }
-        .qs-step-connector .qs-track { position:absolute; inset:0; height:3px; margin-top:20px; border-radius:2px; background:var(--border-color); overflow:hidden; }
-        .qs-step-connector .qs-fill { position:absolute; inset:0 auto 0 0; width:0%; height:100%; background:var(--accent-primary); border-radius:2px; transition:width .3s ease; }
+        .qs-step-connector .qs-track { position:absolute; inset:0; height:3px; margin-top:20px; border-radius: var(--r-xs); background:var(--border-color); overflow:hidden; }
+        .qs-step-connector .qs-fill { position:absolute; inset:0 auto 0 0; width:0%; height:100%; background:var(--accent-primary-strong); border-radius: var(--r-xs); transition:width .3s ease; }
         .qs-step--complete + .qs-step-connector .qs-fill { width:100%; }
         .qs-panel { transition:opacity .2s ease; }
         .is-hidden { display:none; }
-        .qs-mode-btn { padding:.5rem .85rem; border-radius:.7rem; font-size:.78rem; font-weight:700; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-secondary); transition:color .2s ease, border-color .2s ease, background .2s ease; }
-        .qs-mode-btn[aria-pressed="true"] { color:#fff; background:var(--accent-primary); border-color:var(--accent-primary); }
+        .qs-mode-btn { padding:.5rem .85rem; border-radius: var(--r-md); font-size: var(--fs-sm); font-weight:700; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-secondary); transition:color .2s ease, border-color .2s ease, background .2s ease; }
+        .qs-mode-btn[aria-pressed="true"] { color:var(--text-inverse); background:var(--accent-primary-strong); border-color:var(--accent-primary); }
         .qs-mode-btn[aria-pressed="false"] { color:var(--text-secondary); }
-        .qs-list-item { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:.6rem .75rem; border-radius:.7rem; border:1px solid var(--border-color); background:var(--bg-input); cursor:pointer; text-align:left; transition:background .15s ease, border-color .15s ease; }
+        .qs-list-item { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:.6rem .75rem; border-radius: var(--r-md); border:1px solid var(--border-color); background:var(--bg-input); cursor:pointer; text-align:left; transition:background .15s ease, border-color .15s ease; }
         .qs-list-item:hover { background:var(--bg-card-hover); border-color:var(--accent-primary); }
         .qs-list-item[aria-pressed="true"] { border-color:var(--accent-primary); background:color-mix(in srgb, var(--accent-primary) 9%, var(--bg-input)); }
-        .qs-list-item-name { font-weight:700; color:var(--text-primary); font-size:.85rem; }
-        .qs-list-item-sub { font-family:ui-monospace,monospace; font-size:.72rem; color:var(--text-tertiary); margin-top:1px; }
-        .qs-list-item-badge { flex-shrink:0; font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:.5rem; background:var(--bg-badge); color:var(--text-secondary); white-space:nowrap; }
-        .qs-empty { padding:1.25rem; text-align:center; border-radius:.7rem; border:1px dashed var(--border-color); background:var(--bg-input); color:var(--text-secondary); font-size:.85rem; }
-        .qs-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-weight:800; color:#fff; background:var(--accent-primary); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
+        .qs-list-item-name { font-weight:700; color:var(--text-primary); font-size: var(--fs-body); }
+        .qs-list-item-sub { font-family: var(--font-mono); font-size: var(--fs-sm); color:var(--text-tertiary); margin-top:1px; }
+        .qs-list-item-badge { flex-shrink:0; font-size: var(--fs-label); font-weight:700; padding:.2rem .55rem; border-radius: var(--r-sm); background:var(--bg-badge); color:var(--text-secondary); white-space:nowrap; }
+        .qs-empty { padding:1.25rem; text-align:center; border-radius: var(--r-md); border:1px dashed var(--border-color); background:var(--bg-input); color:var(--text-secondary); font-size: var(--fs-body); }
+        .qs-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius: var(--r-md); font-weight:800; color:var(--text-inverse); background:var(--accent-primary-strong); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
         .qs-primary:disabled { opacity:.55; cursor:not-allowed; }
         .qs-primary:not(:disabled):active { transform:scale(.98); }
-        .qs-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius:.85rem; font-weight:800; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-color); transition:background .2s ease, transform .1s ease; }
+        .qs-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem 1.1rem; border-radius: var(--r-md); font-weight:800; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-color); transition:background .2s ease, transform .1s ease; }
         .qs-secondary:not(:active):hover { background:var(--bg-card-hover); }
         .qs-secondary:active { transform:scale(.98); }
-        .qs-scan { white-space:nowrap; flex-shrink:0; padding:0 1rem; border-radius:.85rem; font-weight:800; color:#fff; background:var(--accent-primary); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
+        .qs-scan { white-space:nowrap; flex-shrink:0; padding:0 1rem; border-radius: var(--r-md); font-weight:800; color:var(--text-inverse); background:var(--accent-primary-strong); border:1px solid transparent; transition:opacity .2s ease, transform .1s ease; }
         .qs-scan:active { transform:scale(.97); }
-        .qs-field { width:100%; border-radius:.85rem; padding:.75rem 1rem; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border-color); }
+        .qs-field { width:100%; border-radius: var(--r-md); padding:.75rem 1rem; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border-color); }
         .qs-field:focus { outline: none; border-color:var(--accent-primary); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent); }
-        @media (max-width: 480px) { .qs-step-ring { width:36px; height:36px; font-size:.85rem; } .qs-step-connector { height:36px; } .qs-step-connector .qs-track { margin-top:16px; } .qs-step-label { font-size:.7rem; } }
+        @media (max-width: 480px) { .qs-step-ring { width:36px; height:36px; font-size: var(--fs-body); } .qs-step-connector { height:36px; } .qs-step-connector .qs-track { margin-top:16px; } .qs-step-label { font-size: var(--fs-label); } }
         @media (prefers-reduced-motion: reduce) { .qs-panel, .qs-step-ring, .qs-step-label, .qs-mode-btn, .qs-list-item, .qs-fill { transition:none !important; } }
 
         /* ---- Accessibility baseline ----
@@ -3626,11 +3789,11 @@ function ui(user, active, content, script = "") {
             top: -4rem;
             z-index: 200;
             padding: .7rem 1.1rem;
-            border-radius: .75rem;
+            border-radius: var(--r-md);
             font-weight: 700;
-            font-size: .875rem;
+            font-size: var(--fs-body);
             color: var(--text-inverse);
-            background: var(--accent-primary);
+            background: var(--accent-primary-strong);
             box-shadow: var(--shadow-lg);
             transition: top .15s ease;
         }
@@ -3645,7 +3808,7 @@ function ui(user, active, content, script = "") {
         :focus-visible {
             outline: 2px solid var(--border-focus) !important;
             outline-offset: 2px;
-            border-radius: 4px;
+            border-radius: var(--r-xs);
         }
 
         /* WCAG 2.5.8 target size. Applies to genuine controls only, so it does not
@@ -3682,10 +3845,10 @@ function ui(user, active, content, script = "") {
 <body class="flex flex-col md:flex-row min-h-screen">
     <a href="#appMain" class="skip-link">ข้ามไปยังเนื้อหาหลัก</a>
     <header id="mobileHeader">
-        <button id="mobileMenuButton" type="button" onclick="openMobileMenu()" aria-label="เปิดเมนู" aria-controls="sidebar" aria-expanded="false">☰</button>
+        <button id="mobileMenuButton" type="button" onclick="openMobileMenu()" aria-label="เปิดเมนู" aria-controls="sidebar" aria-expanded="false"><span class="ic ic-menu" aria-hidden="true"></span></button>
         <div class="min-w-0 text-center">
-            <p class="font-extrabold tracking-tight truncate" style="color: var(--accent-primary);">Nurse<span style="color: var(--text-primary);">Aid</span></p>
-            <p class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
+            <p class="font-extrabold tracking-tight truncate" style="color: var(--accent-primary-strong);">Nurse<span style="color: var(--text-primary);">Aid</span></p>
+            <p class="text-2xs font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
         </div>
         <button id="mobileThemeButton" type="button" onclick="toggleTheme()" aria-label="สลับโหมดแสงและโหมดมืด" title="สลับโหมดแสงและโหมดมืด">
             <svg class="mt-sun" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -3696,8 +3859,8 @@ function ui(user, active, content, script = "") {
     <aside id="sidebar" class="p-6 flex flex-col shadow-sm z-50" style="background: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
         <div class="flex items-center justify-between mb-3 gap-2">
             <div class="text-center sidebar-hide min-w-0">
-                <h1 class="text-xl font-extrabold tracking-tight whitespace-nowrap" style="color: var(--accent-primary);">Nurse<span style="color: var(--text-primary);">Aid</span></h1>
-                <p class="text-[10px] font-bold uppercase whitespace-nowrap" style="color: var(--text-tertiary); letter-spacing: 0.15em;">Hospital System</p>
+                <h1 class="text-xl font-extrabold tracking-tight whitespace-nowrap" style="color: var(--accent-primary-strong);">Nurse<span style="color: var(--text-primary);">Aid</span></h1>
+                <p class="text-2xs font-bold uppercase whitespace-nowrap" style="color: var(--text-tertiary); letter-spacing: 0.15em;">Hospital System</p>
             </div>
 
             <button id="sidebarToggle" onclick="toggleSidebar()" type="button"
@@ -3721,8 +3884,8 @@ function ui(user, active, content, script = "") {
 
         <div class="sidebar-hide mb-4 p-3 rounded-xl text-xs" style="background: var(--bg-sidebar-info); border: 1px solid var(--border-color);">
             <p id="display-nurse" class="font-bold truncate" style="color: var(--text-primary);">Checking...</p>
-            <p id="display-role" class="text-[10px] font-bold uppercase" style="color: var(--text-tertiary);"></p>
-            <p id="display-ward" class="text-[10px] font-bold mt-1" style="color: var(--text-secondary);"></p>
+            <p id="display-role" class="text-2xs font-bold uppercase" style="color: var(--text-tertiary);"></p>
+            <p id="display-ward" class="text-2xs font-bold mt-1" style="color: var(--text-secondary);"></p>
         </div>
 
         <nav class="flex flex-col gap-1 flex-1" aria-label="เมนูหลัก">
@@ -3730,11 +3893,11 @@ function ui(user, active, content, script = "") {
         </nav>
 
         <div class="sidebar-hide mt-4 pt-4 border-t" style="border-color: var(--border-color);">
-            <p class="text-[11px] font-bold tracking-wide mb-2 px-2" style="color: var(--text-tertiary);">การแจ้งเตือน</p>
+            <p class="text-2xs font-bold tracking-wide mb-2 px-2" style="color: var(--text-tertiary);">การแจ้งเตือน</p>
             ${navs.alerts}
         </div>
 
-        <button onclick="logout()" title="ออกจากระบบ" class="nav-link font-bold p-2.5 border-t mt-3 rounded-lg transition-all flex items-center gap-2.5 text-xs" style="color: var(--accent-red); border-color: var(--border-color);">
+        <button onclick="logout()" title="ออกจากระบบ" class="nav-link font-bold p-2.5 border-t mt-3 rounded-lg transition-all flex items-center gap-2.5 text-xs" style="color: var(--status-critical-text); border-color: var(--border-color);">
             ${navIcon('logout')}<span class="sidebar-hide">ออกจากระบบ</span>
         </button>
 
@@ -3746,17 +3909,16 @@ function ui(user, active, content, script = "") {
     <main id="appMain" tabindex="-1" class="flex-1 p-6 md:p-8 overflow-auto">${content}</main>
     <a id="siteAlertBanner" href="/alert-history" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white px-5 py-3 rounded-xl shadow-2xl font-bold text-sm" role="alert" aria-live="assertive"></a>
 
-        <div id="globalModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" aria-hidden="true"><div class="modal-card p-6 sm:p-8" tabindex="-1"><div class="flex items-start gap-4"><div id="modalIcon" class="dialog-icon" aria-hidden="true">ℹ</div><div class="min-w-0 flex-1"><h3 id="modalTitle" class="text-xl font-bold text-pretty" style="color:var(--text-primary);"></h3></div></div><div id="modalBody" class="space-y-4 mt-5 break-words" style="color:var(--text-secondary);"></div><div class="flex flex-col-reverse sm:flex-row gap-3 mt-7"><button id="modalCancel" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ยกเลิก</button><button id="modalSubmit" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">ตกลง</button></div></div></div>
+        <div id="globalModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" aria-hidden="true"><div class="modal-card p-6 sm:p-8" tabindex="-1"><div class="flex items-start gap-4"><div id="modalIcon" class="dialog-icon" aria-hidden="true">ℹ</div><div class="min-w-0 flex-1"><h3 id="modalTitle" class="text-xl font-bold text-pretty" style="color:var(--text-primary);"></h3></div></div><div id="modalBody" class="space-y-4 mt-5 break-words" style="color:var(--text-secondary);"></div><div class="flex flex-col-reverse sm:flex-row gap-3 mt-7"><button id="modalCancel" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ยกเลิก</button><button id="modalSubmit" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ตกลง</button></div></div></div>
 
-    <div id="panelOverlay" class="panel-overlay" onclick="closePanel()"></div>
+    <div id="panelOverlay" class="panel-overlay" onclick="closePanel()" aria-hidden="true"></div>
     <div id="sidePanel" style="background: var(--bg-card); border-left: 1px solid var(--border-color);">
         <div class="panel-compact-header flex justify-between items-start">
             <div class="min-w-0 pr-4">
-                <p class="panel-kicker">VITAL SIGNS · TREND ANALYSIS</p>
                 <h2 id="p-title" class="text-3xl font-black" style="color: var(--text-heading);">แนวโน้มสัญญาณชีพ</h2>
                 <div class="panel-meta-row">
-                    <span id="p-hn" class="text-sm font-bold tracking-widest" style="color: var(--accent-primary);"></span>
-                    <label class="trend-range-control text-[10px] font-bold" for="trend-range">
+                    <span id="p-hn" class="text-sm font-bold tracking-widest" style="color: var(--accent-primary-strong);"></span>
+                    <label class="trend-range-control text-2xs font-bold" for="trend-range">
                         <span>ช่วงเวลา</span>
                         <select id="trend-range" onchange="changeTrendRange(this.value)" aria-label="เลือกช่วงเวลาของกราฟ">
                             <option value="1">1 ชม.</option>
@@ -3767,7 +3929,7 @@ function ui(user, active, content, script = "") {
                             <option value="168">7 วัน</option>
                         </select>
                     </label>
-                    <span id="trend-range-label" class="text-[10px] px-3 py-1 rounded-full font-bold uppercase italic"
+                    <span id="trend-range-label" class="text-2xs px-3 py-1 rounded-full font-bold uppercase italic"
                         style="background: var(--bg-badge); color: var(--text-badge); border: 1px solid var(--border-color);">
                         ย้อนหลัง 24 ชั่วโมง
                     </span>
@@ -3776,14 +3938,14 @@ function ui(user, active, content, script = "") {
             <div class="flex flex-col items-end gap-2 shrink-0">
                 <div class="panel-header-actions">
                     <a href="/alert-settings" class="admin-only panel-settings-btn" aria-label="ตั้งค่าช่วงและการแจ้งเตือน" title="ตั้งค่าช่วงและการแจ้งเตือน">
-                        <span aria-hidden="true">⚙️</span><span class="panel-settings-label">ตั้งค่าช่วง</span>
+                        <span aria-hidden="true"><span class="ic ic-gear" aria-hidden="true"></span></span><span class="panel-settings-label">ตั้งค่าช่วง</span>
                     </a>
                     <button onclick="closePanel()" class="panel-close-btn p-2 transition-all" aria-label="ปิดหน้ากราฟ"
                         style="background: var(--bg-badge); color: var(--text-secondary); border: 1px solid var(--border-color);">✕</button>
                 </div>
                 <button id="panel-export-btn" type="button"
-                    class="text-[10px] px-3 py-1 rounded-full font-black uppercase shadow-sm transition-all"
-                    style="background: var(--accent-primary); color: var(--text-inverse);">
+                    class="text-2xs px-3 py-1 rounded-full font-black uppercase shadow-sm transition-all"
+                    style="background: var(--accent-primary-strong); color: var(--text-inverse);">
                     ⬇ Export CSV 24h
                 </button>
             </div>
@@ -3793,13 +3955,13 @@ function ui(user, active, content, script = "") {
             <div class="trend-card trend-card--hr card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
                 <div class="trend-card-head flex justify-between items-center mb-2">
                     <div class="trend-title-group">
-                        <span class="trend-icon" aria-hidden="true">🫀</span>
+                        <span class="trend-icon" aria-hidden="true"><span class="ic ic-heart" aria-hidden="true"></span></span>
                         <div>
-                            <p class="text-xs font-bold uppercase" style="color: var(--accent-red);">Heart Rate</p>
+                            <p class="text-xs font-bold uppercase" style="color: var(--status-critical-text);">Heart Rate</p>
                             <span id="limit-hr" class="trend-card-subtitle">ช่วงที่ตั้งไว้ · BPM</span>
                         </div>
                     </div>
-                    <span id="avg-hr" class="trend-summary text-[10px] font-mono"></span>
+                    <span id="avg-hr" class="trend-summary text-2xs font-mono"></span>
                 </div>
                 <div class="trend-chart h-[145px]"><canvas id="chartHR_Panel"></canvas></div>
             </div>
@@ -3807,13 +3969,13 @@ function ui(user, active, content, script = "") {
             <div class="trend-card trend-card--spo2 card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
                 <div class="trend-card-head flex justify-between items-center mb-2">
                     <div class="trend-title-group">
-                        <span class="trend-icon" aria-hidden="true">💧</span>
+                        <span class="trend-icon" aria-hidden="true"><span class="ic ic-droplet" aria-hidden="true"></span></span>
                         <div>
-                            <p class="text-xs font-bold uppercase" style="color: var(--accent-primary);">Oxygen Saturation</p>
+                            <p class="text-xs font-bold uppercase" style="color: var(--accent-primary-strong);">Oxygen Saturation</p>
                             <span id="limit-spo2" class="trend-card-subtitle">ช่วงที่ตั้งไว้ · SpO₂ %</span>
                         </div>
                     </div>
-                    <span id="avg-spo2" class="trend-summary text-[10px] font-mono"></span>
+                    <span id="avg-spo2" class="trend-summary text-2xs font-mono"></span>
                 </div>
                 <div class="trend-chart h-[145px]"><canvas id="chartSPO2_Panel"></canvas></div>
             </div>
@@ -3821,13 +3983,13 @@ function ui(user, active, content, script = "") {
             <div class="trend-card trend-card--temp card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
                 <div class="trend-card-head flex justify-between items-center mb-2">
                     <div class="trend-title-group">
-                        <span class="trend-icon" aria-hidden="true">🌡️</span>
+                        <span class="trend-icon" aria-hidden="true"><span class="ic ic-thermo" aria-hidden="true"></span></span>
                         <div>
-                            <p class="text-xs font-bold uppercase" style="color: #f97316;">Body Temperature</p>
+                            <p class="text-xs font-bold uppercase" style="color: var(--status-temp-text);">Body Temperature</p>
                             <span id="limit-temp" class="trend-card-subtitle">ช่วงที่ตั้งไว้ · °C</span>
                         </div>
                     </div>
-                    <span id="avg-temp" class="trend-summary text-[10px] font-mono"></span>
+                    <span id="avg-temp" class="trend-summary text-2xs font-mono"></span>
                 </div>
                 <div class="trend-chart h-[145px]"><canvas id="chartTEMP_Panel"></canvas></div>
             </div>
@@ -4051,16 +4213,16 @@ function ui(user, active, content, script = "") {
                     <div class="p-8 rounded-3xl w-full max-w-lg shadow-2xl transition-all" style="background: var(--bg-card); border: 2px solid var(--accent-primary);">
                         <div class="flex justify-between items-center mb-6">
                             <h3 class="text-xl font-bold" style="color: var(--text-primary);">สแกน QR Code</h3>
-                            <button onclick="closeQRScanner()" class="p-2 rounded-xl transition-all" style="background: var(--bg-badge); color: var(--text-secondary);">✕</button>
+                            <button onclick="closeQRScanner()" class="p-2 rounded-xl transition-all" style="background: var(--bg-badge); color: var(--text-secondary);"><span class="ic ic-close" aria-hidden="true"></span></button>
                         </div>
                         <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลนส์กล้อง</label>
                         <select id="qr-camera-select" onchange="openQRScanner()" class="w-full mb-3 p-2 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-primary);">
                             <option value="">— กำลังตรวจจับกล้อง… —</option>
                         </select>
-                        <div id="qr-reader" style="width: 100%; height: 400px; position: relative; overflow: hidden; border-radius: 12px;">
-                            <div id="scan-guide" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border: 3px solid rgba(255,255,255,0.9); border-radius: 16px; pointer-events: none; z-index: 10;"></div>
+                        <div id="qr-reader" style="width: 100%; height: 400px; position: relative; overflow: hidden; border-radius: var(--r-md);">
+                            <div id="scan-guide" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 220px; height: 220px; border: 3px solid rgba(255,255,255,0.9); border-radius: var(--r-lg); pointer-events: none; z-index: 10;"></div>
                             <div id="scan-line" style="position: absolute; top: calc(50% - 110px); left: calc(50% - 110px); width: 220px; height: 3px; background: rgba(255,255,255,0.9); z-index: 11; pointer-events: none; animation: scan-pulse 2s ease-in-out infinite;"></div>
-                            <p id="scan-hint" style="position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: white; font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,0.9); z-index: 10; pointer-events: none; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 8px;">ยกห่าง QR Code ประมาณ 15-20 ซม.</p>
+                            <p id="scan-hint" style="position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); color: white; font-size: var(--fs-body); text-shadow: 0 1px 4px rgba(0,0,0,0.9); z-index: 10; pointer-events: none; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: var(--r-sm);">ยกห่าง QR Code ประมาณ 15-20 ซม.</p>
                         </div>
                         <div id="qr-result" class="mt-4 p-4 rounded-xl" style="background: var(--bg-input); border: 1px solid var(--border-color); display: none;">
                             <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">ผลลัพธ์:</p>
@@ -4368,6 +4530,9 @@ function ui(user, active, content, script = "") {
                 };
 
                 ctx.save();
+                // Canvas cannot resolve var(), so these bands carry the resolved status
+                // values per theme. They mirror --accent-red / --accent-yellow; keep them in
+                // step if those tokens ever change.
                 fillBand(yScale.min, criticalMin, isDark ? 'rgba(248,81,73,0.09)' : 'rgba(239,68,68,0.065)');
                 fillBand(criticalMin, warningMin, isDark ? 'rgba(210,153,34,0.11)' : 'rgba(234,179,8,0.09)');
                 fillBand(warningMin, warningMax, isDark ? 'rgba(63,185,80,0.08)' : 'rgba(34,197,94,0.07)');
@@ -5641,9 +5806,9 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         </div>
 
         <div class="flex items-center gap-2">
-            ${roleHasCapability(req.user?.role, 'devices:write') ? `<a href="/quick-setup" class="qs-primary" style="font-size:.68rem; padding:.5rem 1rem; border-radius:9999px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:inline-block;vertical-align:-2px;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> เริ่มต้นใช้งาน</a>` : ''}
+            ${roleHasCapability(req.user?.role, 'devices:write') ? `<a href="/quick-setup" class="qs-primary" style="font-size: var(--fs-label); padding:.5rem 1rem; border-radius: var(--r-pill);"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="display:inline-block;vertical-align:-2px;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> เริ่มต้นใช้งาน</a>` : ''}
             <div id="patient-count" class="dashboard-sync text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm" style="background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);">0 Patients</div>
-            <div id="last-sync" class="dashboard-sync text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm" style="background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border-color);">🔄 Syncing...</div>
+            <div id="last-sync" class="dashboard-sync text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm" style="background: var(--bg-card); color: var(--text-tertiary); border: 1px solid var(--border-color);"><span class="ic ic-refresh" aria-hidden="true"></span> Syncing...</div>
         </div>
     </div>
 
@@ -5658,15 +5823,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     <aside id="ai-chat-panel" class="ai-chat-panel" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title" aria-hidden="true">
         <div class="ai-chat-header">
             <div class="ai-chat-brand">
-                <div class="ai-chat-brand-icon" aria-hidden="true">✦</div>
+                <div class="ai-chat-brand-icon" aria-hidden="true"><span class="ic ic-sparkle" aria-hidden="true"></span></div>
                 <div class="min-w-0">
                     <h2 id="ai-chat-title" class="font-black text-lg text-pretty">NurseAid AI Assistant</h2>
                     <div class="ai-chat-status"><span class="ai-chat-status-dot" aria-hidden="true"></span><span id="ai-chat-status-text">พร้อมช่วยสรุปข้อมูล Monitor</span></div>
                 </div>
             </div>
             <div class="ai-chat-header-actions">
-                <button id="ai-chat-new" class="ai-chat-icon-button" type="button" aria-label="เริ่มการสนทนาใหม่" title="เริ่มใหม่">↻</button>
-                <button id="ai-chat-close" class="ai-chat-close" type="button" aria-label="ปิด NurseAid AI Assistant">✕</button>
+                <button id="ai-chat-new" class="ai-chat-icon-button" type="button" aria-label="เริ่มการสนทนาใหม่" title="เริ่มใหม่"><span class="ic ic-refresh" aria-hidden="true"></span></button>
+                <button id="ai-chat-close" class="ai-chat-close" type="button" aria-label="ปิด NurseAid AI Assistant"><span class="ic ic-close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="ai-chat-controls">
@@ -5993,11 +6158,11 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 <p class="font-bold text-slate-800">เตียง \${escapeHTML(bed || '-')}: \${escapeHTML(name || '-')}</p>
             </div>
             <div class="alert-settings-modal-grid text-sm">
-                <div class="range-metric-card range-metric-card--hr"><div class="font-bold mb-2">Heart Rate (BPM)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning ต่ำ</label><input type="number" id="th-hrWarningMin" value="\${current.hrWarningMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning สูง</label><input type="number" id="th-hrWarningMax" value="\${current.hrWarningMax}" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical ต่ำ</label><input type="number" id="th-hrMin" value="\${current.hrMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical สูง</label><input type="number" id="th-hrMax" value="\${current.hrMax}" class="w-full border p-2 rounded-lg"></div></div></div>
-                <div class="range-metric-card range-metric-card--spo2"><div class="font-bold mb-2">SpO₂ (%)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning ต่ำกว่า</label><input type="number" id="th-spo2Min" value="\${current.spo2WarningMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical ≤</label><input type="number" id="th-spo2CriticalMin" value="\${current.spo2CriticalMin}" class="w-full border p-2 rounded-lg"></div></div></div>
-                <div class="range-metric-card range-metric-card--temp"><div class="font-bold mb-2">Temperature (°C)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning ต่ำ</label><input type="number" id="th-tempWarningMin" value="\${current.tempWarningMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning สูง</label><input type="number" id="th-tempWarningMax" value="\${current.tempWarningMax}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical ต่ำ</label><input type="number" id="th-tempMin" value="\${current.tempMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical สูง</label><input type="number" id="th-tempMax" value="\${current.tempMax}" step="0.1" class="w-full border p-2 rounded-lg"></div></div></div>
+                <div class="range-metric-card range-metric-card--hr"><div class="font-bold mb-2">Heart Rate (BPM)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-2xs" style="color:var(--status-warning-text);">Warning ต่ำ</label><input type="number" id="th-hrWarningMin" value="\${current.hrWarningMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-warning-text);">Warning สูง</label><input type="number" id="th-hrWarningMax" value="\${current.hrWarningMax}" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-critical-text);">Critical ต่ำ</label><input type="number" id="th-hrMin" value="\${current.hrMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-critical-text);">Critical สูง</label><input type="number" id="th-hrMax" value="\${current.hrMax}" class="w-full border p-2 rounded-lg"></div></div></div>
+                <div class="range-metric-card range-metric-card--spo2"><div class="font-bold mb-2">SpO₂ (%)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-2xs" style="color:var(--status-warning-text);">Warning ต่ำกว่า</label><input type="number" id="th-spo2Min" value="\${current.spo2WarningMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-critical-text);">Critical ≤</label><input type="number" id="th-spo2CriticalMin" value="\${current.spo2CriticalMin}" class="w-full border p-2 rounded-lg"></div></div></div>
+                <div class="range-metric-card range-metric-card--temp"><div class="font-bold mb-2">Temperature (°C)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-2xs" style="color:var(--status-warning-text);">Warning ต่ำ</label><input type="number" id="th-tempWarningMin" value="\${current.tempWarningMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-warning-text);">Warning สูง</label><input type="number" id="th-tempWarningMax" value="\${current.tempWarningMax}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-critical-text);">Critical ต่ำ</label><input type="number" id="th-tempMin" value="\${current.tempMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-2xs" style="color:var(--status-critical-text);">Critical สูง</label><input type="number" id="th-tempMax" value="\${current.tempMax}" step="0.1" class="w-full border p-2 rounded-lg"></div></div></div>
             </div>
-            <button id="reset-patient-limits" type="button" class="w-full mt-4 text-[10px] text-slate-500 underline italic">ล้างค่าและใช้ค่าเริ่มต้น</button>
+            <button id="reset-patient-limits" type="button" class="w-full mt-4 text-2xs text-slate-500 underline italic">ล้างค่าและใช้ค่าเริ่มต้น</button>
         \`;
         openModal('⚙️ Settings', html, async () => {
             const response = await fetch('/api/alert-settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
@@ -6104,7 +6269,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             if (patientCountEl) patientCountEl.innerText = 'ผู้ป่วย ' + (data && data.length ? data.length : 0) + ' คน';
 
             if(!data || data.length === 0) {
-                grid.innerHTML = '<div class="col-span-full flex flex-col items-center justify-center text-center" style="padding:4rem 1.5rem;"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--text-muted);margin-bottom:1rem;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><p style="color:var(--text-primary);font-weight:700;font-size:1rem;margin-bottom:.35rem;">ยังไม่มีผู้ป่วยที่กำลังติดตาม</p><p style="color:var(--text-secondary);font-size:.875rem;max-width:34ch;line-height:1.6;">เมื่อจับคู่อุปกรณ์กับผู้ป่วยแล้ว ข้อมูลสัญญาณชีพจะแสดงที่นี่แบบเรียลไทม์</p></div>';
+                grid.innerHTML = '<div class="col-span-full flex flex-col items-center justify-center text-center" style="padding:4rem 1.5rem;"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--text-muted);margin-bottom:1rem;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><p style="color:var(--text-primary);font-weight:700;font-size: var(--fs-body-lg);margin-bottom:.35rem;">ยังไม่มีผู้ป่วยที่กำลังติดตาม</p><p style="color:var(--text-secondary);font-size: var(--fs-body);max-width:34ch;line-height:1.6;">เมื่อจับคู่อุปกรณ์กับผู้ป่วยแล้ว ข้อมูลสัญญาณชีพจะแสดงที่นี่แบบเรียลไทม์</p></div>';
                 return;
             }
 
@@ -6177,17 +6342,17 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 }
                 const battLabel = p.battery === 0 ? 'แบตหมด' : (p.battery !== '--' ? p.battery + '%' : 'ไม่ทราบแบต');
 
-                const bedBg = isInactive ? 'bg-gray-500' : (isDark ? 'bg-gray-700' : 'bg-gray-800');
-                const nameColor = isInactive ? 'text-gray-500' : (isDark ? 'text-gray-100' : 'text-slate-800');
-                const hnColor = isInactive ? 'text-gray-500' : (isDark ? 'text-gray-500' : 'text-slate-500');
+                const bedBg = isInactive ? 'var(--text-secondary)' : 'var(--text-heading)';
+                const nameColor = isInactive ? 'var(--text-tertiary)' : 'var(--text-heading)';
+                const hnColor = isInactive ? 'var(--text-tertiary)' : 'var(--text-secondary)';
                 const settingsColor = isInactive
                     ? 'text-gray-500 hover:text-gray-600'
                     : (isDark ? 'text-gray-600 hover:text-blue-400' : 'text-slate-500 hover:text-blue-600');
                 const vitalBg = isDark ? 'style="background: var(--bg-vital);"' : 'class="bg-slate-50"';
-                const vitalTextColor = isDark ? 'var(--text-vital-muted)' : 'text-slate-500';
-                const grayBg = isDark ? 'style="background: #111827; border: 1px solid #4b5563;"' : 'style="background: #d1d5db; border: 1px solid #9ca3af;"';
-                const grayTextColor = isDark ? '#9ca3af' : '#6b7280';
-                const inactiveCardStyle = isDark ? 'background: #1f2937;' : 'background: #e5e7eb;';
+                const vitalTextColor = 'var(--text-vital-muted)';
+                const grayBg = 'style="background: var(--bg-input); border: 1px solid var(--border-color);"';
+                const grayTextColor = 'var(--text-tertiary)';
+                const inactiveCardStyle = 'background: var(--bg-card-hover);';
                 // The outer card frame communicates patient clinical state:
                 // green = normal vital signs, red = abnormal vital signs.
                 // Connection/measurement status is communicated by the round status dot.
@@ -6198,11 +6363,11 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     : (isWarn ? 'border-color: var(--accent-yellow);' : (isClinicallyNormal ? 'border-color: var(--accent-green);' : 'border-color: var(--border-color);'));
                 const normalVitalNumColor = isDark ? '#e6edf3' : '#334155';
                 const criticalVitalBg = isDark
-                    ? 'style="background: var(--accent-red-light); border: 1px solid rgba(248, 81, 73, 0.3);"'
+                    ? 'style="background: var(--accent-red-light); border: 1px solid color-mix(in srgb, var(--accent-red) 30%, transparent);"'
                     : 'style="background: var(--accent-red-light); border: 1px solid var(--accent-red-light);"';
                 const warningVitalBg = isDark
-                    ? 'style="background: rgba(210, 153, 34, 0.14); border: 1px solid rgba(210, 153, 34, 0.35);"'
-                    : 'style="background: #fef3c7; border: 1px solid #fde68a;"';
+                    ? 'style="background: color-mix(in srgb, var(--accent-yellow) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent-yellow) 35%, transparent);"'
+                    : 'style="background: color-mix(in srgb, var(--accent-yellow) 18%, transparent); border: 1px solid color-mix(in srgb, var(--accent-yellow) 38%, transparent);"';
                 // Highlight only the metric that is outside its own limits.
                 // A critical SpO2 or temperature must not make a normal HR red.
                 const hrBg = isInactive ? grayBg : (isHrCrit ? criticalVitalBg : (isHrWarn ? warningVitalBg : vitalBg));
@@ -6238,28 +6403,27 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     spo2Quality: escapeHTML(p.spo2Quality || 'unavailable')
                 };
                 const html = \`
-                <div class="card p-4 border-t-4 transition-all \${p.priority === 'high' ? 'priority-ring-high' : ''}" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
+                <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
                     <div class="flex items-center justify-between mb-4 gap-2 pb-2" style="border-bottom-color: var(--border-color);">
                         <div class="flex min-w-0 items-center gap-2 flex-1">
                             <button type="button" data-role="drag-handle" class="priority-editable shrink-0" aria-label="ลากเพื่อจัดเรียงลำดับ" title="ลากเพื่อจัดเรียงลำดับ" style="cursor:grab; touch-action:none; background:none; border:none; padding:2px; color:var(--text-tertiary);">⠿</button>
-                            <span class="shrink-0 text-[10px] px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: white;">\${safe.bed}</span>
+                            <span class="shrink-0 text-2xs px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: var(--text-inverse);">\${safe.bed}</span>
                             <span data-role="device-status" role="status" class="w-3 h-3 shrink-0 rounded-full \${statusColor}" aria-label="สถานะเครื่อง: \${statusLabel}" title="\${safe.dataMessage}"></span>
-                            <div class="flex min-w-0 flex-col">
-                                <button type="button" data-action="show-trend" class="font-bold text-sm truncate cursor-pointer leading-tight text-left" style="color: \${nameColor};">\${safe.name}</button>
-                                <div class="flex items-center gap-2">
-                                    <span class="min-w-0 truncate text-[10px] font-bold uppercase" style="color: \${hnColor};">HN: \${safe.hn}</span>
+                            <div class="flex min-w-0 flex-col gap-0.5">
+                                <button type="button" data-action="show-trend" class="font-bold text-sm cursor-pointer leading-tight text-left" style="color: \${nameColor}; overflow-wrap:anywhere;">\${safe.name}</button>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-2xs font-bold" style="color: \${hnColor}; font-family: var(--font-mono); letter-spacing:.01em;">\${safe.hn}</span>
                                     <div class="flex items-center gap-0.5 \${battColor}">
                                         <svg class="w-4 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
                                             <line x1="23" y1="13" x2="23" y2="11"></line>
                                             <line x1="5" y1="9" x2="\${p.battery !== '--' ? (5 + (p.battery * 0.1)) : 5}" y2="9" stroke-width="4" stroke="currentColor" opacity="0.8"></line>
                                         </svg>
-                                        <span class="text-[10px] font-bold">\${safe.batteryLabel}</span>
+                                        <span class="text-2xs font-bold">\${safe.batteryLabel}</span>
                                     </div>
                                 </div>
                             </div>
-                            \${p.priority ? '<span class="priority-badge priority-badge--' + p.priority + '">' + ({high:'สูง',medium:'กลาง',low:'ต่ำ'}[p.priority]) + '</span>' : ''}
-                            \${hasCustom ? '<span class="text-[10px] shrink-0" title="ตั้งค่าเฉพาะบุคคล">⚙️</span>' : ''}
+                            \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span>' : ''}
                         </div>
                         <select data-action="set-priority" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
                             <option value="">ไม่ระบุ</option>
@@ -6274,15 +6438,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
                     <div class="grid grid-cols-3 gap-2">
                         <div class="p-2 rounded-xl text-center transition-all" \${hrBg}>
-                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
+                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
                             <p class="\${p.hr === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${hrNumColor};">\${safe.hr}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${spo2Bg}>
-                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
+                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
                             <p class="\${p.spo2 === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${spo2NumColor};" title="SpO2 quality: \${safe.spo2Quality}">\${safe.spo2}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${tempBg}>
-                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
+                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
                             <p class="\${p.temp === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${tempNumColor};">\${safe.temp}</p>
                         </div>
                     </div>
@@ -6459,11 +6623,11 @@ app.get('/export', async (req, res) => {
 
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="text-[10px] font-bold text-slate-500">เริ่มวันที่</label>
+                        <label class="text-2xs font-bold text-slate-500">เริ่มวันที่</label>
                         <input id="e-start" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
                     </div>
                     <div>
-                        <label class="text-[10px] font-bold text-slate-500">ถึงวันที่</label>
+                        <label class="text-2xs font-bold text-slate-500">ถึงวันที่</label>
                         <input id="e-stop" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
                     </div>
                 </div>
@@ -6740,8 +6904,8 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
         const battery = batteryByMac.get(normalizeMac(d.mac));
         const battCell = battery === undefined
             ? '<span class="text-slate-500 text-xs">ไม่ทราบแบต</span>'
-            : `<span class="inline-flex items-center gap-1 font-bold text-xs ${battery === 0 ? 'text-gray-500' : (battery < 20 ? 'text-red-500' : (battery < 40 ? 'text-orange-500' : 'text-emerald-600'))}">🔋 ${battery}%</span>`;
-        return `<tr><td class="font-bold">#${escapeHtml(d.device_no)}</td><td><span class="px-2 py-1 rounded-lg text-[10px] font-bold ${d.device_type === 'wearos' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}">${escapeHtml(d.device_type || 'jstyle')}</span></td><td class="font-mono text-slate-500 text-xs">${escapeHtml(d.mac)}</td><td>${battCell}</td><td class="text-right admin-only"><button onclick="editD('${escapeJsSingle(d.mac)}','${escapeJsSingle(d.device_no)}','${escapeJsSingle(d.device_type || 'jstyle')}')" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delD('${escapeJsSingle(d.mac)}')" class="text-red-400 font-bold">ลบ</button></td></tr>`;
+            : `<span class="inline-flex items-center gap-1 font-bold text-xs ${battery === 0 ? 'text-gray-500' : (battery < 20 ? 'text-red-500' : (battery < 40 ? 'text-orange-500' : 'text-emerald-600'))}"><span class="ic ic-battery" aria-hidden="true"></span> ${battery}%</span>`;
+        return `<tr><td class="font-bold">#${escapeHtml(d.device_no)}</td><td><span class="px-2 py-1 rounded-lg text-2xs font-bold ${d.device_type === 'wearos' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'}">${escapeHtml(d.device_type || 'jstyle')}</span></td><td class="font-mono text-slate-500 text-xs">${escapeHtml(d.mac)}</td><td>${battCell}</td><td class="text-right admin-only"><button onclick="editD('${escapeJsSingle(d.mac)}','${escapeJsSingle(d.device_no)}','${escapeJsSingle(d.device_type || 'jstyle')}')" class="font-bold mr-3" style="color: var(--accent-primary-strong);">แก้ไข</button><button onclick="delD('${escapeJsSingle(d.mac)}')" class="font-bold" style="color: var(--status-critical-text);">ลบ</button></td></tr>`;
     }).join('');
     res.send(ui(req.user, 'devs', `
         <div class="grid md:grid-cols-3 gap-8">
@@ -6751,7 +6915,7 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
                     <input id="dno" placeholder="Device No" class="w-full border p-3 rounded-xl bg-slate-50">
                     <div class="device-address-row flex gap-2">
                         <input id="m_addr" placeholder="MAC Address" class="flex-1 border p-3 rounded-xl bg-slate-50">
-                        <button onclick="openQRScanner()" class="px-4 py-3 rounded-xl font-bold text-white shadow-lg transition-all hover:scale-105 active:scale-95 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 flex items-center gap-2" title="สแกน QR Code">
+                        <button onclick="openQRScanner()" class="px-4 py-3 rounded-xl font-bold shadow-lg transition-all hover:scale-105 active:scale-95 flex items-center gap-2" style="background: var(--accent-primary-strong); color: var(--text-inverse);" title="สแกน QR Code">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -6780,7 +6944,7 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
             location.reload();
         };
         window.editD = (mac, dno, dtype) => {
-            openModal('✏️ แก้ไข', '<input id="edno" value="'+escapeHTML(dno)+'" class="w-full border p-3 rounded-xl bg-slate-50 mb-3"><select id="edtype" class="w-full border p-3 rounded-xl bg-slate-50"><option value="jstyle" '+(dtype==='jstyle'?'selected':'')+'>JStyle / iStyle Watch</option><option value="wearos" '+(dtype==='wearos'?'selected':'')+'>Wear OS Peripheral</option></select>', async () => {
+            openModal('<span class="ic ic-edit" aria-hidden="true"></span> แก้ไข', '<input id="edno" value="'+escapeHTML(dno)+'" class="w-full border p-3 rounded-xl bg-slate-50 mb-3"><select id="edtype" class="w-full border p-3 rounded-xl bg-slate-50"><option value="jstyle" '+(dtype==='jstyle'?'selected':'')+'>JStyle / iStyle Watch</option><option value="wearos" '+(dtype==='wearos'?'selected':'')+'>Wear OS Peripheral</option></select>', async () => {
                 const response = await fetch('/api/devices/update', {
                     method:'POST', headers:{'Content-Type':'application/json'},
                     body:JSON.stringify({mac, newDno:document.getElementById('edno').value, device_type:document.getElementById('edtype').value})
@@ -6935,9 +7099,19 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
                                 GROUP BY u.id ORDER BY u.created_at DESC`,
                                 isFullAdmin ? [] : [req.user.wardIds || await getUserWardIds(req.user.id)]);
     const rows = r.rows.map(u => {
-        const _RC = {super_admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'ผู้ดูแลระบบสูงสุด'},ward_admin:{b:'var(--accent-primary-light)',c:'var(--accent-primary)',l:'ผู้ดูแลหอผู้ป่วย'},staff_nurse:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'พยาบาลประจำการ'},viewer:{b:'#e2e8f0',c:'#64748b',l:'ผู้ดูข้อมูล'},admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'Admin'},operator:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'Operator'}};
+        // Badge fill is a tint of its OWN text colour, so both sides flip with the theme
+        // together and the pair keeps its ratio. A fixed hex here breaks the other theme.
+        const _tint = t => `background: color-mix(in srgb, ${t} 15%, transparent); color: ${t};`;
+        const _RC = {
+            super_admin: {t:'var(--status-critical-text)', l:'ผู้ดูแลระบบสูงสุด'},
+            admin:       {t:'var(--status-critical-text)', l:'Admin'},
+            ward_admin:  {t:'var(--accent-primary-strong)', l:'ผู้ดูแลหอผู้ป่วย'},
+            staff_nurse: {t:'var(--status-success-text)',  l:'พยาบาลประจำการ'},
+            operator:    {t:'var(--status-success-text)',  l:'Operator'},
+            viewer:      {t:'var(--text-secondary)',       l:'ผู้ดูข้อมูล'}
+        };
         const _r = _RC[u.role] || _RC.viewer;
-        const roleBadge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold" style="background: ${_r.b}; color: ${_r.c};">${_r.l}</span>`;
+        const roleBadge = `<span class="text-2xs px-2 py-0.5 rounded-full font-bold" style="${_tint(_r.t)}">${_r.l}</span>`;
         const myRank = {super_admin:4,admin:4,ward_admin:3,staff_nurse:2,operator:2,viewer:1}[req.user.role]||1;
         const targetRank = {super_admin:4,admin:4,ward_admin:3,staff_nurse:2,operator:2,viewer:1}[u.role]||1;
         const canManage = (myRank > targetRank) || (myRank === 4 && targetRank === 4 && req.user.id === u.id); // roughly
@@ -6945,12 +7119,12 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
             <td class="font-mono text-xs">${escapeHtml(u.username)}</td>
             <td>${escapeHtml(u.full_name || '-')}</td>
             <td>${roleBadge}</td>
-            <td class="text-[10px]">${u.user_wards && u.user_wards[0] ? escapeHtml(u.user_wards.join(', ')) : '-'}</td>
+            <td class="text-2xs">${u.user_wards && u.user_wards[0] ? escapeHtml(u.user_wards.join(', ')) : '-'}</td>
             <td class="text-xs text-slate-500">${new Date(u.created_at).toLocaleString('th-TH')}</td>
             <td class="text-right">
-                ${canManage ? `<button onclick="editUser(${u.id},'${escapeJsSingle(u.username)}','${escapeJsSingle(u.full_name || '')}','${escapeJsSingle(u.role)}')" class="text-blue-500 font-bold text-xs mr-3">แก้ไข</button>` : ''}
-                ${canManage ? `<button onclick="resetUserPass(${u.id},'${escapeJsSingle(u.username)}')" class="text-amber-500 font-bold text-xs mr-3">รหัสผ่าน</button>` : ''}
-                ${canManage && u.id !== req.user.id ? `<button onclick="delUser(${u.id},'${escapeJsSingle(u.username)}')" class="text-red-500 font-bold text-xs">ลบ</button>` : ''}
+                ${canManage ? `<button onclick="editUser(${u.id},'${escapeJsSingle(u.username)}','${escapeJsSingle(u.full_name || '')}','${escapeJsSingle(u.role)}')" class="font-bold text-xs mr-3" style="color: var(--accent-primary-strong);">แก้ไข</button>` : ''}
+                ${canManage ? `<button onclick="resetUserPass(${u.id},'${escapeJsSingle(u.username)}')" class="font-bold text-xs mr-3" style="color: var(--status-warning-text);">รหัสผ่าน</button>` : ''}
+                ${canManage && u.id !== req.user.id ? `<button onclick="delUser(${u.id},'${escapeJsSingle(u.username)}')" class="font-bold text-xs" style="color: var(--status-critical-text);">ลบ</button>` : ''}
             </td>
         </tr>`;
     }).join('');
@@ -6966,7 +7140,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
                     <div><label class="text-xs font-bold">บทบาท</label><select id="u_role" class="w-full border p-3 rounded-xl bg-slate-50">${addRoleOptions}</select></div>
                     <div><label class="text-xs font-bold">หอผู้ป่วย</label><div id="u_wards" class="w-full border p-2 rounded-xl bg-slate-50 h-[46px] overflow-y-auto space-y-1">${wardChecksForCreate}</div></div>
                 </div>
-                ${lockedWardId ? '<p class="text-[10px] text-slate-500 mt-2">ผู้ใช้ใหม่จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                ${lockedWardId ? '<p class="text-2xs text-slate-500 mt-2">ผู้ใช้ใหม่จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                 <button onclick="addUser()" class="mt-4 w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-colors">บันทึก</button>
             </div>
             <div class="card overflow-hidden">
@@ -7369,7 +7543,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
     const wardOpts = allowedWardsResult.rows.map(w => `<option value="${w.id}" ${lockedWardId === w.id ? 'selected' : ''}>${escapeHtml(w.code)} - ${escapeHtml(w.name)}</option>`).join('');
     const wardSelectAttrs = lockedWardId ? 'disabled' : '';
 
-    const rows = r.rows.map(p => `<tr><td class="font-bold text-blue-600">${escapeHtml(p.hn_number)}</td><td>${escapeHtml(p.name)}</td><td class="text-xs">${escapeHtml(p.ward_code || '-')}</td><td class="text-right"><button onclick="editP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}',${p.ward_id ?? 'null'})" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}')" class="text-red-500 font-bold">ลบ</button></td></tr>`).join('');
+    const rows = r.rows.map(p => `<tr><td class="font-bold" style="color: var(--accent-primary-strong);">${escapeHtml(p.hn_number)}</td><td>${escapeHtml(p.name)}</td><td class="text-xs">${escapeHtml(p.ward_code || '-')}</td><td class="text-right"><button onclick="editP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}',${p.ward_id ?? 'null'})" class="font-bold mr-3" style="color: var(--accent-primary-strong);">แก้ไข</button><button onclick="delP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}')" class="font-bold" style="color: var(--status-critical-text);">ลบ</button></td></tr>`).join('');
     res.send(ui(req.user, 'pats', `
         <h2 class="text-2xl font-bold tracking-tight mb-6" style="color: var(--text-heading);">จัดการผู้ป่วย</h2>
         <div class="grid md:grid-cols-3 gap-8">
@@ -7390,7 +7564,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                         <option value="">เลือกหอผู้ป่วย</option>
                         ${wardOpts}
                     </select>
-                    ${lockedWardId ? '<p class="text-[10px] text-slate-500">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                    ${lockedWardId ? '<p class="text-2xs text-slate-500">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                     </div>
                     <button onclick="addP()" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold">บันทึก</button>
                 </div>
@@ -7616,17 +7790,17 @@ app.get('/matching', requireCapability('pairing:write'), async (req, res) => {
     );
     const cards = r.rows.map(x => {
         const btnHtml = x.hm_number
-            ? `<button onclick="changeDevice('${escapeJsSingle(x.mac)}', '${escapeJsSingle(x.name)}', '${escapeJsSingle(x.hm_number)}', '${escapeJsSingle(x.bed_no || '')}')" class="w-full p-2 mb-2 rounded-lg text-[10px] font-bold transition-colors" style="background: var(--accent-amber); color: var(--text-inverse);">🔄 Change Device</button><button onclick="unpair('${escapeJsSingle(x.mac)}')" class="w-full p-2 rounded-lg text-[10px] font-bold" style="color: var(--accent-red); border: 1px solid var(--border-color);">Unpair</button>`
-            : `<button onclick="openPair('${escapeJsSingle(x.mac)}', '${escapeJsSingle(x.device_no)}')" class="admin-only w-full p-2 rounded-lg text-[10px] font-bold" style="background: var(--accent-primary); color: var(--text-inverse);">Pair Device</button>`;
+            ? `<button onclick="changeDevice('${escapeJsSingle(x.mac)}', '${escapeJsSingle(x.name)}', '${escapeJsSingle(x.hm_number)}', '${escapeJsSingle(x.bed_no || '')}')" class="w-full p-2 mb-2 rounded-lg text-2xs font-bold transition-colors" style="background: var(--status-warning-text); color: var(--text-inverse);"><span class="ic ic-refresh" aria-hidden="true"></span> Change Device</button><button onclick="unpair('${escapeJsSingle(x.mac)}')" class="w-full p-2 rounded-lg text-2xs font-bold" style="color: var(--status-critical-text); border: 1px solid var(--border-color);">Unpair</button>`
+            : `<button onclick="openPair('${escapeJsSingle(x.mac)}', '${escapeJsSingle(x.device_no)}')" class="admin-only w-full p-2 rounded-lg text-2xs font-bold" style="background: var(--accent-primary-strong); color: var(--text-inverse);">Pair Device</button>`;
         const cardBg = x.hm_number ? 'background: var(--bg-card-paired); border-color: var(--border-card-paired);' : '';
-        const deviceBadgeBg = x.hm_number ? 'background: var(--accent-primary);' : 'background: var(--bg-badge); color: var(--text-secondary);';
-        const bedBadgeBg = x.hm_number ? 'background: var(--accent-secondary);' : 'background: var(--bg-badge); color: var(--text-secondary);';
+        const deviceBadgeBg = x.hm_number ? 'background: var(--accent-primary-strong); color: var(--text-inverse);' : 'background: var(--bg-badge); color: var(--text-secondary);';
+        const bedBadgeBg = x.hm_number ? 'background: var(--priority-high-text); color: var(--text-inverse);' : 'background: var(--bg-badge); color: var(--text-secondary);';
         const patientNameColor = x.hm_number ? 'color: var(--text-primary);' : 'color: var(--text-tertiary);';
-        const hnColor = x.hm_number ? 'color: var(--accent-primary);' : 'color: var(--text-tertiary);';
+        const hnColor = x.hm_number ? 'color: var(--accent-primary-strong);' : 'color: var(--text-tertiary);';
         const availText = x.hm_number ? escapeHtml(x.name) : 'Available';
         const availClass = x.hm_number ? 'font-bold' : 'italic';
-        const hnLine = x.hm_number ? `<p class="text-[10px] font-bold" style="${hnColor}">HN: ${escapeHtml(x.hm_number)}</p>` : '';
-        return `<div class="card p-6" style="${cardBg}"><div class="flex justify-between mb-4"><span class="text-[10px] px-2 py-1 rounded font-bold uppercase" style="${deviceBadgeBg}">#${escapeHtml(x.device_no)}</span> ${x.bed_no ? `<span class="text-[10px] px-2 py-1 rounded font-bold italic" style="${bedBadgeBg}">BED ${escapeHtml(x.bed_no)}</span>` : ''}</div><div class="min-h-[80px]"><p class="${availClass}" style="${patientNameColor}">${availText}</p>${hnLine}</div><div class="mt-4">${btnHtml}</div></div>`;
+        const hnLine = x.hm_number ? `<p class="text-2xs font-bold" style="${hnColor}">HN: ${escapeHtml(x.hm_number)}</p>` : '';
+        return `<div class="card p-6" style="${cardBg}"><div class="flex justify-between mb-4"><span class="text-2xs px-2 py-1 rounded font-bold uppercase" style="${deviceBadgeBg}">#${escapeHtml(x.device_no)}</span> ${x.bed_no ? `<span class="text-2xs px-2 py-1 rounded font-bold italic" style="${bedBadgeBg}">BED ${escapeHtml(x.bed_no)}</span>` : ''}</div><div class="min-h-[80px]"><p class="${availClass}" style="${patientNameColor}">${availText}</p>${hnLine}</div><div class="mt-4">${btnHtml}</div></div>`;
     }).join('');
     res.send(ui(req.user, 'match', `<h2 class="text-2xl font-bold tracking-tight mb-8" style="color: var(--text-heading);">จับคู่อุปกรณ์กับผู้ป่วย</h2><div id="pairing-grid" class="monitor-grid-layout">${cards}</div>`, `
         window.openPair = async (mac, dno) => {
@@ -7876,46 +8050,46 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         const limits = alertThresholds(d);
         return `<article class="range-patient-card card">
             <div class="flex items-start justify-between gap-3 mb-3"><div class="min-w-0">
-                <div class="flex items-center gap-2 mb-1"><span class="text-[10px] px-2 py-1 rounded-lg font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">เตียง ${escapeHtml(d.bed_no || '-')}</span><span class="text-[10px] px-2 py-1 rounded-full font-bold" style="background:${hasCustom ? 'var(--accent-amber)' : 'var(--bg-badge)'};color:${hasCustom ? 'var(--text-inverse)' : 'var(--text-secondary)'};">${hasCustom ? 'ตั้งค่าเฉพาะราย' : 'ใช้ค่ากลาง'}</span></div>
-                <h3 class="font-bold truncate" style="color:var(--text-primary);">${escapeHtml(d.name || '-')}</h3><p class="text-[10px]" style="color:var(--text-tertiary);">HN ${escapeHtml(d.hm_number || '-')} · อุปกรณ์ #${escapeHtml(d.device_no)}</p>
+                <div class="flex items-center gap-2 mb-1"><span class="text-2xs px-2 py-1 rounded-lg font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">เตียง ${escapeHtml(d.bed_no || '-')}</span><span class="text-2xs px-2 py-1 rounded-full font-bold" style="background:${hasCustom ? 'var(--status-warning-text)' : 'var(--bg-badge)'};color:${hasCustom ? 'var(--text-inverse)' : 'var(--text-secondary)'};">${hasCustom ? 'ตั้งค่าเฉพาะราย' : 'ใช้ค่ากลาง'}</span></div>
+                <h3 class="font-bold truncate" style="color:var(--text-primary);">${escapeHtml(d.name || '-')}</h3><p class="text-2xs" style="color:var(--text-tertiary);">HN ${escapeHtml(d.hm_number || '-')} · อุปกรณ์ #${escapeHtml(d.device_no)}</p>
             </div></div>
             <div class="range-patient-values mb-3"><div class="range-patient-value"><span>HEART RATE</span><strong>N ${limits.hrWarningMin}–${limits.hrWarningMax} · C นอก ${limits.hrMin}–${limits.hrMax}</strong></div><div class="range-patient-value"><span>SpO₂</span><strong>N ≥${limits.spo2WarningMin}% · C ≤${limits.spo2CriticalMin}%</strong></div><div class="range-patient-value"><span>TEMPERATURE</span><strong>N ${limits.tempWarningMin}–${limits.tempWarningMax} · C นอก ${limits.tempMin}–${limits.tempMax}</strong></div></div>
-            <p class="text-[10px] mb-3" style="color:var(--text-secondary);">${d.enable_offline_alert ? `📡 แจ้งเมื่ออุปกรณ์ขาดการติดต่อ ${offlineThresholdMinutes(d)} นาที` : '📡 ปิดการแจ้งเตือนอุปกรณ์หลุด'}</p>
-            <div class="flex gap-2"><button type="button" onclick="editAlertSettings('${escapeJsSingle(d.mac)}', ${limits.hrMin}, ${limits.hrWarningMin}, ${limits.hrWarningMax}, ${limits.hrMax}, ${limits.spo2CriticalMin}, ${limits.spo2WarningMin}, ${limits.tempMin}, ${limits.tempWarningMin}, ${limits.tempWarningMax}, ${limits.tempMax}, ${Boolean(d.enable_sound)}, ${Boolean(d.enable_line)}, ${Boolean(d.enable_offline_alert)}, ${offlineThresholdMinutes(d)}, ${Boolean(d.enable_webhook)}, '${escapeJsSingle(d.webhook_url || '')}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">⚙️ ตั้งค่าเฉพาะราย</button>${hasCustom ? `<button type="button" onclick="resetPatientAlertSettings('${escapeJsSingle(d.mac)}')" class="px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ใช้ค่ากลาง</button>` : ''}</div>
+            <p class="text-2xs mb-3" style="color:var(--text-secondary);">${d.enable_offline_alert ? `<span class="ic ic-signal" aria-hidden="true"></span> แจ้งเมื่ออุปกรณ์ขาดการติดต่อ ${offlineThresholdMinutes(d)} นาที` : '<span class="ic ic-signal" aria-hidden="true"></span> ปิดการแจ้งเตือนอุปกรณ์หลุด'}</p>
+            <div class="flex gap-2"><button type="button" onclick="editAlertSettings('${escapeJsSingle(d.mac)}', ${limits.hrMin}, ${limits.hrWarningMin}, ${limits.hrWarningMax}, ${limits.hrMax}, ${limits.spo2CriticalMin}, ${limits.spo2WarningMin}, ${limits.tempMin}, ${limits.tempWarningMin}, ${limits.tempWarningMax}, ${limits.tempMax}, ${Boolean(d.enable_sound)}, ${Boolean(d.enable_line)}, ${Boolean(d.enable_offline_alert)}, ${offlineThresholdMinutes(d)}, ${Boolean(d.enable_webhook)}, '${escapeJsSingle(d.webhook_url || '')}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);"><span class="ic ic-gear" aria-hidden="true"></span> ตั้งค่าเฉพาะราย</button>${hasCustom ? `<button type="button" onclick="resetPatientAlertSettings('${escapeJsSingle(d.mac)}')" class="px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ใช้ค่ากลาง</button>` : ''}</div>
         </article>`;
     }).join('');
     res.send(ui(req.user, 'alert', `
-        <div class="mb-5"><h2 class="text-2xl font-black" style="color:var(--text-heading);">ช่วงค่ากลางและการแจ้งเตือน</h2><p class="text-xs mt-1" style="color:var(--text-secondary);">ค่าทุกตัวเปลี่ยนสถานะตามลำดับ <strong style="color:var(--accent-green);">Normal</strong> → <strong style="color:var(--accent-yellow);">Warning</strong> → <strong style="color:var(--accent-red);">Critical</strong></p></div>
+        <div class="mb-5"><h2 class="text-2xl font-black" style="color:var(--text-heading);">ช่วงค่ากลางและการแจ้งเตือน</h2><p class="text-xs mt-1" style="color:var(--text-secondary);">ค่าทุกตัวเปลี่ยนสถานะตามลำดับ <strong style="color:var(--status-success-text);">Normal</strong> → <strong style="color:var(--status-warning-text);">Warning</strong> → <strong style="color:var(--status-critical-text);">Critical</strong></p></div>
         <section class="range-settings-hero card p-5 md:p-6 mb-6">
             <div class="relative z-[1] flex flex-wrap items-start justify-between gap-3 mb-4">
-                <div class="flex items-center gap-2"><span class="w-9 h-9 inline-flex items-center justify-center rounded-xl" style="background:var(--accent-primary);color:var(--text-inverse);">🎯</span><div><h3 class="font-black" style="color:var(--text-heading);">ค่ากลางของระบบ</h3><p class="text-[10px]" style="color:var(--text-secondary);">ใช้กับผู้ป่วยที่ไม่ได้ตั้งค่าเฉพาะราย</p></div></div>
-                <div class="flex gap-1.5"><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-green) 12%,transparent);color:var(--accent-green);">NORMAL</span><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-yellow) 12%,transparent);color:var(--accent-yellow);">WARNING</span><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-red) 10%,transparent);color:var(--accent-red);">CRITICAL</span></div>
+                <div class="flex items-center gap-2"><span class="w-9 h-9 inline-flex items-center justify-center rounded-xl" style="background:var(--accent-primary-strong);color:var(--text-inverse);"><span class="ic ic-target" aria-hidden="true"></span></span><div><h3 class="font-black" style="color:var(--text-heading);">ค่ากลางของระบบ</h3><p class="text-2xs" style="color:var(--text-secondary);">ใช้กับผู้ป่วยที่ไม่ได้ตั้งค่าเฉพาะราย</p></div></div>
+                <div class="flex gap-1.5"><span class="text-2xs px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-green) 12%,transparent);color:var(--status-success-text);">NORMAL</span><span class="text-2xs px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-yellow) 12%,transparent);color:var(--status-warning-text);">WARNING</span><span class="text-2xs px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-red) 10%,transparent);color:var(--status-critical-text);">CRITICAL</span></div>
             </div>
             <div id="default-metric-editor" class="range-metric-grid mb-4"></div>
             <div class="relative z-[1] flex flex-wrap items-center justify-between gap-3 pt-4" style="border-top:1px solid var(--border-color);">
-                <div class="flex flex-wrap items-center gap-3"><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-sound" ${defaults.enable_sound ? 'checked' : ''}> 🔊 เสียงเตือน</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-line" ${defaults.enable_line ? 'checked' : ''}> LINE</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-offline" ${defaults.enable_offline_alert !== false ? 'checked' : ''} onchange="toggleDefaultOffline()"> 📡 อุปกรณ์หลุด</label><label id="default-offlineMinutes-wrap" class="${defaults.enable_offline_alert === false ? 'hidden' : 'inline-flex'} items-center gap-2 text-xs font-bold">แจ้งเมื่อขาดการติดต่อ <input id="default-offlineMinutes" type="number" min="1" max="60" value="${offlineThresholdMinutes(defaults)}" class="w-16 border px-2 py-1.5 rounded-lg text-xs"> นาที</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-webhook" ${defaults.enable_webhook ? 'checked' : ''} onchange="toggleDefaultWebhook()"> Webhook</label><input id="default-webhookUrl" value="${escapeHtml(defaults.webhook_url || '')}" placeholder="Webhook URL" class="${defaults.enable_webhook ? '' : 'hidden'} border px-3 py-2 rounded-xl text-xs min-w-[220px]"></div>
-                <button type="button" onclick="saveDefaultAlertSettings()" class="px-5 py-2.5 rounded-xl font-bold text-sm shadow-md" style="background:var(--accent-primary);color:var(--text-inverse);">บันทึกค่ากลาง</button>
+                <div class="flex flex-wrap items-center gap-3"><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-sound" ${defaults.enable_sound ? 'checked' : ''}> <span class="ic ic-sound" aria-hidden="true"></span> เสียงเตือน</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-line" ${defaults.enable_line ? 'checked' : ''}> LINE</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-offline" ${defaults.enable_offline_alert !== false ? 'checked' : ''} onchange="toggleDefaultOffline()"> <span class="ic ic-signal" aria-hidden="true"></span> อุปกรณ์หลุด</label><label id="default-offlineMinutes-wrap" class="${defaults.enable_offline_alert === false ? 'hidden' : 'inline-flex'} items-center gap-2 text-xs font-bold">แจ้งเมื่อขาดการติดต่อ <input id="default-offlineMinutes" type="number" min="1" max="60" value="${offlineThresholdMinutes(defaults)}" class="w-16 border px-2 py-1.5 rounded-lg text-xs"> นาที</label><label class="inline-flex items-center gap-2 text-xs font-bold"><input type="checkbox" id="default-webhook" ${defaults.enable_webhook ? 'checked' : ''} onchange="toggleDefaultWebhook()"> Webhook</label><input id="default-webhookUrl" value="${escapeHtml(defaults.webhook_url || '')}" placeholder="Webhook URL" class="${defaults.enable_webhook ? '' : 'hidden'} border px-3 py-2 rounded-xl text-xs min-w-[220px]"></div>
+                <button type="button" onclick="saveDefaultAlertSettings()" class="px-5 py-2.5 rounded-xl font-bold text-sm shadow-md" style="background:var(--accent-primary-strong);color:var(--text-inverse);">บันทึกค่ากลาง</button>
             </div>
         </section>
-        <div class="flex items-end justify-between gap-3 mb-3"><div><h3 class="font-black" style="color:var(--text-heading);">ตั้งค่าเฉพาะราย</h3><p class="text-[10px]" style="color:var(--text-tertiary);">ค่ารายบุคคลจะมีลำดับความสำคัญเหนือค่ากลาง</p></div><span class="text-[10px]" style="color:var(--text-tertiary);">${r.rows.length} ผู้ป่วย</span></div>
+        <div class="flex items-end justify-between gap-3 mb-3"><div><h3 class="font-black" style="color:var(--text-heading);">ตั้งค่าเฉพาะราย</h3><p class="text-2xs" style="color:var(--text-tertiary);">ค่ารายบุคคลจะมีลำดับความสำคัญเหนือค่ากลาง</p></div><span class="text-2xs" style="color:var(--text-tertiary);">${r.rows.length} ผู้ป่วย</span></div>
         <div class="range-patient-grid">${rows || '<div class="card p-6 text-center text-sm" style="color:var(--text-tertiary);">ยังไม่มีผู้ป่วยที่จับคู่กับอุปกรณ์</div>'}</div>
     `, `
         const defaultAlertValues = ${JSON.stringify(defaultLimits)};
 
         function renderAlertMetricEditor(prefix, values) {
             return \`
-                <div class="range-metric-card range-metric-card--hr"><p class="text-xs font-black" style="color:#ef4444;">🫀 HEART RATE</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
-                    <div class="range-normal-preview"><span>✓ NORMAL</span><strong><span id="\${prefix}-hrNormal">-</span> · กลาง <span id="\${prefix}-hrMid">-</span></strong></div>
+                <div class="range-metric-card range-metric-card--hr"><p class="text-xs font-black" style="color:var(--status-critical-text);"><span class="ic ic-heart" aria-hidden="true"></span> HEART RATE</p><p class="text-2xs mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                    <div class="range-normal-preview"><span><span class="ic ic-check" aria-hidden="true"></span> NORMAL</span><strong><span id="\${prefix}-hrNormal">-</span> · กลาง <span id="\${prefix}-hrMid">-</span></strong></div>
                     <div class="range-tier-row range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-hrWarningMin" min="21" max="238" value="\${values.hrWarningMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-hrWarningMax" min="22" max="239" value="\${values.hrWarningMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-hrMin" min="20" max="237" value="\${values.hrMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-hrMax" min="23" max="240" value="\${values.hrMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                 </div></div>
-                <div class="range-metric-card range-metric-card--spo2"><p class="text-xs font-black" style="color:#3b82f6;">💧 OXYGEN SATURATION</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
-                    <div class="range-normal-preview"><span>✓ NORMAL</span><strong id="\${prefix}-spo2Preview">-</strong></div>
+                <div class="range-metric-card range-metric-card--spo2"><p class="text-xs font-black" style="color:var(--accent-primary-strong);"><span class="ic ic-droplet" aria-hidden="true"></span> OXYGEN SATURATION</p><p class="text-2xs mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                    <div class="range-normal-preview"><span><span class="ic ic-check" aria-hidden="true"></span> NORMAL</span><strong id="\${prefix}-spo2Preview">-</strong></div>
                     <div class="range-tier-row range-tier-row--single range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า (%)</label><input type="number" id="\${prefix}-spo2Min" min="51" max="100" value="\${values.spo2WarningMin}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--single range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>เท่ากับหรือต่ำกว่า (%)</label><input type="number" id="\${prefix}-spo2CriticalMin" min="50" max="99" value="\${values.spo2CriticalMin}" oninput="updateRangePreview('\${prefix}')"></div></div>
                 </div></div>
-                <div class="range-metric-card range-metric-card--temp"><p class="text-xs font-black" style="color:#f97316;">🌡️ BODY TEMPERATURE</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
-                    <div class="range-normal-preview"><span>✓ NORMAL</span><strong><span id="\${prefix}-tempNormal">-</span> · กลาง <span id="\${prefix}-tempMid">-</span></strong></div>
+                <div class="range-metric-card range-metric-card--temp"><p class="text-xs font-black" style="color:var(--status-temp-text);"><span class="ic ic-thermo" aria-hidden="true"></span> BODY TEMPERATURE</p><p class="text-2xs mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                    <div class="range-normal-preview"><span><span class="ic ic-check" aria-hidden="true"></span> NORMAL</span><strong><span id="\${prefix}-tempNormal">-</span> · กลาง <span id="\${prefix}-tempMid">-</span></strong></div>
                     <div class="range-tier-row range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-tempWarningMin" min="30.1" max="42.8" step="0.1" value="\${values.tempWarningMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-tempWarningMax" min="30.2" max="42.9" step="0.1" value="\${values.tempWarningMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-tempMin" min="30" max="42.7" step="0.1" value="\${values.tempMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-tempMax" min="30.3" max="43" step="0.1" value="\${values.tempMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                 </div></div>
@@ -7991,7 +8165,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         window.editAlertSettings = async (mac, hrMin, hrWarningMin, hrWarningMax, hrMax, spo2CriticalMin, spo2WarningMin, tempMin, tempWarningMin, tempWarningMax, tempMax, enableSound, enableLine, enableOfflineAlert, offlineThresholdMinutes, enableWebhook, webhookUrl) => {
             const html = \`
                 <div class="space-y-4">
-                    <div class="p-3 rounded-xl text-center" style="background:var(--bg-badge);"><p class="text-xs font-bold" style="color:var(--accent-primary);">ตั้งค่าเฉพาะราย · \${mac}</p><p class="text-[10px] mt-1" style="color:var(--text-tertiary);">Normal → Warning → Critical ตามลำดับ</p></div>
+                    <div class="p-3 rounded-xl text-center" style="background:var(--bg-badge);"><p class="text-xs font-bold" style="color:var(--accent-primary-strong);">ตั้งค่าเฉพาะราย · \${mac}</p><p class="text-2xs mt-1" style="color:var(--text-tertiary);">Normal → Warning → Critical ตามลำดับ</p></div>
                     <div class="alert-settings-modal-grid">\${renderAlertMetricEditor('patient', {hrMin, hrWarningMin, hrWarningMax, hrMax, spo2CriticalMin, spo2WarningMin, tempMin, tempWarningMin, tempWarningMax, tempMax})}</div>
                     <div class="space-y-2">
                         <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="as-sound" \${enableSound?'checked':''}> เสียงเตือน</label>
@@ -8062,11 +8236,11 @@ app.get('/alert-history', async (req, res) => {
             '<td class="text-xs">' + new Date(a.created_at).toLocaleString('th-TH') + '</td>' +
             '<td>' + escapeHtml(a.bed_no || '-') + '</td>' +
             '<td>' + escapeHtml(a.patient_name || '-') + '</td>' +
-            '<td><span class="' + badge + ' text-[10px] px-2 py-0.5 rounded font-bold uppercase">' + escapeHtml(a.level) + '</span></td>' +
-            '<td><span class="' + ackBadge + ' text-[10px] px-2 py-0.5 rounded font-bold">' + (a.acknowledged ? 'ร้บทราบ' : 'New') + '</span></td>' +
+            '<td><span class="' + badge + ' text-2xs px-2 py-0.5 rounded font-bold uppercase">' + escapeHtml(a.level) + '</span></td>' +
+            '<td><span class="' + ackBadge + ' text-2xs px-2 py-0.5 rounded font-bold">' + (a.acknowledged ? 'ร้บทราบ' : 'New') + '</span></td>' +
             '<td class="text-xs max-w-[200px] truncate">' + escapeHtml(a.message || '-') + '</td>' +
             '<td class="text-right">' +
-            (!a.acknowledged ? '<button onclick="ackAlert(' + a.id + ')" class="text-green-500 text-xs font-bold mr-2">ร้บทราบ</button>' : '') +
+            (!a.acknowledged ? '<button onclick="ackAlert(' + a.id + ')" class="text-xs font-bold mr-2" style="color: var(--status-success-text);">ร้บทราบ</button>' : '') +
             '</td>' +
             '</tr>';
     }).join('');
@@ -8653,17 +8827,17 @@ app.get('/notification-settings', async (req, res) => {
                 <div class="space-y-3">
                     <label class="flex items-center gap-3 text-sm">
                         <input type="checkbox" id="alert-critical" ${s.alert_critical !== false ? 'checked' : ''}>
-                        <span class="font-bold">🔴 Critical Alerts</span>
+                        <span class="font-bold"><span class="ic ic-dot" aria-hidden="true"></span> Critical Alerts</span>
                         <span class="text-slate-500 text-xs">(วิกฤต - ส่องแดง)</span>
                     </label>
                     <label class="flex items-center gap-3 text-sm">
                         <input type="checkbox" id="alert-warning" ${s.alert_warning ? 'checked' : ''}>
-                        <span class="font-bold">🟡 Warning Alerts</span>
+                        <span class="font-bold"><span class="ic ic-dot" aria-hidden="true"></span> Warning Alerts</span>
                         <span class="text-slate-500 text-xs">(เตือน - ส่องเหลือง)</span>
                     </label>
                     <label class="flex items-center gap-3 text-sm">
                         <input type="checkbox" id="sound-enabled" ${s.sound_enabled !== false ? 'checked' : ''}>
-                        <span class="font-bold">🔊 Sound Alert</span>
+                        <span class="font-bold"><span class="ic ic-sound" aria-hidden="true"></span> Sound Alert</span>
                         <span class="text-slate-500 text-xs">(เสีงงในเว็บ)</span>
                     </label>
                 </div>
@@ -8683,11 +8857,11 @@ app.get('/notification-settings', async (req, res) => {
             <div class="card p-6">
                 <h3 class="font-bold text-lg mb-1">เสียงแจ้งเตือนของคุณ</h3>
                 <p class="text-slate-500 text-xs mb-4">ค่ามาตรฐานคือเสียงบี๊บของระบบ — ถ้าต้องการ สามารถอัปโหลดไฟล์เสียงของตัวเองได้ (mp3, wav, ogg หรือ midi — ไม่เกิน 2MB) ไฟล์ MIDI จะถูกแปลงเป็นเสียงให้อัตโนมัติ</p>
-                <div id="custom-sound-status" class="text-sm font-bold mb-3">${s.custom_sound_original_name ? 'ใช้งานอยู่: ' + escapeHtml(s.custom_sound_original_name) : '🔊 ใช้เสียงมาตรฐาน (บี๊บ)'}</div>
+                <div id="custom-sound-status" class="text-sm font-bold mb-3">${s.custom_sound_original_name ? 'ใช้งานอยู่: ' + escapeHtml(s.custom_sound_original_name) : '<span class="ic ic-sound" aria-hidden="true"></span> ใช้เสียงมาตรฐาน (บี๊บ)'}</div>
                 <div class="flex flex-wrap items-center gap-3">
                     <input id="custom-sound-file" type="file" accept=".mp3,.wav,.ogg,.mid,.midi,audio/mpeg,audio/wav,audio/ogg,audio/midi" class="text-sm">
                     <button onclick="uploadCustomSound()" class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 transition-colors">อัปโหลด</button>
-                    <button onclick="testCustomSound()" class="bg-slate-200 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-300 transition-colors">🔈 ทดสอบเสียง</button>
+                    <button onclick="testCustomSound()" class="bg-slate-200 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-300 transition-colors"><span class="ic ic-sound" aria-hidden="true"></span> ทดสอบเสียง</button>
                     <button onclick="resetCustomSound()" class="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors">คืนค่ามาตรฐาน</button>
                 </div>
             </div>
@@ -8811,7 +8985,7 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
     <style>
         html, body { min-height: 100%; }
         body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
-        input { font-size: 16px !important; }
+        input { font-size: var(--fs-body-lg) !important; }
         button, input { min-height: 3rem; touch-action: manipulation; }
         #loginNotice[hidden] { display:none; }
     </style>
@@ -8840,7 +9014,7 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             <button type="submit" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold active:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
         </form>
         <div class="mt-6 flex items-center justify-center" aria-label="v${APP_VERSION}" title="v${APP_VERSION}">
-            <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-mono font-bold text-slate-500">v${APP_VERSION}</span>
+            <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-2xs font-mono font-bold text-slate-500">v${APP_VERSION}</span>
         </div>
     </main>
     <div id="loginNotice" hidden class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="loginNoticeTitle" aria-describedby="loginNoticeMessage"><div class="w-full max-w-sm rounded-3xl border border-red-200 bg-white p-6 shadow-2xl"><div class="flex items-start gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-xl font-black text-red-600" aria-hidden="true">!</div><div><h2 id="loginNoticeTitle" class="text-lg font-bold text-slate-900">เข้าสู่ระบบไม่สำเร็จ</h2><p id="loginNoticeMessage" class="mt-2 text-sm leading-6 text-slate-600"></p></div></div><button id="loginNoticeClose" type="button" class="mt-6 w-full rounded-2xl bg-blue-600 p-3 font-bold text-white">ลองอีกครั้ง</button></div></div>
@@ -8988,7 +9162,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                     <h2 class="text-2xl font-black mb-1" style="color: var(--text-heading);">จัดการหอผู้ป่วย</h2>
                     <p class="text-sm" style="color: var(--text-secondary);">เพิ่ม แก้ไข หรือลบ Ward และดูสถานะผู้ป่วย อุปกรณ์ และเจ้าหน้าที่ที่ผูกอยู่</p>
                 </div>
-                <button type="button" onclick="openWardModal()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary);">
+                <button type="button" onclick="openWardModal()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary-strong); color: var(--text-inverse);">
                     <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
                     เพิ่ม Ward
                 </button>
@@ -8996,7 +9170,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
 
             ${wards.length === 0
                 ? `<div class="card p-10 text-center" role="status">
-                        <div class="text-4xl mb-3" aria-hidden="true">🏥</div>
+                        <div class="text-4xl mb-3" aria-hidden="true"><span class="ic ic-hospital" aria-hidden="true"></span></div>
                         <p class="font-bold mb-1" style="color: var(--text-heading);">ยังไม่มี Ward</p>
                         <p class="text-sm" style="color: var(--text-secondary);">กดปุ่ม “เพิ่ม Ward” เพื่อสร้าง Ward แรกของโรงพยาบาล</p>
                    </div>`
@@ -9005,7 +9179,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                         const hasRefs = (+w.patient_count > 0 || +w.active_devices > 0 || +w.assigned_users > 0);
                         const stat = (icon, label, value) => `<div class="flex items-center gap-2.5 rounded-xl px-3 py-2" style="background: var(--bg-badge);">
                             <span style="color: var(--text-tertiary);" aria-hidden="true">${icon}</span>
-                            <div class="min-w-0"><p class="text-[10px] font-bold uppercase tracking-wide" style="color: var(--text-tertiary);">${label}</p><p class="text-sm font-black tabular-nums" style="color: var(--text-primary);">${value ?? 0}</p></div>
+                            <div class="min-w-0"><p class="text-2xs font-bold uppercase tracking-wide" style="color: var(--text-tertiary);">${label}</p><p class="text-sm font-black tabular-nums" style="color: var(--text-primary);">${value ?? 0}</p></div>
                         </div>`;
                         return `<div class="card p-5 flex flex-col overflow-hidden">
                             <div class="flex justify-between items-start gap-3 mb-4">
@@ -9014,7 +9188,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                                     <div class="text-xs font-mono mt-1 truncate" style="color: var(--text-tertiary);">${escapeHtml(w.code)}</div>
                                     ${w.description ? `<p class="text-xs mt-2 line-clamp-2 break-words" style="color: var(--text-secondary);">${escapeHtml(w.description)}</p>` : ''}
                                 </div>
-                                <span class="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-100 text-green-700">
+                                <span class="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-2xs font-bold bg-green-100 text-green-700">
                                     <span class="w-1.5 h-1.5 rounded-full mr-1 bg-green-600" aria-hidden="true"></span> ACTIVE
                                 </span>
                             </div>
@@ -9222,18 +9396,18 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
         <div class="card p-5 md:p-6">
             <div class="qs-stepper mb-3" role="list" aria-label="ขั้นตอนการตั้งค่า">
                 <div class="qs-step qs-step--active" id="qs-step-indicator-1" role="listitem">
-                    <div class="qs-step-ring"><span class="qs-step-num">1</span><span class="qs-step-check">✓</span></div>
-                    <div class="qs-step-label"><span class="qs-step-emoji">⌚</span> อุปกรณ์</div>
+                    <div class="qs-step-ring"><span class="qs-step-num">1</span><span class="qs-step-check"><span class="ic ic-check" aria-hidden="true"></span></span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji"><span class="ic ic-watch" aria-hidden="true"></span></span> อุปกรณ์</div>
                 </div>
                 <div class="qs-step-connector"><div class="qs-track"><div class="qs-fill"></div></div></div>
                 <div class="qs-step qs-step--pending" id="qs-step-indicator-2" role="listitem">
-                    <div class="qs-step-ring"><span class="qs-step-num">2</span><span class="qs-step-check">✓</span></div>
-                    <div class="qs-step-label"><span class="qs-step-emoji">🧍</span> ผู้ป่วย</div>
+                    <div class="qs-step-ring"><span class="qs-step-num">2</span><span class="qs-step-check"><span class="ic ic-check" aria-hidden="true"></span></span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji"><span class="ic ic-person" aria-hidden="true"></span></span> ผู้ป่วย</div>
                 </div>
                 <div class="qs-step-connector"><div class="qs-track"><div class="qs-fill"></div></div></div>
                 <div class="qs-step qs-step--pending" id="qs-step-indicator-3" role="listitem">
-                    <div class="qs-step-ring"><span class="qs-step-num">3</span><span class="qs-step-check">✓</span></div>
-                    <div class="qs-step-label"><span class="qs-step-emoji">🔗</span> จับคู่</div>
+                    <div class="qs-step-ring"><span class="qs-step-num">3</span><span class="qs-step-check"><span class="ic ic-check" aria-hidden="true"></span></span></div>
+                    <div class="qs-step-label"><span class="qs-step-emoji"><span class="ic ic-link" aria-hidden="true"></span></span> จับคู่</div>
                 </div>
             </div>
             <p id="qs-step-of-total" class="text-center text-xs font-bold mb-8" style="color: var(--text-tertiary);" aria-live="polite">ขั้นตอนที่ 1 จาก 3</p>
@@ -9242,10 +9416,10 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                 <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-secondary);">ขั้นตอนที่ 1 · อุปกรณ์</p>
                 <p class="text-sm mb-4" style="color: var(--text-tertiary);">เลือกอุปกรณ์ (นาฬิกา/สายรัด) ที่จะใช้ติดตามสัญญาณชีพของผู้ป่วยรายนี้</p>
                 <div class="inline-flex p-1 rounded-xl mb-1 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทอุปกรณ์">
-                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true">➕</span> เพิ่มอุปกรณ์ใหม่</button>
-                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true">📋</span> เลือกจากที่มีอยู่</button>
+                    <button type="button" id="qs-d-mode-new" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true"><span class="ic ic-plus" aria-hidden="true"></span></span> เพิ่มอุปกรณ์ใหม่</button>
+                    <button type="button" id="qs-d-mode-existing" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true"><span class="ic ic-clipboard" aria-hidden="true"></span></span> เลือกจากที่มีอยู่</button>
                 </div>
-                <p class="text-[11px] mb-4" style="color: var(--text-tertiary);">💡 ส่วนใหญ่อุปกรณ์จะถูกลงทะเบียนไว้ในระบบแล้ว — เลือก "จากที่มีอยู่" ก่อน ถ้าไม่เจอค่อยเพิ่มใหม่</p>
+                <p class="text-2xs mb-4" style="color: var(--text-tertiary);"><span class="ic ic-bulb" aria-hidden="true"></span> ส่วนใหญ่อุปกรณ์จะถูกลงทะเบียนไว้ในระบบแล้ว — เลือก "จากที่มีอยู่" ก่อน ถ้าไม่เจอค่อยเพิ่มใหม่</p>
 
                 <div id="qs-create-new-section" class="is-hidden">
                     <div class="space-y-3">
@@ -9255,10 +9429,10 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                         </div>
                         <div>
                             <label for="qs-d-mac" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">รหัสประจำเครื่อง (MAC Address)</label>
-                            <p class="text-[11px] mb-1.5" style="color: var(--text-tertiary);">ดูได้จากสติกเกอร์บนตัวเครื่องหรือกล่อง หรือกดปุ่ม "สแกน QR" เพื่อสแกนแทนการพิมพ์</p>
+                            <p class="text-2xs mb-1.5" style="color: var(--text-tertiary);">ดูได้จากสติกเกอร์บนตัวเครื่องหรือกล่อง หรือกดปุ่ม "สแกน QR" เพื่อสแกนแทนการพิมพ์</p>
                             <div class="flex gap-2">
                                 <input id="qs-d-mac" class="qs-field flex-1" placeholder="เช่น A1:B2:C3:D4:E5:F6" autocomplete="off" spellcheck="false">
-                                <button type="button" id="qs-d-scan-mac" class="qs-scan" title="สแกน QR Code"><span aria-hidden="true">📷</span> สแกน QR</button>
+                                <button type="button" id="qs-d-scan-mac" class="qs-scan" title="สแกน QR Code"><span aria-hidden="true"><span class="ic ic-camera" aria-hidden="true"></span></span> สแกน QR</button>
                             </div>
                         </div>
                         <div>
@@ -9296,11 +9470,11 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                     <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-secondary);">ขั้นตอนที่ 2 · ผู้ป่วย</p>
                     <p class="text-sm mb-3" style="color: var(--text-tertiary);">เพิ่มข้อมูลผู้ป่วยที่จะสวมใส่อุปกรณ์นี้ หรือเลือกผู้ป่วยที่มีอยู่แล้วในระบบ</p>
                     <div id="qs-p-device-reminder" class="rounded-xl border p-3 mb-4 text-xs flex items-center gap-2" style="background: var(--bg-input); border-color: var(--border-color); color: var(--text-secondary);">
-                        <span aria-hidden="true">⌚</span> อุปกรณ์ที่เลือกไว้: <strong id="qs-p-device-reminder-text" style="color: var(--text-heading);"></strong>
+                        <span aria-hidden="true"><span class="ic ic-watch" aria-hidden="true"></span></span> อุปกรณ์ที่เลือกไว้: <strong id="qs-p-device-reminder-text" style="color: var(--text-heading);"></strong>
                     </div>
                     <div class="inline-flex p-1 rounded-xl mb-5 w-full" style="background: var(--bg-badge);" role="group" aria-label="เลือกประเภทผู้ป่วย">
-                        <button type="button" id="qs-p-mode-new" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true">➕</span> เพิ่มผู้ป่วยใหม่</button>
-                        <button type="button" id="qs-p-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true">📋</span> เลือกจากที่มีอยู่</button>
+                        <button type="button" id="qs-p-mode-new" class="qs-mode-btn flex-1" aria-pressed="true"><span aria-hidden="true"><span class="ic ic-plus" aria-hidden="true"></span></span> เพิ่มผู้ป่วยใหม่</button>
+                        <button type="button" id="qs-p-mode-existing" class="qs-mode-btn flex-1" aria-pressed="false"><span aria-hidden="true"><span class="ic ic-clipboard" aria-hidden="true"></span></span> เลือกจากที่มีอยู่</button>
                     </div>
 
                     <div id="qs-p-create-new">
@@ -9319,7 +9493,7 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                     <option value="">เลือก Ward *</option>
                                     ${wardOpts}
                                 </select>
-                                ${lockedWardId ? '<p class="text-[10px]" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                                ${lockedWardId ? '<p class="text-2xs" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                             </div>
                             <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้ →</button>
                         </div>
@@ -9340,20 +9514,20 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                 <div class="rounded-xl border p-4 mb-5" style="background: var(--bg-input); border-color: var(--border-color);">
                     <p class="text-xs font-bold mb-2" style="color: var(--text-secondary);">สรุปก่อนจับคู่</p>
                     <div class="space-y-2 text-sm">
-                        <div>⌚ อุปกรณ์: <span id="qs-pair-device-summary" style="color: var(--text-heading); font-bold;"></span></div>
-                        <div>🧍 ผู้ป่วย: <span id="qs-pair-patient-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                        <div><span class="ic ic-watch" aria-hidden="true"></span> อุปกรณ์: <span id="qs-pair-device-summary" style="color: var(--text-heading); font-bold;"></span></div>
+                        <div><span class="ic ic-person" aria-hidden="true"></span> ผู้ป่วย: <span id="qs-pair-patient-summary" style="color: var(--text-heading); font-bold;"></span></div>
                     </div>
                 </div>
                 <div>
                     <label for="qs-pair-bed" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขเตียง (ไม่บังคับ — กรอกภายหลังได้)</label>
                     <input id="qs-pair-bed" class="qs-field" placeholder="เช่น B01" autocomplete="off" spellcheck="false">
                 </div>
-                <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5">✓ ยืนยันการจับคู่</button>
+                <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5"><span class="ic ic-check" aria-hidden="true"></span> ยืนยันการจับคู่</button>
                 <button type="button" id="qs-pair-back" class="qs-secondary w-full mt-3"><span aria-hidden="true">←</span> ย้อนกลับไปแก้ไขผู้ป่วย</button>
             </div>
             <div id="qs-panel-done" class="card qs-panel is-hidden">
                 <div class="text-center mb-5">
-                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style="background: var(--accent-primary); color: #fff;">
+                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style="background: var(--accent-primary-strong); color: #fff;">
                         <svg class="w-8 h-8" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                     </div>
                     <p class="text-xl font-black" style="color: var(--text-heading);">ตั้งค่าเสร็จแล้ว</p>
@@ -9837,7 +10011,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                     <p class="text-xs font-bold uppercase tracking-wide mb-1" style="color: var(--text-tertiary);">เวอร์ชันปัจจุบัน</p>
                     <p class="text-xl font-black" style="color: var(--text-heading);">v${APP_VERSION}</p>
                 </div>
-                <button type="button" id="check-update-btn" onclick="checkForUpdates()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary);">
+                <button type="button" id="check-update-btn" onclick="checkForUpdates()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary-strong); color: var(--text-inverse);">
                     <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m0 0L5.582 5m0 0a9 9 0 1116.828 0"/></svg>
                     ตรวจสอบอัปเดต
                 </button>
@@ -9850,22 +10024,22 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             <div id="update-apply" class="hidden mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
                 <p class="text-sm font-bold mb-2" style="color: #92400e;">การติดตั้งอัตโนมัติ</p>
                 <p class="text-xs mb-3" style="color: #a16207;">กดปุ่มด้านล่างเพื่อติดตั้งอัตโนมัติ ระบบจะดึงโค้ด บิลดocker และ recreate container พร้อม auto-rollback หากเวอร์ชันใหม่ไม่ผ่าน health-check</p>
-                <button type="button" id="apply-update-btn" onclick="applyUpdate()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: #d97706;">
+                <button type="button" id="apply-update-btn" onclick="applyUpdate()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--status-warning-text);">
                     <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                     ติดตั้งอัตโนมัติทันที
                 </button>
                 <p id="apply-update-status" class="hidden mt-3 rounded-xl border p-3 text-sm font-semibold" role="status" aria-live="polite"></p>
                 <div id="apply-update-progress-wrap" class="hidden mt-3">
                     <div class="rounded-full overflow-hidden" style="background: var(--bg-badge); height: .5rem;">
-                        <div id="apply-update-progress-bar" style="height:.5rem; width:5%; background: var(--accent-primary); transition: width .5s ease, background-color .3s ease; border-radius: 9999px;"></div>
+                        <div id="apply-update-progress-bar" style="height:.5rem; width:5%; background: var(--accent-primary-strong); transition: width .5s ease, background-color .3s ease; border-radius: var(--r-pill);"></div>
                     </div>
-                    <div class="flex justify-between items-center mt-1.5 text-[11px]" style="color: var(--text-tertiary);">
+                    <div class="flex justify-between items-center mt-1.5 text-2xs" style="color: var(--text-tertiary);">
                         <span id="apply-update-phase-label">กำลังเริ่มต้น…</span>
                         <span id="apply-update-elapsed"></span>
                     </div>
                 </div>
-                <div id="apply-update-critical" class="hidden mt-3 bg-red-600 text-white border-2 border-red-800 p-4 rounded-xl font-black">🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้</div>
-                <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: #fffbeb; color: #713f12;">git pull&#10;docker compose up -d --build</pre>
+                <div id="apply-update-critical" class="hidden mt-3 bg-red-600 text-white border-2 border-red-800 p-4 rounded-xl font-black"><span class="ic ic-alert" aria-hidden="true"></span> ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้</div>
+                <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: var(--bg-input); color: var(--text-primary);">git pull&#10;docker compose up -d --build</pre>
             </div>
         </div>
     `, `
@@ -9971,8 +10145,8 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             building:               { label: '🏗️ กำลังสร้างเวอร์ชันใหม่ (ขั้นตอนนี้ใช้เวลานานสุด)…', percent: 55, color: 'var(--accent-primary)' },
             starting:               { label: '🔄 กำลังรีสตาร์ทระบบด้วยเวอร์ชันใหม่…', percent: 78, color: 'var(--accent-primary)' },
             health_check:           { label: '🩺 กำลังตรวจสอบว่าระบบทำงานปกติ…',    percent: 92, color: 'var(--accent-primary)' },
-            rolling_back:           { label: '↩️ เวอร์ชันใหม่มีปัญหา กำลังย้อนกลับเป็นเวอร์ชันเดิม…', percent: 60, color: '#d97706' },
-            rollback_health_check:  { label: '🩺 กำลังตรวจสอบว่าย้อนกลับสำเร็จ…',    percent: 88, color: '#d97706' },
+            rolling_back:           { label: '↩️ เวอร์ชันใหม่มีปัญหา กำลังย้อนกลับเป็นเวอร์ชันเดิม…', percent: 60, color: 'var(--status-warning-text)' },
+            rollback_health_check:  { label: '🩺 กำลังตรวจสอบว่าย้อนกลับสำเร็จ…',    percent: 88, color: 'var(--status-warning-text)' },
         };
 
         async function pollApplyUpdateStatus(sessionId) {
@@ -10040,7 +10214,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                         const result = data.result || {};
                         if (result.critical) {
                             const detail = result.rollbackReason || result.reason;
-                            showCritical('🚨 ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้' + (detail ? '<br><span class="font-semibold">' + escapeHTML(detail) + '</span>' : ''));
+                            showCritical('<span class="ic ic-alert" aria-hidden="true"></span> ต้องการความช่วยเหลือด่วน — ระบบไม่สามารถกู้คืนอัตโนมัติได้' + (detail ? '<br><span class="font-semibold">' + escapeHTML(detail) + '</span>' : ''));
                             btn.disabled = false;
                             return;
                         }
@@ -10239,7 +10413,7 @@ app.get('/user-wards-mgmt', requireCapability('users:manage:ward', 'users:manage
                             <option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option>
                         </select>
                     </div>
-                    <button type="submit" class="px-4 py-2 rounded-lg font-bold text-white" style="background: var(--accent-primary); color: var(--text-inverse);">Assign</button>
+                    <button type="submit" class="px-4 py-2 rounded-lg font-bold" style="background: var(--accent-primary-strong); color: var(--text-inverse); color: var(--text-inverse);">Assign</button>
                 </form>
             </div>
             <div class="card p-6 overflow-x-auto">
@@ -10396,7 +10570,7 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
                             ${wardsResult.rows.map(w => `<option value="${w.id}" ${req.query.ward_id == w.id ? 'selected' : ''}>${escapeHtml(w.ward_code)}</option>`).join('')}
                         </select>
                     </div>
-                    <button type="submit" class="px-4 py-2 rounded font-bold text-white text-xs" style="background: var(--accent-primary);">Filter</button>
+                    <button type="submit" class="px-4 py-2 rounded font-bold text-xs" style="background: var(--accent-primary-strong); color: var(--text-inverse);">Filter</button>
                     <a href="/audit-log" class="px-4 py-2 rounded border text-xs font-bold" style="border-color: var(--border-color); color: var(--text-secondary);">Reset</a>
                 </form>
             </div>
@@ -10419,20 +10593,20 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
                             <tr class="border-b border-slate-50 hover:bg-slate-50">
                                 <td class="text-slate-500 whitespace-nowrap">${new Date(l.created_at).toLocaleString('th-TH')}</td>
                                 <td class="font-bold">${escapeHtml(l.username || 'System')}</td>
-                                <td><span class="px-2 py-1 rounded-full text-[10px] bg-slate-100">${escapeHtml(l.actor_role || '-')}</span></td>
+                                <td><span class="px-2 py-1 rounded-full text-2xs bg-slate-100">${escapeHtml(l.actor_role || '-')}</span></td>
                                 <td class="font-bold ${
-                                    l.action === 'LOGIN' ? 'text-green-600' :
-                                    l.action === 'DELETE' ? 'text-red-500' :
-                                    l.action === 'CREATE' ? 'text-blue-500' : 'text-slate-600'
+                                    l.action === 'LOGIN' ? 'audit-act-login' :
+                                    l.action === 'DELETE' ? 'audit-act-delete' :
+                                    l.action === 'CREATE' ? 'audit-act-create' : 'audit-act-other'
                                 }">${escapeHtml(l.action)}</td>
                                 <td>
-                                    <span class="uppercase font-mono text-[10px] text-slate-500">${escapeHtml(l.entity_type)}</span>
+                                    <span class="uppercase font-mono text-2xs text-slate-500">${escapeHtml(l.entity_type)}</span>
                                     ${l.entity_id ? ` <span class="font-bold">#${escapeHtml(l.entity_id)}</span>` : ''}
                                 </td>
                                 <td class="max-w-[200px] truncate" title='${escapeHtml(JSON.stringify(l.details))}'>
-                                    <code class="text-[10px] text-slate-500 bg-slate-50 px-1 py-0.5 rounded">${escapeHtml(JSON.stringify(l.details))}</code>
+                                    <code class="text-2xs text-slate-500 bg-slate-50 px-1 py-0.5 rounded">${escapeHtml(JSON.stringify(l.details))}</code>
                                 </td>
-                                <td class="text-slate-500 font-mono text-[10px]">${escapeHtml(l.ip_address || '-')}</td>
+                                <td class="text-slate-500 font-mono text-2xs">${escapeHtml(l.ip_address || '-')}</td>
                             </tr>
                         `).join('')}
                         ${logs.length === 0 ? '<tr><td colspan="7" class="text-center py-8 text-slate-500">No logs found</td></tr>' : ''}
