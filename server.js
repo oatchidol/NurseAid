@@ -274,7 +274,7 @@ function accessDeniedPage(req) {
     return ui(req.user, 'Access Denied', `
         <div class="empty-state" style="padding: 40px; text-align: center;">
             <div class="empty-icon" style="color:var(--danger); font-size: 3rem; margin-bottom: 20px;">⚠️</div>
-            <h2>Access Denied</h2>
+            <h2>ไม่มีสิทธิ์เข้าถึง</h2>
             <p>You do not have permission to access this page.</p>
             <a href="/" class="btn-primary" style="margin-top:20px; display:inline-block; padding: 10px 20px; border-radius: 8px; text-decoration: none;">Return to Dashboard</a>
         </div>
@@ -3753,7 +3753,7 @@ function ui(user, active, content, script = "") {
         <div class="panel-compact-header flex justify-between items-start">
             <div class="min-w-0 pr-4">
                 <p class="panel-kicker">VITAL SIGNS · TREND ANALYSIS</p>
-                <h2 id="p-title" class="text-3xl font-black" style="color: var(--text-heading);">Trend</h2>
+                <h2 id="p-title" class="text-3xl font-black" style="color: var(--text-heading);">แนวโน้มสัญญาณชีพ</h2>
                 <div class="panel-meta-row">
                     <span id="p-hn" class="text-sm font-bold tracking-widest" style="color: var(--accent-primary);"></span>
                     <label class="trend-range-control text-[10px] font-bold" for="trend-range">
@@ -3845,12 +3845,12 @@ function ui(user, active, content, script = "") {
         let nurse = '';
         let role = 'viewer';
         const _ROLE_LABELS = {
-            super_admin: '🛡️ Super Admin',
-            ward_admin: '🏥 Ward Admin',
-            staff_nurse: '👩‍⚕️ Staff Nurse',
-            viewer: '👁️ Viewer'
+            super_admin: 'ผู้ดูแลระบบสูงสุด',
+            ward_admin: 'ผู้ดูแลหอผู้ป่วย',
+            staff_nurse: 'พยาบาลประจำการ',
+            viewer: 'ผู้ดูข้อมูล'
         };
-        function _roleLabel(r) { return _ROLE_LABELS[r] || ('👤 ' + (r || 'viewer')); }
+        function _roleLabel(r) { return _ROLE_LABELS[r] || (r || 'viewer'); }
         const _ROLE_CAPS = {
             super_admin: new Set([
                 'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'pairing:write',
@@ -4050,7 +4050,7 @@ function ui(user, active, content, script = "") {
                 modal.innerHTML = \`
                     <div class="p-8 rounded-3xl w-full max-w-lg shadow-2xl transition-all" style="background: var(--bg-card); border: 2px solid var(--accent-primary);">
                         <div class="flex justify-between items-center mb-6">
-                            <h3 class="text-xl font-bold" style="color: var(--text-primary);">📷 สแกน QR Code</h3>
+                            <h3 class="text-xl font-bold" style="color: var(--text-primary);">สแกน QR Code</h3>
                             <button onclick="closeQRScanner()" class="p-2 rounded-xl transition-all" style="background: var(--bg-badge); color: var(--text-secondary);">✕</button>
                         </div>
                         <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">เลนส์กล้อง</label>
@@ -5652,7 +5652,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
     <div id="monitor-grid" class="monitor-grid-auto monitor-grid-layout"></div>
 
     <button id="ai-chat-launcher" class="ai-chat-launcher" type="button" aria-label="เปิด NurseAid AI Assistant" aria-controls="ai-chat-panel" aria-expanded="false">
-        <span aria-hidden="true">✦</span><span>NurseAid AI Assistant</span>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg><span>NurseAid AI Assistant</span>
     </button>
     <div id="ai-chat-backdrop" class="ai-chat-backdrop" aria-hidden="true"></div>
     <aside id="ai-chat-panel" class="ai-chat-panel" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title" aria-hidden="true">
@@ -6449,7 +6449,7 @@ app.get('/export', async (req, res) => {
     }).join('');
 
     res.send(ui(req.user, 'export', `
-        <h2 class="text-2xl font-black text-slate-800 uppercase mb-8">Export Data</h2>
+        <h2 class="text-2xl font-bold tracking-tight mb-8" style="color: var(--text-heading);">ส่งออกข้อมูล</h2>
         <div class="card p-8 shadow-xl max-w-2xl">
             <div class="space-y-4">
                 <label class="text-xs font-bold text-slate-500">เลือกคนไข้</label>
@@ -6746,7 +6746,7 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
     res.send(ui(req.user, 'devs', `
         <div class="grid md:grid-cols-3 gap-8">
             <div class="admin-only card p-6 h-fit">
-                <h3 class="font-bold mb-6">📟 เพิ่มอุปกรณ์</h3>
+                <h3 class="font-bold mb-6">เพิ่มอุปกรณ์</h3>
                 <div class="space-y-4">
                     <input id="dno" placeholder="Device No" class="w-full border p-3 rounded-xl bg-slate-50">
                     <div class="device-address-row flex gap-2">
@@ -6767,7 +6767,7 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
                 </div>
             </div>
             <div class="md:col-span-2 card overflow-hidden">
-                <table><thead><tr><th>No</th><th>Type</th><th>MAC / Device ID</th><th>Battery</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
+                <table><thead><tr><th>ลำดับ</th><th>ประเภท</th><th>MAC / รหัสอุปกรณ์</th><th>แบตเตอรี่</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
             </div>
         </div>
     `, `
@@ -6913,12 +6913,12 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
     // Restrict role options based on current user's role
     let addRoleOptions, editRoleOptions;
     if (req.user.role === 'super_admin') {
-        addRoleOptions = '<option value="viewer">Viewer</option><option value="staff_nurse" selected>Staff Nurse</option><option value="ward_admin">Ward Admin</option><option value="super_admin">Super Admin</option>';
-        editRoleOptions = '<option value="viewer">Viewer</option><option value="staff_nurse">Staff Nurse</option><option value="ward_admin">Ward Admin</option><option value="super_admin">Super Admin</option>';
+        addRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse" selected>พยาบาลประจำการ</option><option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option><option value="super_admin">ผู้ดูแลระบบสูงสุด</option>';
+        editRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse">พยาบาลประจำการ</option><option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option><option value="super_admin">ผู้ดูแลระบบสูงสุด</option>';
     } else {
         // ward_admin can only assign staff_nurse and viewer
-        addRoleOptions = '<option value="viewer">Viewer</option><option value="staff_nurse" selected>Staff Nurse</option>';
-        editRoleOptions = '<option value="viewer">Viewer</option><option value="staff_nurse">Staff Nurse</option>';
+        addRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse" selected>พยาบาลประจำการ</option>';
+        editRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse">พยาบาลประจำการ</option>';
     }
 
     // ward_admin only manages/sees users who share at least one of their wards —
@@ -6935,7 +6935,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
                                 GROUP BY u.id ORDER BY u.created_at DESC`,
                                 isFullAdmin ? [] : [req.user.wardIds || await getUserWardIds(req.user.id)]);
     const rows = r.rows.map(u => {
-        const _RC = {super_admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'Super Admin'},ward_admin:{b:'var(--accent-primary-light)',c:'var(--accent-primary)',l:'Ward Admin'},staff_nurse:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'Staff Nurse'},viewer:{b:'#e2e8f0',c:'#64748b',l:'Viewer'},admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'Admin'},operator:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'Operator'}};
+        const _RC = {super_admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'ผู้ดูแลระบบสูงสุด'},ward_admin:{b:'var(--accent-primary-light)',c:'var(--accent-primary)',l:'ผู้ดูแลหอผู้ป่วย'},staff_nurse:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'พยาบาลประจำการ'},viewer:{b:'#e2e8f0',c:'#64748b',l:'ผู้ดูข้อมูล'},admin:{b:'var(--accent-red-light)',c:'var(--accent-red)',l:'Admin'},operator:{b:'var(--accent-green-light)',c:'var(--accent-green)',l:'Operator'}};
         const _r = _RC[u.role] || _RC.viewer;
         const roleBadge = `<span class="text-[10px] px-2 py-0.5 rounded-full font-bold" style="background: ${_r.b}; color: ${_r.c};">${_r.l}</span>`;
         const myRank = {super_admin:4,admin:4,ward_admin:3,staff_nurse:2,operator:2,viewer:1}[req.user.role]||1;
@@ -6955,23 +6955,23 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
         </tr>`;
     }).join('');
     res.send(ui(req.user, 'users', `
-        <h2 class="text-2xl font-black mb-6">🛡️ User Management</h2>
+        <h2 class="text-2xl font-bold tracking-tight mb-6" style="color: var(--text-heading);">จัดการผู้ใช้งาน</h2>
         <div class="space-y-6">
             <div class="card p-6">
-                <h3 class="font-bold mb-4">➕ เพิ่มผู้ใช้ใหม่</h3>
+                <h3 class="font-bold mb-4">เพิ่มผู้ใช้ใหม่</h3>
                 <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-                    <div><label class="text-xs font-bold">Username</label><input id="u_user" placeholder="username" class="w-full border p-3 rounded-xl bg-slate-50"></div>
-                    <div><label class="text-xs font-bold">Full Name</label><input id="u_name" placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50"></div>
-                    <div><label class="text-xs font-bold">Password</label><input id="u_pass" type="password" placeholder="Password" class="w-full border p-3 rounded-xl bg-slate-50"></div>
-                    <div><label class="text-xs font-bold">Role</label><select id="u_role" class="w-full border p-3 rounded-xl bg-slate-50">${addRoleOptions}</select></div>
-                    <div><label class="text-xs font-bold">Wards</label><div id="u_wards" class="w-full border p-2 rounded-xl bg-slate-50 h-[46px] overflow-y-auto space-y-1">${wardChecksForCreate}</div></div>
+                    <div><label class="text-xs font-bold">ชื่อผู้ใช้</label><input id="u_user" placeholder="username" class="w-full border p-3 rounded-xl bg-slate-50"></div>
+                    <div><label class="text-xs font-bold">ชื่อ-สกุล</label><input id="u_name" placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50"></div>
+                    <div><label class="text-xs font-bold">รหัสผ่าน</label><input id="u_pass" type="password" placeholder="Password" class="w-full border p-3 rounded-xl bg-slate-50"></div>
+                    <div><label class="text-xs font-bold">บทบาท</label><select id="u_role" class="w-full border p-3 rounded-xl bg-slate-50">${addRoleOptions}</select></div>
+                    <div><label class="text-xs font-bold">หอผู้ป่วย</label><div id="u_wards" class="w-full border p-2 rounded-xl bg-slate-50 h-[46px] overflow-y-auto space-y-1">${wardChecksForCreate}</div></div>
                 </div>
                 ${lockedWardId ? '<p class="text-[10px] text-slate-500 mt-2">ผู้ใช้ใหม่จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
-                <button onclick="addUser()" class="mt-4 w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-colors">💾 บันทึก</button>
+                <button onclick="addUser()" class="mt-4 w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-colors">บันทึก</button>
             </div>
             <div class="card overflow-hidden">
                 <table class="w-full text-xs">
-                    <thead><tr><th>Username</th><th>Full Name</th><th>Role</th><th>Wards</th><th>Created</th><th class="text-right">Actions</th></tr></thead>
+                    <thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อ-สกุล</th><th>บทบาท</th><th>หอผู้ป่วย</th><th>สร้างเมื่อ</th><th class="text-right">จัดการ</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>
@@ -7000,10 +7000,10 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
             const roleOpts = \`${editRoleOptions}\`.replace('value="viewer"', 'value="viewer" ' + (currentRole === 'viewer' ? 'selected' : '')).replace('value="staff_nurse"', 'value="staff_nurse" ' + (currentRole === 'staff_nurse' || currentRole === 'operator' ? 'selected' : ''));
             const html = \`
                 <div class="space-y-4">
-                    <div><label class="text-xs font-bold">Username</label><input id="eu_user" value="\${escapeHTML(username)}" class="w-full border p-3 rounded-xl bg-slate-50"></div>
-                    <div><label class="text-xs font-bold">Full Name</label><input id="eu_name" value="\${escapeHTML(fullName)}" class="w-full border p-3 rounded-xl bg-slate-50"></div>
-                    <div><label class="text-xs font-bold">Role</label><select id="eu_role" class="w-full border p-3 rounded-xl bg-slate-50">\${roleOpts}</select></div>
-                    <div><label class="text-xs font-bold">Wards</label><div id="eu_wards" class="w-full border p-2 rounded-xl bg-slate-50 max-h-[160px] overflow-y-auto space-y-1">\${wardChecksHtml}</div></div>
+                    <div><label class="text-xs font-bold">ชื่อผู้ใช้</label><input id="eu_user" value="\${escapeHTML(username)}" class="w-full border p-3 rounded-xl bg-slate-50"></div>
+                    <div><label class="text-xs font-bold">ชื่อ-สกุล</label><input id="eu_name" value="\${escapeHTML(fullName)}" class="w-full border p-3 rounded-xl bg-slate-50"></div>
+                    <div><label class="text-xs font-bold">บทบาท</label><select id="eu_role" class="w-full border p-3 rounded-xl bg-slate-50">\${roleOpts}</select></div>
+                    <div><label class="text-xs font-bold">หอผู้ป่วย</label><div id="eu_wards" class="w-full border p-2 rounded-xl bg-slate-50 max-h-[160px] overflow-y-auto space-y-1">\${wardChecksHtml}</div></div>
                 </div>
             \`;
             openModal('✏️ แก้ไขผู้ใช้', html, async () => {
@@ -7037,7 +7037,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
         };
         window.resetUserPass = async (id, username) => {
             openModal('🔑 รีเซ็ตรหัสผ่าน — ' + username,
-                '<div><label class="text-xs font-bold">Password ใหม่</label><input id="rup_pass" type="password" placeholder="Password" class="w-full border p-3 rounded-xl bg-slate-50"></div>',
+                '<div><label class="text-xs font-bold">รหัสผ่านใหม่</label><input id="rup_pass" type="password" placeholder="Password" class="w-full border p-3 rounded-xl bg-slate-50"></div>',
                 async () => {
                     const password = document.getElementById('rup_pass').value;
                     if (!password || password.length < 8) return showNotice('Password ต้องมีความยาวอย่างน้อย 8 ตัวอักษร');
@@ -7371,22 +7371,32 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
 
     const rows = r.rows.map(p => `<tr><td class="font-bold text-blue-600">${escapeHtml(p.hn_number)}</td><td>${escapeHtml(p.name)}</td><td class="text-xs">${escapeHtml(p.ward_code || '-')}</td><td class="text-right"><button onclick="editP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}',${p.ward_id ?? 'null'})" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delP('${escapeJsSingle(p.hn_number)}','${escapeJsSingle(p.name)}')" class="text-red-500 font-bold">ลบ</button></td></tr>`).join('');
     res.send(ui(req.user, 'pats', `
+        <h2 class="text-2xl font-bold tracking-tight mb-6" style="color: var(--text-heading);">จัดการผู้ป่วย</h2>
         <div class="grid md:grid-cols-3 gap-8">
             <div class="admin-only card p-6 h-fit">
-                <h3 class="font-bold mb-6">👥 เพิ่มคนไข้</h3>
+                <h3 class="font-bold mb-6">เพิ่มผู้ป่วย</h3>
                 <div class="space-y-4">
-                    <input id="p_hn" placeholder="HN" class="w-full border p-3 rounded-xl bg-slate-50">
-                    <input id="p_nm" placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50">
+                    <div>
+                        <label for="p_hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">HN</label>
+                        <input id="p_hn" name="hn" type="text" required placeholder="HN" class="w-full border p-3 rounded-xl bg-slate-50">
+                    </div>
+                    <div>
+                        <label for="p_nm" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
+                        <input id="p_nm" name="name" type="text" required placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50">
+                    </div>
+                    <div>
+                        <label for="p_ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หอผู้ป่วย</label>
                     <select id="p_ward" class="w-full border p-3 rounded-xl bg-slate-50" ${wardSelectAttrs}>
-                        <option value="">เลือก Ward *</option>
+                        <option value="">เลือกหอผู้ป่วย</option>
                         ${wardOpts}
                     </select>
                     ${lockedWardId ? '<p class="text-[10px] text-slate-500">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                    </div>
                     <button onclick="addP()" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold">บันทึก</button>
                 </div>
             </div>
             <div class="md:col-span-2 card overflow-hidden">
-                <table><thead><tr><th>HN</th><th>Name</th><th>Ward</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
+                <table><thead><tr><th>HN</th><th>ชื่อ-สกุล</th><th>หอผู้ป่วย</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
             </div>
         </div>
     `, `
@@ -7618,7 +7628,7 @@ app.get('/matching', requireCapability('pairing:write'), async (req, res) => {
         const hnLine = x.hm_number ? `<p class="text-[10px] font-bold" style="${hnColor}">HN: ${escapeHtml(x.hm_number)}</p>` : '';
         return `<div class="card p-6" style="${cardBg}"><div class="flex justify-between mb-4"><span class="text-[10px] px-2 py-1 rounded font-bold uppercase" style="${deviceBadgeBg}">#${escapeHtml(x.device_no)}</span> ${x.bed_no ? `<span class="text-[10px] px-2 py-1 rounded font-bold italic" style="${bedBadgeBg}">BED ${escapeHtml(x.bed_no)}</span>` : ''}</div><div class="min-h-[80px]"><p class="${availClass}" style="${patientNameColor}">${availText}</p>${hnLine}</div><div class="mt-4">${btnHtml}</div></div>`;
     }).join('');
-    res.send(ui(req.user, 'match', `<h2 class="text-xl font-bold mb-8">Pairing</h2><div id="pairing-grid" class="monitor-grid-layout">${cards}</div>`, `
+    res.send(ui(req.user, 'match', `<h2 class="text-2xl font-bold tracking-tight mb-8" style="color: var(--text-heading);">จับคู่อุปกรณ์กับผู้ป่วย</h2><div id="pairing-grid" class="monitor-grid-layout">${cards}</div>`, `
         window.openPair = async (mac, dno) => {
             currentMac = mac; const res = await fetch('/api/patients-available'); const pats = await res.json();
             const opts = pats.map(p => '<option value="'+escapeHTML(p.hn_number)+'|'+escapeHTML(p.name)+'">'+escapeHTML(p.name)+' ('+escapeHTML(p.hn_number)+')</option>').join('');
@@ -8061,10 +8071,10 @@ app.get('/alert-history', async (req, res) => {
             '</tr>';
     }).join('');
     res.send(ui(req.user, 'ahist', `
-        <h2 class="text-2xl font-black mb-6">📋 Alert History</h2>
+        <h2 class="text-2xl font-bold tracking-tight mb-6" style="color: var(--text-heading);">ประวัติการแจ้งเตือน</h2>
         <div class="card overflow-hidden">
             <table class="w-full text-xs">
-                <thead><tr><th>Time</th><th>Bed</th><th>Patient</th><th>Level</th><th>Status</th><th>Message</th><th class="text-right"></th></tr></thead>
+                <thead><tr><th>เวลา</th><th>เตียง</th><th>ผู้ป่วย</th><th>ระดับ</th><th>สถานะ</th><th>รายละเอียด</th><th class="text-right"></th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -8534,12 +8544,12 @@ app.get('/notification-settings', async (req, res) => {
     const s = settingsResult.rows[0] || {};
 
     res.send(ui(req.user, 'notif', `
-        <h2 class="text-2xl font-black mb-6">📱 Notification Settings</h2>
+        <h2 class="text-2xl font-bold tracking-tight mb-6" style="color: var(--text-heading);">ตั้งค่าการแจ้งเตือน</h2>
         <div class="space-y-6">
             <!-- LINE Settings -->
             <div class="card p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-bold text-lg">🟢 LINE Messaging</h3>
+                    <h3 class="font-bold text-lg inline-flex items-center gap-2"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>LINE Messaging</h3>
                     <label class="flex items-center gap-2">
                         <input type="checkbox" id="line-enabled" ${s.line_enabled ? 'checked' : ''} class="w-5 h-5">
                         <span class="text-sm font-bold">เปิดใช้</span>
@@ -8560,7 +8570,7 @@ app.get('/notification-settings', async (req, res) => {
             <!-- Telegram Settings -->
             <div class="card p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-bold text-lg">🔵 Telegram Bot</h3>
+                    <h3 class="font-bold text-lg inline-flex items-center gap-2"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>Telegram Bot</h3>
                     <label class="flex items-center gap-2">
                         <input type="checkbox" id="telegram-enabled" ${s.telegram_enabled ? 'checked' : ''} class="w-5 h-5">
                         <span class="text-sm font-bold">เปิดใช้</span>
@@ -8581,7 +8591,7 @@ app.get('/notification-settings', async (req, res) => {
             <!-- Email Settings -->
             <div class="card p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-bold text-lg">📧 Email (SMTP)</h3>
+                    <h3 class="font-bold text-lg inline-flex items-center gap-2"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Email (SMTP)</h3>
                     <label class="flex items-center gap-2">
                         <input type="checkbox" id="email-enabled" ${s.email_enabled ? 'checked' : ''} class="w-5 h-5">
                         <span class="text-sm font-bold">เปิดใช้</span>
@@ -8597,15 +8607,15 @@ app.get('/notification-settings', async (req, res) => {
                         <input id="email-port" value="${s.email_smtp_port || 587}" type="number" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500">Username</label>
+                        <label class="text-xs font-bold text-slate-500">ชื่อผู้ใช้</label>
                         <input id="email-user" value="${escapeHtml(s.email_username || '')}" placeholder="your@email.com" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500">Password</label>
+                        <label class="text-xs font-bold text-slate-500">รหัสผ่าน</label>
                         <input id="email-pass" type="password" value="" placeholder="${s.email_password ? 'ตั้งค่าแล้ว — เว้นว่างเพื่อคงค่าเดิม' : 'App Password'}" autocomplete="new-password" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500">Email ปลายทาง</label>
+                        <label class="text-xs font-bold text-slate-500">อีเมลปลายทาง</label>
                         <input id="email-to" value="${escapeHtml(s.email_to || '')}" placeholder="recipient@email.com" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                     <div>
@@ -8619,7 +8629,7 @@ app.get('/notification-settings', async (req, res) => {
             <!-- Webhook Settings -->
             <div class="card p-6">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-bold text-lg">🔗 Custom Webhook</h3>
+                    <h3 class="font-bold text-lg inline-flex items-center gap-2"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Custom Webhook</h3>
                     <label class="flex items-center gap-2">
                         <input type="checkbox" id="webhook-enabled" ${s.webhook_enabled ? 'checked' : ''} class="w-5 h-5">
                         <span class="text-sm font-bold">เปิดใช้</span>
@@ -8639,7 +8649,7 @@ app.get('/notification-settings', async (req, res) => {
 
             <!-- Alert Rules -->
             <div class="card p-6">
-                <h3 class="font-bold text-lg mb-4">⚙️ Alert Rules</h3>
+                <h3 class="font-bold text-lg mb-4">เงื่อนไขการแจ้งเตือน</h3>
                 <div class="space-y-3">
                     <label class="flex items-center gap-3 text-sm">
                         <input type="checkbox" id="alert-critical" ${s.alert_critical !== false ? 'checked' : ''}>
@@ -8659,11 +8669,11 @@ app.get('/notification-settings', async (req, res) => {
                 </div>
                 <div class="grid grid-cols-2 gap-3 mt-4">
                     <div>
-                        <label class="text-xs font-bold text-slate-500">Silent Start</label>
+                        <label class="text-xs font-bold text-slate-500">เริ่มช่วงเงียบ</label>
                         <input id="silent-start" value="${s.silent_start || '22:00'}" type="time" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500">Silent End</label>
+                        <label class="text-xs font-bold text-slate-500">สิ้นสุดช่วงเงียบ</label>
                         <input id="silent-end" value="${s.silent_end || '06:00'}" type="time" class="w-full border p-3 rounded-xl bg-slate-50 text-sm">
                     </div>
                 </div>
@@ -8671,9 +8681,9 @@ app.get('/notification-settings', async (req, res) => {
 
             <!-- Custom Alert Sound -->
             <div class="card p-6">
-                <h3 class="font-bold text-lg mb-1">🎵 เสียงแจ้งเตือนของคุณ</h3>
+                <h3 class="font-bold text-lg mb-1">เสียงแจ้งเตือนของคุณ</h3>
                 <p class="text-slate-500 text-xs mb-4">ค่ามาตรฐานคือเสียงบี๊บของระบบ — ถ้าต้องการ สามารถอัปโหลดไฟล์เสียงของตัวเองได้ (mp3, wav, ogg หรือ midi — ไม่เกิน 2MB) ไฟล์ MIDI จะถูกแปลงเป็นเสียงให้อัตโนมัติ</p>
-                <div id="custom-sound-status" class="text-sm font-bold mb-3">${s.custom_sound_original_name ? '🎵 ใช้งานอยู่: ' + escapeHtml(s.custom_sound_original_name) : '🔊 ใช้เสียงมาตรฐาน (บี๊บ)'}</div>
+                <div id="custom-sound-status" class="text-sm font-bold mb-3">${s.custom_sound_original_name ? 'ใช้งานอยู่: ' + escapeHtml(s.custom_sound_original_name) : '🔊 ใช้เสียงมาตรฐาน (บี๊บ)'}</div>
                 <div class="flex flex-wrap items-center gap-3">
                     <input id="custom-sound-file" type="file" accept=".mp3,.wav,.ogg,.mid,.midi,audio/mpeg,audio/wav,audio/ogg,audio/midi" class="text-sm">
                     <button onclick="uploadCustomSound()" class="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700 transition-colors">อัปโหลด</button>
@@ -8684,7 +8694,7 @@ app.get('/notification-settings', async (req, res) => {
 
             <!-- Save Button -->
             <button onclick="saveNotifSettings()" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold text-lg hover:bg-blue-700 transition-colors">
-                💾 บันทึกรายการตังค่า
+                บันทึกรายการตังค่า
             </button>
         </div>
     `, `
@@ -8715,7 +8725,7 @@ app.get('/notification-settings', async (req, res) => {
                     statusEl.textContent = previousStatus;
                     return showNotice(CUSTOM_SOUND_ERROR_MESSAGES[result.error] || 'อัปโหลดไม่สำเร็จ', {kind:'error'});
                 }
-                statusEl.textContent = '🎵 ใช้งานอยู่: ' + result.originalName + (result.converted ? ' (แปลงจาก MIDI แล้ว)' : '');
+                statusEl.textContent = 'ใช้งานอยู่: ' + result.originalName + (result.converted ? ' (แปลงจาก MIDI แล้ว)' : '');
                 input.value = '';
                 showNotice('อัปโหลดเสียงแจ้งเตือนสำเร็จ!');
             } catch (e) {
@@ -8975,7 +8985,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
         res.send(ui(req.user, 'wards', `
             <div class="rounded-2xl border p-5 md:p-6 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4" style="background: var(--bg-card); border-color: var(--border-color);">
                 <div>
-                    <h2 class="text-2xl font-black mb-1" style="color: var(--text-heading);">จัดการ Ward</h2>
+                    <h2 class="text-2xl font-black mb-1" style="color: var(--text-heading);">จัดการหอผู้ป่วย</h2>
                     <p class="text-sm" style="color: var(--text-secondary);">เพิ่ม แก้ไข หรือลบ Ward และดูสถานะผู้ป่วย อุปกรณ์ และเจ้าหน้าที่ที่ผูกอยู่</p>
                 </div>
                 <button type="button" onclick="openWardModal()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary);">
@@ -9838,7 +9848,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             </p>
 
             <div id="update-apply" class="hidden mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
-                <p class="text-sm font-bold mb-2" style="color: #92400e;">📌 การติดตั้งอัตโนมัติ</p>
+                <p class="text-sm font-bold mb-2" style="color: #92400e;">การติดตั้งอัตโนมัติ</p>
                 <p class="text-xs mb-3" style="color: #a16207;">กดปุ่มด้านล่างเพื่อติดตั้งอัตโนมัติ ระบบจะดึงโค้ด บิลดocker และ recreate container พร้อม auto-rollback หากเวอร์ชันใหม่ไม่ผ่าน health-check</p>
                 <button type="button" id="apply-update-btn" onclick="applyUpdate()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: #d97706;">
                     <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -10202,31 +10212,31 @@ app.get('/user-wards-mgmt', requireCapability('users:manage:ward', 'users:manage
         
         res.send(ui(req.user, 'user-wards', `
             <div class="mb-6">
-                <h2 class="text-2xl font-bold mb-2" style="color: var(--text-heading);">User-Ward Assignments</h2>
+                <h2 class="text-2xl font-bold mb-2" style="color: var(--text-heading);">กำหนดหอผู้ป่วยให้ผู้ใช้งาน</h2>
                 <p class="text-sm" style="color: var(--text-secondary);">Assign users to specific wards.</p>
             </div>
             <div class="card p-6 mb-6">
                 <form id="assign-form" class="flex flex-wrap gap-4 items-end">
                     <div class="flex-1 min-w-[180px]">
-                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">User</label>
+                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">ผู้ใช้งาน</label>
                         <select id="assign-user" required style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color);">
                             <option value="">Select user...</option>
                             ${users.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${escapeHtml(u.role)})</option>`).join('')}
                         </select>
                     </div>
                     <div class="flex-1 min-w-[180px]">
-                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">Ward</label>
+                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">หอผู้ป่วย</label>
                         <select id="assign-ward" required style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color);">
                             <option value="">Select ward...</option>
                             ${wards.map(w => `<option value="${w.id}">${escapeHtml(w.ward_code)} - ${escapeHtml(w.ward_name)}</option>`).join('')}
                         </select>
                     </div>
                     <div class="flex-1 min-w-[180px]">
-                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">Role in Ward</label>
+                        <label class="block text-sm font-bold mb-2" style="color: var(--text-secondary);">บทบาทในหอผู้ป่วย</label>
                         <select id="assign-role" style="width: 100%; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color);">
-                            <option value="viewer">Viewer</option>
-                            <option value="staff_nurse" selected>Staff Nurse</option>
-                            <option value="ward_admin">Ward Admin</option>
+                            <option value="viewer">ผู้ดูข้อมูล</option>
+                            <option value="staff_nurse" selected>พยาบาลประจำการ</option>
+                            <option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option>
                         </select>
                     </div>
                     <button type="submit" class="px-4 py-2 rounded-lg font-bold text-white" style="background: var(--accent-primary); color: var(--text-inverse);">Assign</button>
@@ -10236,10 +10246,10 @@ app.get('/user-wards-mgmt', requireCapability('users:manage:ward', 'users:manage
                 <table>
                     <thead>
                         <tr>
-                            <th>User</th>
-                            <th>Ward</th>
-                            <th>Role</th>
-                            <th>Actions</th>
+                            <th>ผู้ใช้งาน</th>
+                            <th>หอผู้ป่วย</th>
+                            <th>บทบาท</th>
+                            <th>จัดการ</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -10361,7 +10371,7 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
         res.send(ui(req.user, 'audit-log', `
             <div class="mb-6 flex justify-between items-end">
                 <div>
-                    <h2 class="text-2xl font-bold mb-2" style="color: var(--text-heading);">Audit Log</h2>
+                    <h2 class="text-2xl font-bold mb-2" style="color: var(--text-heading);">บันทึกการใช้งาน</h2>
                     <p class="text-sm" style="color: var(--text-secondary);">Track system activities and changes.</p>
                 </div>
             </div>
@@ -10369,7 +10379,7 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
             <div class="card p-6 mb-6">
                 <form id="audit-filter-form" class="flex flex-wrap gap-4 items-end" method="GET" action="/audit-log">
                     <div class="flex-1 min-w-[150px]">
-                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Action</label>
+                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">การกระทำ</label>
                         <select name="action" class="w-full border p-2 rounded text-xs bg-slate-50">
                             <option value="">All Actions</option>
                             <option value="LOGIN" ${req.query.action === 'LOGIN' ? 'selected' : ''}>LOGIN</option>
@@ -10380,7 +10390,7 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
                         </select>
                     </div>
                     <div class="flex-1 min-w-[150px]">
-                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Ward</label>
+                        <label class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หอผู้ป่วย</label>
                         <select name="ward_id" class="w-full border p-2 rounded text-xs bg-slate-50">
                             <option value="">All Wards</option>
                             ${wardsResult.rows.map(w => `<option value="${w.id}" ${req.query.ward_id == w.id ? 'selected' : ''}>${escapeHtml(w.ward_code)}</option>`).join('')}
@@ -10395,12 +10405,12 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
                 <table class="text-xs">
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>User</th>
-                            <th>Role</th>
-                            <th>Action</th>
-                            <th>Target</th>
-                            <th>Details</th>
+                            <th>เวลา</th>
+                            <th>ผู้ใช้งาน</th>
+                            <th>บทบาท</th>
+                            <th>การกระทำ</th>
+                            <th>เป้าหมาย</th>
+                            <th>รายละเอียด</th>
                             <th>IP</th>
                         </tr>
                     </thead>
