@@ -167,9 +167,53 @@ function initMqttClient() {
     const options = { clientId: `nurseaid_server_${Date.now()}`, reconnectPeriod: 5000 };
     if (MQTT_USER) { options.username = MQTT_USER; options.password = MQTT_PASSWORD; }
     mqttClient = mqtt.connect(url, options);
-    mqttClient.on('connect', () => console.log('[MQTT] Server connected to broker'));
+    mqttClient.on('connect', () => {
+        console.log('[MQTT] Server connected to broker');
+        mqttClient.subscribe('ble/node/+/ota', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+/ota:', err.message);
+        });
+    });
     mqttClient.on('error', (err) => console.error('[MQTT] Connection error:', err.message));
     mqttClient.on('offline', () => console.warn('[MQTT] Client went offline, will reconnect'));
+    mqttClient.on('message', (topic, payload) => {
+        const nodeId = parseOtaStatusTopic(topic);
+        if (!nodeId) return; // not an OTA status message — nothing else is subscribed today, but stay defensive
+        const parsed = parseOtaStatusPayload(payload);
+        if (!parsed) {
+            console.error(`[Firmware OTA] Malformed status payload from node ${nodeId}`);
+            return;
+        }
+        handleOtaStatusMessage(nodeId, parsed).catch(err =>
+            console.error('[Firmware OTA] Failed to record status:', err.message));
+    });
+}
+
+async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
+    // The status message carries nodeId (from the topic), not board_mac —
+    // map it via the same topology data /api/esp32-nodes already builds.
+    // esp32NodesForUi() calls wardScopeSql(req,...), which short-circuits
+    // to "no ward filter" for role==='super_admin' before touching any
+    // other field (server.js:337-338) — so this synthetic super_admin
+    // "request" is sufficient for a background MQTT handler that has no
+    // real req, and deliberately sees every ward (this handler must be
+    // able to match ANY node, not just ones in some ward's scope).
+    const topology = await esp32NodesForUi({ user: { role: 'super_admin' } });
+    const node = (topology.nodes || []).find(n => n.nodeId === nodeId);
+    if (!node) {
+        console.error(`[Firmware OTA] Status from unknown nodeId ${nodeId} — no matching board_mac`);
+        return;
+    }
+    // Update the most recent pending/start deployment row for this board.
+    await pool.query(
+        `UPDATE firmware_deployments
+         SET status=$1, detail=$2, reported_version=$3, updated_at=NOW()
+         WHERE id = (
+             SELECT id FROM firmware_deployments
+             WHERE board_mac=$4 AND status IN ('pending','start')
+             ORDER BY requested_at DESC LIMIT 1
+         )`,
+        [state, detail || null, version || null, node.boardMac]
+    );
 }
 
 async function publishPairedDeviceList() {
