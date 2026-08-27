@@ -1733,12 +1733,12 @@ function ui(user, active, content, script = "") {
 
             --text-primary: #1e293b;
             --text-secondary: #475569;
-            --text-tertiary: #94a3b8;
-            --text-muted: #cbd5e1;
+            --text-tertiary: #64748b;
+            --text-muted: #94a3b8;
             --text-inverse: #ffffff;
-            --text-badge: #64748b;
+            --text-badge: #475569;
             --text-vital: #334155;
-            --text-vital-muted: #94a3b8;
+            --text-vital-muted: #64748b;
             --text-heading: #0f172a;
 
             --border-color: #e2e8f0;
@@ -1765,6 +1765,14 @@ function ui(user, active, content, script = "") {
             --accent-green-light: #bbf7d0;
             --bg-card-paired: #eff6ff;
             --border-card-paired: #bfdbfe;
+
+            /* Status colors used as TEXT. Separate from the --accent-* fills because a
+               hue readable as a fill is often unreadable as small text on the same
+               surface. Each value is tuned to clear WCAG AA against --bg-card in its
+               own theme. */
+            --status-critical-text: #dc2626;
+            --status-success-text: #15803d;
+            --status-warning-text: #a16207;
         }
 
         [data-theme="dark"] {
@@ -1792,7 +1800,7 @@ function ui(user, active, content, script = "") {
             --text-primary: #f0f6fc;
             --text-secondary: #c9d1d9;
             --text-tertiary: #8b949e;
-            --text-muted: #484f58;
+            --text-muted: #7d8590;
             --text-inverse: #0d1117;
             --text-badge: #8b949e;
             --text-vital: #f0f6fc;
@@ -1824,7 +1832,101 @@ function ui(user, active, content, script = "") {
             --accent-green-light: rgba(63, 185, 80, 0.15);
             --bg-card-paired: #0d1a2a;
             --border-card-paired: #1c3a5f;
+
+            --status-critical-text: #f85149;
+            --status-success-text: #3fb950;
+            --status-warning-text: #d29922;
         }
+
+        /*
+         * Dark-theme override for hard-coded Tailwind palette utilities.
+         *
+         * The themed app shell uses ~195 fixed light-mode Tailwind color classes
+         * (e.g. bg-slate-50, text-slate-500) instead of the token variables above.
+         * Tailwind emits these as absolute colors, so they stay light-on-light on a
+         * dark page. This block remaps every in-scope utility to the dark tokens so
+         * night-shift dark mode renders correctly. No markup or class names change.
+         *
+         * Specificity: [data-theme="dark"] .X (0,2,0) beats Tailwind's .X (0,1,0);
+         * !important is added anyway because the Tailwind Play CDN injects its
+         * stylesheet at runtime.
+         */
+
+        /* Light neutral surfaces -> dark surface tokens */
+        [data-theme="dark"] .bg-slate-50 { background-color: var(--bg-card) !important; }
+        [data-theme="dark"] .bg-slate-100 { background-color: var(--bg-input) !important; }
+        [data-theme="dark"] .bg-slate-200 { background-color: var(--bg-input) !important; }
+        [data-theme="dark"] .bg-slate-300 { background-color: var(--bg-card-hover) !important; }
+
+        /* Mid/neutral gray surface */
+        [data-theme="dark"] .bg-gray-500 { background-color: var(--bg-input) !important; }
+
+        /* Already-dark neutral backgrounds (button-like on light theme): keep them
+         * visible on a dark page by mapping to the accent-primary button color. */
+        [data-theme="dark"] .bg-slate-800 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-slate-900 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-gray-700 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
+        [data-theme="dark"] .bg-gray-800 { background-color: var(--accent-primary) !important; color: var(--text-inverse) !important; }
+
+        /* Neutral text */
+        [data-theme="dark"] .text-slate-800 { color: var(--text-primary) !important; }
+        [data-theme="dark"] .text-slate-700 { color: var(--text-primary) !important; }
+        [data-theme="dark"] .text-slate-600 { color: var(--text-secondary) !important; }
+        [data-theme="dark"] .text-slate-500 { color: var(--text-secondary) !important; }
+        [data-theme="dark"] .text-gray-100 { color: var(--text-primary) !important; }
+        [data-theme="dark"] .text-gray-600 { color: var(--text-secondary) !important; }
+        [data-theme="dark"] .text-gray-500 { color: var(--text-secondary) !important; }
+        [data-theme="dark"] .text-gray-400 { color: var(--text-tertiary) !important; }
+        [data-theme="dark"] .text-slate-400 { color: var(--text-tertiary) !important; }
+        [data-theme="dark"] .text-slate-300 { color: var(--text-tertiary) !important; }
+
+        /* Neutral border */
+        [data-theme="dark"] .border-slate-50 { border-color: var(--border-color) !important; }
+
+        /* Semantic status text (hue preserved via dark accent tokens) */
+        [data-theme="dark"] .text-red-400 { color: var(--accent-red) !important; }
+        [data-theme="dark"] .text-red-500 { color: var(--accent-red) !important; }
+        [data-theme="dark"] .text-red-600 { color: var(--accent-red) !important; }
+        [data-theme="dark"] .text-red-700 { color: var(--accent-red) !important; }
+        [data-theme="dark"] .text-red-800 { color: var(--accent-red) !important; }
+        [data-theme="dark"] .text-green-500 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-green-600 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-green-700 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-green-800 { color: var(--accent-green) !important; }
+        [data-theme="dark"] .text-amber-500 { color: var(--accent-amber) !important; }
+        [data-theme="dark"] .text-amber-800 { color: var(--accent-amber) !important; }
+        [data-theme="dark"] .text-blue-400 { color: var(--accent-primary) !important; }
+        [data-theme="dark"] .text-blue-500 { color: var(--accent-primary) !important; }
+        [data-theme="dark"] .text-blue-600 { color: var(--accent-primary) !important; }
+        [data-theme="dark"] .text-blue-800 { color: var(--accent-primary) !important; }
+        [data-theme="dark"] .text-purple-700 { color: var(--accent-secondary) !important; }
+        [data-theme="dark"] .text-yellow-700 { color: var(--accent-yellow) !important; }
+        [data-theme="dark"] .text-emerald-600 { color: var(--accent-green) !important; }
+
+        /* Saturated status button backgrounds (hue preserved) */
+        [data-theme="dark"] .bg-red-400 { background-color: var(--accent-red) !important; }
+        [data-theme="dark"] .bg-red-600 { background-color: var(--accent-red) !important; }
+        [data-theme="dark"] .bg-green-500 { background-color: var(--accent-green) !important; }
+        [data-theme="dark"] .bg-green-600 { background-color: var(--accent-green) !important; }
+        [data-theme="dark"] .bg-blue-600 { background-color: var(--accent-primary) !important; }
+        [data-theme="dark"] .bg-blue-700 { background-color: var(--accent-primary) !important; }
+
+        /* Pale status tints -> low-alpha tints of the same hue */
+        [data-theme="dark"] .bg-red-50 { background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-red-100 { background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-green-50 { background-color: color-mix(in srgb, var(--accent-green) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-green-100 { background-color: color-mix(in srgb, var(--accent-green) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-amber-50 { background-color: color-mix(in srgb, var(--accent-amber) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-blue-50 { background-color: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-purple-100 { background-color: color-mix(in srgb, var(--accent-secondary) 15%, transparent) !important; }
+        [data-theme="dark"] .bg-yellow-100 { background-color: color-mix(in srgb, var(--accent-yellow) 15%, transparent) !important; }
+
+        /* Status borders -> tinted with the same hue */
+        [data-theme="dark"] .border-red-300 { border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)) !important; }
+        [data-theme="dark"] .border-red-800 { border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)) !important; }
+        [data-theme="dark"] .border-green-300 { border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border-color)) !important; }
+        [data-theme="dark"] .border-amber-300 { border-color: color-mix(in srgb, var(--accent-amber) 45%, var(--border-color)) !important; }
+        [data-theme="dark"] .border-blue-300 { border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color)) !important; }
 
         html {
             transition: background-color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1838,15 +1940,17 @@ function ui(user, active, content, script = "") {
                         color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
+        /* Token-based so the alert flash tracks the active theme. Hard-coded #ffffff
+           stops would strobe bright white on the near-black dark-theme page. */
         @keyframes criticalFlash {
-            0% { background-color: #ffffff; }
-            50% { background-color: #fee2e2; }
-            100% { background-color: #ffffff; }
+            0% { background-color: var(--bg-card); }
+            50% { background-color: color-mix(in srgb, var(--accent-red) 22%, var(--bg-card)); }
+            100% { background-color: var(--bg-card); }
         }
         @keyframes warningFlash {
-            0% { background-color: #ffffff; }
-            50% { background-color: #fef08a; }
-            100% { background-color: #ffffff; }
+            0% { background-color: var(--bg-card); }
+            50% { background-color: color-mix(in srgb, var(--accent-yellow) 28%, var(--bg-card)); }
+            100% { background-color: var(--bg-card); }
         }
         @keyframes scan-pulse {
             0%, 100% { opacity: 0.6; transform: translateY(0); }
@@ -2036,8 +2140,9 @@ function ui(user, active, content, script = "") {
                         transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        .critical-card { animation: criticalFlash 1s infinite; border: 2px solid #dc2626 !important; }
-        .warning-card { animation: warningFlash 1.5s infinite; border: 2px solid #eab308 !important; }
+        .critical-card { animation: criticalFlash 1s infinite; border: 2px solid var(--accent-red) !important; }
+        .warning-card { animation: warningFlash 1.5s infinite; border: 2px solid var(--accent-yellow) !important; }
+        @media (prefers-reduced-motion: reduce) { .critical-card, .warning-card { animation: none !important; } }
 
         /* Theme transition for cards */
         .card {
@@ -2046,7 +2151,7 @@ function ui(user, active, content, script = "") {
             transition: all 0.3s ease;
         }
 
-        .critical-banner { background: #dc2626; color: white; font-weight: 900; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; border-radius: 6px; }
+        .critical-banner { background: var(--accent-red); color: white; font-weight: 900; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; border-radius: 6px; }
         .warning-banner { background: #eab308; color: #713f12; font-weight: 900; text-align: center; padding: 6px; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; border-radius: 6px; }
 
         .nav-active { background: var(--accent-primary); color: var(--text-inverse); border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3); }
@@ -2057,9 +2162,9 @@ function ui(user, active, content, script = "") {
         .dialog-icon { display:none; width:3rem; height:3rem; flex:0 0 auto; align-items:center; justify-content:center; border-radius:1rem; font-size:1.35rem; }
         .modal--notice .dialog-icon { display:inline-flex; }
         .modal--info .dialog-icon { color:#2563eb; background:rgba(59,130,246,.14); }
-        .modal--success .dialog-icon { color:#16a34a; background:rgba(34,197,94,.14); }
-        .modal--warning .dialog-icon { color:#ca8a04; background:rgba(234,179,8,.16); }
-        .modal--error .dialog-icon, .modal--danger .dialog-icon { color:#dc2626; background:rgba(239,68,68,.14); }
+        .modal--success .dialog-icon { color:var(--status-success-text); background:rgba(34,197,94,.14); }
+        .modal--warning .dialog-icon { color:var(--status-warning-text); background:rgba(234,179,8,.16); }
+        .modal--error .dialog-icon, .modal--danger .dialog-icon { color:var(--status-critical-text); background:rgba(239,68,68,.14); }
         .modal--danger #modalSubmit { background:var(--accent-red) !important; }
         .dialog-note { border:1px solid rgba(239,68,68,.28); border-radius:1rem; padding:.9rem 1rem; background:rgba(239,68,68,.08); color:var(--text-secondary); }
         .dialog-note strong { color:var(--accent-red); }
@@ -2145,6 +2250,14 @@ function ui(user, active, content, script = "") {
 
         .theme-toggle-switch {
             position: relative;
+            /* Now a <button> for keyboard access; strip UA button chrome so the
+               switch renders exactly as it did when it was a <div>. */
+            appearance: none;
+            -webkit-appearance: none;
+            border: 0;
+            padding: 0;
+            margin: 0 auto;
+            display: block;
             width: 48px;
             height: 26px;
             border-radius: 13px;
@@ -2521,7 +2634,7 @@ function ui(user, active, content, script = "") {
         }
 
         .priority-badge {
-            font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
+            font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
             text-transform: uppercase; letter-spacing: .02em; white-space: nowrap;
         }
         .priority-badge--high   { background: color-mix(in srgb, var(--priority-high) 15%, transparent);   color: var(--priority-high);   border: 1px solid color-mix(in srgb, var(--priority-high) 45%, var(--border-color)); }
@@ -3353,13 +3466,13 @@ function ui(user, active, content, script = "") {
         .ai-risk-badge { display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .55rem; border-radius:999px; font-size:.66rem; font-weight:900; }
         .ai-risk-badge--normal { color:#15803d; background:rgba(34,197,94,.13); }
         .ai-risk-badge--warning { color:#a16207; background:rgba(234,179,8,.16); }
-        .ai-risk-badge--critical { color:#dc2626; background:rgba(239,68,68,.13); }
+        .ai-risk-badge--critical { color:var(--status-critical-text); background:rgba(239,68,68,.13); }
         .ai-risk-badge--insufficient_data { color:#475569; background:rgba(100,116,139,.13); }
         .ai-answer h3 { color:var(--text-heading); font-size:1rem; font-weight:900; line-height:1.35; text-wrap:balance; }
         .ai-answer-summary { margin-top:0; color:var(--text-secondary); font-size:.82rem; line-height:1.65; }
         .ai-answer-risklabel--normal { color:#15803d; }
         .ai-answer-risklabel--warning { color:#a16207; }
-        .ai-answer-risklabel--critical { color:#dc2626; }
+        .ai-answer-risklabel--critical { color:var(--status-critical-text); }
         .ai-answer-risklabel--insufficient_data { color:#475569; }
         .ai-answer-typetext { margin-top:.5rem; color:var(--text-tertiary); }
         .ai-answer-section { padding:.9rem 1rem; border-top:1px solid var(--border-color); }
@@ -3371,7 +3484,7 @@ function ui(user, active, content, script = "") {
         .ai-observation p { margin-top:.2rem; color:var(--text-secondary); font-size:.74rem; line-height:1.55; }
         .ai-check-list,.ai-limit-list { display:grid; gap:.45rem; list-style:none; }
         .ai-check-list li,.ai-limit-list li { position:relative; padding-left:1.35rem; color:var(--text-secondary); font-size:.75rem; line-height:1.55; }
-        .ai-check-list li::before { content:'✓'; position:absolute; left:0; color:#16a34a; font-weight:900; }
+        .ai-check-list li::before { content:'✓'; position:absolute; left:0; color:var(--status-success-text); font-weight:900; }
         .ai-limit-list li::before { content:'!'; position:absolute; left:.15rem; color:#d97706; font-weight:900; }
         .ai-evidence { border-top:1px solid var(--border-color); }
         .ai-evidence summary { cursor:pointer; padding:.8rem 1rem; color:var(--accent-primary); font-size:.72rem; font-weight:800; list-style:none; }
@@ -3442,14 +3555,67 @@ function ui(user, active, content, script = "") {
         .qs-field:focus { outline: none; border-color:var(--accent-primary); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent-primary) 20%, transparent); }
         @media (max-width: 480px) { .qs-step-ring { width:36px; height:36px; font-size:.85rem; } .qs-step-connector { height:36px; } .qs-step-connector .qs-track { margin-top:16px; } .qs-step-label { font-size:.7rem; } }
         @media (prefers-reduced-motion: reduce) { .qs-panel, .qs-step-ring, .qs-step-label, .qs-mode-btn, .qs-list-item, .qs-fill { transition:none !important; } }
+
+        /* ---- Accessibility baseline ----
+           Applies across every page rendered through ui(). Kept last in the
+           stylesheet so it is not overridden by earlier component rules. */
+
+        /* Keyboard users can jump the sidebar straight to page content. */
+        .skip-link {
+            position: absolute;
+            left: .5rem;
+            top: -4rem;
+            z-index: 200;
+            padding: .7rem 1.1rem;
+            border-radius: .75rem;
+            font-weight: 700;
+            font-size: .875rem;
+            color: var(--text-inverse);
+            background: var(--accent-primary);
+            box-shadow: var(--shadow-lg);
+            transition: top .15s ease;
+        }
+        .skip-link:focus { top: .5rem; }
+        #appMain:focus { outline: none; }
+
+        /* A single visible focus treatment; several components previously had none. */
+        :focus-visible {
+            outline: 2px solid var(--border-focus);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        /* WCAG 2.5.8 target size. Applies to genuine controls only, so it does not
+           inflate icon-only text buttons inside dense table rows. */
+        button:not(.nav-icon-only),
+        a.qs-primary, a.qs-secondary,
+        .qs-primary, .qs-secondary, .qs-mode-btn, .qs-scan {
+            min-height: 44px;
+        }
+        /* Exempt controls whose own geometry is deliberate: dense table row actions,
+           and the theme switch (48x26 already clears WCAG 2.5.8 AA at 24x24). */
+        table button, td button, th button, .inline-action,
+        .theme-toggle-switch { min-height: 0; }
+
+        /* Catch-all: any component added later inherits the reduced-motion contract
+           without needing its own media query. State changes stay instant, not lost. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: .001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .001ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
     </style>
 </head>
 <body class="flex flex-col md:flex-row min-h-screen">
+    <a href="#appMain" class="skip-link">ข้ามไปยังเนื้อหาหลัก</a>
     <header id="mobileHeader">
         <button id="mobileMenuButton" type="button" onclick="openMobileMenu()" aria-label="เปิดเมนู" aria-controls="sidebar" aria-expanded="false">☰</button>
         <div class="min-w-0 text-center">
             <p class="font-black italic uppercase truncate" style="color: var(--accent-primary);">Nurse <span style="color: var(--text-primary);">Aid</span></p>
-            <p class="text-[8px] font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
+            <p class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
         </div>
         <button id="mobileThemeButton" type="button" onclick="toggleTheme()" aria-label="สลับโหมดสี" title="สลับโหมดสี">◐</button>
     </header>
@@ -3458,7 +3624,7 @@ function ui(user, active, content, script = "") {
         <div class="flex items-center justify-between mb-3 gap-2">
             <div class="text-center sidebar-hide min-w-0">
                 <h1 class="text-xl font-black italic uppercase whitespace-nowrap" style="color: var(--accent-primary);">Nurse <span style="color: var(--text-primary);">Aid</span></h1>
-                <p class="text-[8px] font-bold uppercase whitespace-nowrap" style="color: var(--text-tertiary); letter-spacing: 0.15em;">Hospital System</p>
+                <p class="text-[10px] font-bold uppercase whitespace-nowrap" style="color: var(--text-tertiary); letter-spacing: 0.15em;">Hospital System</p>
             </div>
 
             <button id="sidebarToggle" onclick="toggleSidebar()" type="button"
@@ -3468,21 +3634,21 @@ function ui(user, active, content, script = "") {
 
         <!-- Theme Toggle Switch -->
         <div class="theme-toggle-container">
-            <div id="themeToggle" class="theme-toggle-switch" onclick="toggleTheme()" title="สลับโหมดแสง/มืดย"></div>
+            <button type="button" id="themeToggle" class="theme-toggle-switch" onclick="toggleTheme()" role="switch" aria-checked="false" aria-label="สลับโหมดแสง/มืด" title="สลับโหมดแสง/มืดย"></button>
         </div>
 
         <div class="sidebar-hide mb-4 p-3 rounded-xl text-xs" style="background: var(--bg-sidebar-info); border: 1px solid var(--border-color);">
             <p id="display-nurse" class="font-bold truncate" style="color: var(--text-primary);">Checking...</p>
-            <p id="display-role" class="text-[8px] font-bold uppercase" style="color: var(--text-tertiary);"></p>
-            <p id="display-ward" class="text-[9px] font-bold mt-1" style="color: var(--text-secondary);"></p>
+            <p id="display-role" class="text-[10px] font-bold uppercase" style="color: var(--text-tertiary);"></p>
+            <p id="display-ward" class="text-[10px] font-bold mt-1" style="color: var(--text-secondary);"></p>
         </div>
 
-        <nav class="flex flex-col gap-1 flex-1">
+        <nav class="flex flex-col gap-1 flex-1" aria-label="เมนูหลัก">
             ${navs.main}
         </nav>
 
         <div class="sidebar-hide mt-4 pt-4 border-t" style="border-color: var(--border-color);">
-            <p class="text-[8px] font-bold uppercase tracking-widest mb-2 px-2" style="color: var(--text-tertiary);">Alerts</p>
+            <p class="text-[10px] font-bold uppercase tracking-widest mb-2 px-2" style="color: var(--text-tertiary);">Alerts</p>
             ${navs.alerts}
         </div>
 
@@ -3495,7 +3661,7 @@ function ui(user, active, content, script = "") {
         </div>
     </aside>
 
-    <main id="appMain" class="flex-1 p-6 md:p-8 overflow-auto">${content}</main>
+    <main id="appMain" tabindex="-1" class="flex-1 p-6 md:p-8 overflow-auto">${content}</main>
     <a id="siteAlertBanner" href="/alert-history" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white px-5 py-3 rounded-xl shadow-2xl font-bold text-sm" role="alert" aria-live="assertive"></a>
 
         <div id="globalModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" aria-hidden="true"><div class="modal-card p-6 sm:p-8" tabindex="-1"><div class="flex items-start gap-4"><div id="modalIcon" class="dialog-icon" aria-hidden="true">ℹ</div><div class="min-w-0 flex-1"><h3 id="modalTitle" class="text-xl font-bold text-pretty" style="color:var(--text-primary);"></h3></div></div><div id="modalBody" class="space-y-4 mt-5 break-words" style="color:var(--text-secondary);"></div><div class="flex flex-col-reverse sm:flex-row gap-3 mt-7"><button id="modalCancel" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ยกเลิก</button><button id="modalSubmit" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">ตกลง</button></div></div></div>
@@ -3679,6 +3845,8 @@ function ui(user, active, content, script = "") {
             const toggleBtn = document.getElementById('themeToggle');
             if (toggleBtn) {
                 toggleBtn.title = theme === 'dark' ? 'สลับไปโหมดแสง' : 'สลับไปโหมดมืดย';
+                // role="switch" needs its state kept in sync for screen readers.
+                toggleBtn.setAttribute('aria-checked', theme === 'dark' ? 'true' : 'false');
             }
         }
 
@@ -5734,7 +5902,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 <div class="range-metric-card range-metric-card--spo2"><div class="font-bold mb-2">SpO₂ (%)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning ต่ำกว่า</label><input type="number" id="th-spo2Min" value="\${current.spo2WarningMin}" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical ≤</label><input type="number" id="th-spo2CriticalMin" value="\${current.spo2CriticalMin}" class="w-full border p-2 rounded-lg"></div></div></div>
                 <div class="range-metric-card range-metric-card--temp"><div class="font-bold mb-2">Temperature (°C)</div><div class="grid grid-cols-2 gap-2"><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning ต่ำ</label><input type="number" id="th-tempWarningMin" value="\${current.tempWarningMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-yellow);">Warning สูง</label><input type="number" id="th-tempWarningMax" value="\${current.tempWarningMax}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical ต่ำ</label><input type="number" id="th-tempMin" value="\${current.tempMin}" step="0.1" class="w-full border p-2 rounded-lg"></div><div><label class="text-[10px]" style="color:var(--accent-red);">Critical สูง</label><input type="number" id="th-tempMax" value="\${current.tempMax}" step="0.1" class="w-full border p-2 rounded-lg"></div></div></div>
             </div>
-            <button id="reset-patient-limits" type="button" class="w-full mt-4 text-[10px] text-slate-400 underline italic">ล้างค่าและใช้ค่าเริ่มต้น</button>
+            <button id="reset-patient-limits" type="button" class="w-full mt-4 text-[10px] text-slate-500 underline italic">ล้างค่าและใช้ค่าเริ่มต้น</button>
         \`;
         openModal('⚙️ Settings', html, async () => {
             const response = await fetch('/api/alert-settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
@@ -5906,7 +6074,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 };
                 const spo2Display = p.spo2 !== '--' ? p.spo2 : (spo2QualityLabels[p.spo2Quality] || '--');
 
-                let battColor = isDark ? 'text-gray-500' : 'text-gray-400';
+                let battColor = isDark ? 'text-gray-500' : 'text-gray-500';
                 if (p.battery !== '--') {
                     if (p.battery === 0) battColor = 'text-gray-500';
                     else if (p.battery < 20) battColor = 'text-red-500 animate-pulse font-bold';
@@ -5916,12 +6084,12 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
                 const bedBg = isInactive ? 'bg-gray-500' : (isDark ? 'bg-gray-700' : 'bg-gray-800');
                 const nameColor = isInactive ? 'text-gray-500' : (isDark ? 'text-gray-100' : 'text-slate-800');
-                const hnColor = isInactive ? 'text-gray-500' : (isDark ? 'text-gray-500' : 'text-slate-400');
+                const hnColor = isInactive ? 'text-gray-500' : (isDark ? 'text-gray-500' : 'text-slate-500');
                 const settingsColor = isInactive
                     ? 'text-gray-500 hover:text-gray-600'
-                    : (isDark ? 'text-gray-600 hover:text-blue-400' : 'text-slate-300 hover:text-blue-600');
+                    : (isDark ? 'text-gray-600 hover:text-blue-400' : 'text-slate-500 hover:text-blue-600');
                 const vitalBg = isDark ? 'style="background: var(--bg-vital);"' : 'class="bg-slate-50"';
-                const vitalTextColor = isDark ? 'var(--text-vital-muted)' : 'text-slate-400';
+                const vitalTextColor = isDark ? 'var(--text-vital-muted)' : 'text-slate-500';
                 const grayBg = isDark ? 'style="background: #111827; border: 1px solid #4b5563;"' : 'style="background: #d1d5db; border: 1px solid #9ca3af;"';
                 const grayTextColor = isDark ? '#9ca3af' : '#6b7280';
                 const inactiveCardStyle = isDark ? 'background: #1f2937;' : 'background: #e5e7eb;';
@@ -5984,7 +6152,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             <div class="flex min-w-0 flex-col">
                                 <button type="button" data-action="show-trend" class="font-bold text-sm truncate cursor-pointer leading-tight text-left" style="color: \${nameColor};">\${safe.name}</button>
                                 <div class="flex items-center gap-2">
-                                    <span class="min-w-0 truncate text-[9px] font-bold uppercase" style="color: \${hnColor};">HN: \${safe.hn}</span>
+                                    <span class="min-w-0 truncate text-[10px] font-bold uppercase" style="color: \${hnColor};">HN: \${safe.hn}</span>
                                     <div class="flex items-center gap-0.5 \${battColor}">
                                         <svg class="w-4 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
@@ -6011,15 +6179,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
                     <div class="grid grid-cols-3 gap-2">
                         <div class="p-2 rounded-xl text-center transition-all" \${hrBg}>
-                            <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
+                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
                             <p class="\${p.hr === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${hrNumColor};">\${safe.hr}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${spo2Bg}>
-                            <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
+                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
                             <p class="\${p.spo2 === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${spo2NumColor};" title="SpO2 quality: \${safe.spo2Quality}">\${safe.spo2}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${tempBg}>
-                            <p class="text-[8px] font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
+                            <p class="text-[10px] font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
                             <p class="\${p.temp === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${tempNumColor};">\${safe.temp}</p>
                         </div>
                     </div>
@@ -6189,18 +6357,18 @@ app.get('/export', async (req, res) => {
         <h2 class="text-2xl font-black text-slate-800 uppercase mb-8">Export Data</h2>
         <div class="card p-8 shadow-xl max-w-2xl">
             <div class="space-y-4">
-                <label class="text-xs font-bold text-slate-400">เลือกคนไข้</label>
+                <label class="text-xs font-bold text-slate-500">เลือกคนไข้</label>
                 <select id="e-hn" class="w-full border p-4 rounded-2xl bg-slate-50 outline-none">
                     ${opts}
                 </select>
 
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="text-[10px] font-bold text-slate-400">เริ่มวันที่</label>
+                        <label class="text-[10px] font-bold text-slate-500">เริ่มวันที่</label>
                         <input id="e-start" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
                     </div>
                     <div>
-                        <label class="text-[10px] font-bold text-slate-400">ถึงวันที่</label>
+                        <label class="text-[10px] font-bold text-slate-500">ถึงวันที่</label>
                         <input id="e-stop" type="datetime-local" class="w-full border p-4 rounded-2xl bg-slate-50">
                     </div>
                 </div>
@@ -6476,9 +6644,9 @@ app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) =>
     const rows = r.rows.map(d => {
         const battery = batteryByMac.get(normalizeMac(d.mac));
         const battCell = battery === undefined
-            ? '<span class="text-slate-300 text-xs">ไม่ทราบแบต</span>'
-            : `<span class="inline-flex items-center gap-1 font-bold text-xs ${battery === 0 ? 'text-gray-400' : (battery < 20 ? 'text-red-500' : (battery < 40 ? 'text-orange-500' : 'text-emerald-600'))}">🔋 ${battery}%</span>`;
-        return `<tr><td class="font-bold">#${escapeHtml(d.device_no)}</td><td><span class="px-2 py-1 rounded-lg text-[10px] font-bold ${d.device_type === 'wearos' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}">${escapeHtml(d.device_type || 'jstyle')}</span></td><td class="font-mono text-slate-400 text-xs">${escapeHtml(d.mac)}</td><td>${battCell}</td><td class="text-right admin-only"><button onclick="editD('${escapeJsSingle(d.mac)}','${escapeJsSingle(d.device_no)}','${escapeJsSingle(d.device_type || 'jstyle')}')" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delD('${escapeJsSingle(d.mac)}')" class="text-red-400 font-bold">ลบ</button></td></tr>`;
+            ? '<span class="text-slate-500 text-xs">ไม่ทราบแบต</span>'
+            : `<span class="inline-flex items-center gap-1 font-bold text-xs ${battery === 0 ? 'text-gray-500' : (battery < 20 ? 'text-red-500' : (battery < 40 ? 'text-orange-500' : 'text-emerald-600'))}">🔋 ${battery}%</span>`;
+        return `<tr><td class="font-bold">#${escapeHtml(d.device_no)}</td><td><span class="px-2 py-1 rounded-lg text-[10px] font-bold ${d.device_type === 'wearos' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}">${escapeHtml(d.device_type || 'jstyle')}</span></td><td class="font-mono text-slate-500 text-xs">${escapeHtml(d.mac)}</td><td>${battCell}</td><td class="text-right admin-only"><button onclick="editD('${escapeJsSingle(d.mac)}','${escapeJsSingle(d.device_no)}','${escapeJsSingle(d.device_type || 'jstyle')}')" class="text-blue-500 font-bold mr-3">แก้ไข</button><button onclick="delD('${escapeJsSingle(d.mac)}')" class="text-red-400 font-bold">ลบ</button></td></tr>`;
     }).join('');
     res.send(ui(req.user, 'devs', `
         <div class="grid md:grid-cols-3 gap-8">
@@ -6683,7 +6851,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
             <td>${escapeHtml(u.full_name || '-')}</td>
             <td>${roleBadge}</td>
             <td class="text-[10px]">${u.user_wards && u.user_wards[0] ? escapeHtml(u.user_wards.join(', ')) : '-'}</td>
-            <td class="text-xs text-slate-400">${new Date(u.created_at).toLocaleString('th-TH')}</td>
+            <td class="text-xs text-slate-500">${new Date(u.created_at).toLocaleString('th-TH')}</td>
             <td class="text-right">
                 ${canManage ? `<button onclick="editUser(${u.id},'${escapeJsSingle(u.username)}','${escapeJsSingle(u.full_name || '')}','${escapeJsSingle(u.role)}')" class="text-blue-500 font-bold text-xs mr-3">แก้ไข</button>` : ''}
                 ${canManage ? `<button onclick="resetUserPass(${u.id},'${escapeJsSingle(u.username)}')" class="text-amber-500 font-bold text-xs mr-3">รหัสผ่าน</button>` : ''}
@@ -6703,7 +6871,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
                     <div><label class="text-xs font-bold">Role</label><select id="u_role" class="w-full border p-3 rounded-xl bg-slate-50">${addRoleOptions}</select></div>
                     <div><label class="text-xs font-bold">Wards</label><div id="u_wards" class="w-full border p-2 rounded-xl bg-slate-50 h-[46px] overflow-y-auto space-y-1">${wardChecksForCreate}</div></div>
                 </div>
-                ${lockedWardId ? '<p class="text-[10px] text-slate-400 mt-2">ผู้ใช้ใหม่จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                ${lockedWardId ? '<p class="text-[10px] text-slate-500 mt-2">ผู้ใช้ใหม่จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                 <button onclick="addUser()" class="mt-4 w-full bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-colors">💾 บันทึก</button>
             </div>
             <div class="card overflow-hidden">
@@ -7118,7 +7286,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                         <option value="">เลือก Ward *</option>
                         ${wardOpts}
                     </select>
-                    ${lockedWardId ? '<p class="text-[10px] text-slate-400">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
+                    ${lockedWardId ? '<p class="text-[10px] text-slate-500">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                     <button onclick="addP()" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold">บันทึก</button>
                 </div>
             </div>
@@ -7603,7 +7771,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         const limits = alertThresholds(d);
         return `<article class="range-patient-card card">
             <div class="flex items-start justify-between gap-3 mb-3"><div class="min-w-0">
-                <div class="flex items-center gap-2 mb-1"><span class="text-[10px] px-2 py-1 rounded-lg font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">เตียง ${escapeHtml(d.bed_no || '-')}</span><span class="text-[9px] px-2 py-1 rounded-full font-bold" style="background:${hasCustom ? 'var(--accent-amber)' : 'var(--bg-badge)'};color:${hasCustom ? 'var(--text-inverse)' : 'var(--text-secondary)'};">${hasCustom ? 'ตั้งค่าเฉพาะราย' : 'ใช้ค่ากลาง'}</span></div>
+                <div class="flex items-center gap-2 mb-1"><span class="text-[10px] px-2 py-1 rounded-lg font-bold" style="background:var(--accent-primary);color:var(--text-inverse);">เตียง ${escapeHtml(d.bed_no || '-')}</span><span class="text-[10px] px-2 py-1 rounded-full font-bold" style="background:${hasCustom ? 'var(--accent-amber)' : 'var(--bg-badge)'};color:${hasCustom ? 'var(--text-inverse)' : 'var(--text-secondary)'};">${hasCustom ? 'ตั้งค่าเฉพาะราย' : 'ใช้ค่ากลาง'}</span></div>
                 <h3 class="font-bold truncate" style="color:var(--text-primary);">${escapeHtml(d.name || '-')}</h3><p class="text-[10px]" style="color:var(--text-tertiary);">HN ${escapeHtml(d.hm_number || '-')} · อุปกรณ์ #${escapeHtml(d.device_no)}</p>
             </div></div>
             <div class="range-patient-values mb-3"><div class="range-patient-value"><span>HEART RATE</span><strong>N ${limits.hrWarningMin}–${limits.hrWarningMax} · C นอก ${limits.hrMin}–${limits.hrMax}</strong></div><div class="range-patient-value"><span>SpO₂</span><strong>N ≥${limits.spo2WarningMin}% · C ≤${limits.spo2CriticalMin}%</strong></div><div class="range-patient-value"><span>TEMPERATURE</span><strong>N ${limits.tempWarningMin}–${limits.tempWarningMax} · C นอก ${limits.tempMin}–${limits.tempMax}</strong></div></div>
@@ -7616,7 +7784,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         <section class="range-settings-hero card p-5 md:p-6 mb-6">
             <div class="relative z-[1] flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div class="flex items-center gap-2"><span class="w-9 h-9 inline-flex items-center justify-center rounded-xl" style="background:var(--accent-primary);color:var(--text-inverse);">🎯</span><div><h3 class="font-black" style="color:var(--text-heading);">ค่ากลางของระบบ</h3><p class="text-[10px]" style="color:var(--text-secondary);">ใช้กับผู้ป่วยที่ไม่ได้ตั้งค่าเฉพาะราย</p></div></div>
-                <div class="flex gap-1.5"><span class="text-[9px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-green) 12%,transparent);color:var(--accent-green);">NORMAL</span><span class="text-[9px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-yellow) 12%,transparent);color:var(--accent-yellow);">WARNING</span><span class="text-[9px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-red) 10%,transparent);color:var(--accent-red);">CRITICAL</span></div>
+                <div class="flex gap-1.5"><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-green) 12%,transparent);color:var(--accent-green);">NORMAL</span><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-yellow) 12%,transparent);color:var(--accent-yellow);">WARNING</span><span class="text-[10px] px-2 py-1 rounded-full font-black" style="background:color-mix(in srgb,var(--accent-red) 10%,transparent);color:var(--accent-red);">CRITICAL</span></div>
             </div>
             <div id="default-metric-editor" class="range-metric-grid mb-4"></div>
             <div class="relative z-[1] flex flex-wrap items-center justify-between gap-3 pt-4" style="border-top:1px solid var(--border-color);">
@@ -7631,17 +7799,17 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
 
         function renderAlertMetricEditor(prefix, values) {
             return \`
-                <div class="range-metric-card range-metric-card--hr"><p class="text-xs font-black" style="color:#ef4444;">🫀 HEART RATE</p><p class="text-[9px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                <div class="range-metric-card range-metric-card--hr"><p class="text-xs font-black" style="color:#ef4444;">🫀 HEART RATE</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
                     <div class="range-normal-preview"><span>✓ NORMAL</span><strong><span id="\${prefix}-hrNormal">-</span> · กลาง <span id="\${prefix}-hrMid">-</span></strong></div>
                     <div class="range-tier-row range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-hrWarningMin" min="21" max="238" value="\${values.hrWarningMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-hrWarningMax" min="22" max="239" value="\${values.hrWarningMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-hrMin" min="20" max="237" value="\${values.hrMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-hrMax" min="23" max="240" value="\${values.hrMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                 </div></div>
-                <div class="range-metric-card range-metric-card--spo2"><p class="text-xs font-black" style="color:#3b82f6;">💧 OXYGEN SATURATION</p><p class="text-[9px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                <div class="range-metric-card range-metric-card--spo2"><p class="text-xs font-black" style="color:#3b82f6;">💧 OXYGEN SATURATION</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
                     <div class="range-normal-preview"><span>✓ NORMAL</span><strong id="\${prefix}-spo2Preview">-</strong></div>
                     <div class="range-tier-row range-tier-row--single range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า (%)</label><input type="number" id="\${prefix}-spo2Min" min="51" max="100" value="\${values.spo2WarningMin}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--single range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>เท่ากับหรือต่ำกว่า (%)</label><input type="number" id="\${prefix}-spo2CriticalMin" min="50" max="99" value="\${values.spo2CriticalMin}" oninput="updateRangePreview('\${prefix}')"></div></div>
                 </div></div>
-                <div class="range-metric-card range-metric-card--temp"><p class="text-xs font-black" style="color:#f97316;">🌡️ BODY TEMPERATURE</p><p class="text-[9px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
+                <div class="range-metric-card range-metric-card--temp"><p class="text-xs font-black" style="color:#f97316;">🌡️ BODY TEMPERATURE</p><p class="text-[10px] mt-0.5" style="color:var(--text-tertiary);">Normal → Warning → Critical</p><div class="range-tier-stack">
                     <div class="range-normal-preview"><span>✓ NORMAL</span><strong><span id="\${prefix}-tempNormal">-</span> · กลาง <span id="\${prefix}-tempMid">-</span></strong></div>
                     <div class="range-tier-row range-tier-row--warning"><span class="range-tier-label">WARNING</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-tempWarningMin" min="30.1" max="42.8" step="0.1" value="\${values.tempWarningMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-tempWarningMax" min="30.2" max="42.9" step="0.1" value="\${values.tempWarningMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
                     <div class="range-tier-row range-tier-row--critical"><span class="range-tier-label">CRITICAL</span><div class="range-field"><label>ต่ำกว่า</label><input type="number" id="\${prefix}-tempMin" min="30" max="42.7" step="0.1" value="\${values.tempMin}" oninput="updateRangePreview('\${prefix}')"></div><div class="range-field"><label>สูงกว่า</label><input type="number" id="\${prefix}-tempMax" min="30.3" max="43" step="0.1" value="\${values.tempMax}" oninput="updateRangePreview('\${prefix}')"></div></div>
@@ -7718,7 +7886,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         window.editAlertSettings = async (mac, hrMin, hrWarningMin, hrWarningMax, hrMax, spo2CriticalMin, spo2WarningMin, tempMin, tempWarningMin, tempWarningMax, tempMax, enableSound, enableLine, enableOfflineAlert, offlineThresholdMinutes, enableWebhook, webhookUrl) => {
             const html = \`
                 <div class="space-y-4">
-                    <div class="p-3 rounded-xl text-center" style="background:var(--bg-badge);"><p class="text-xs font-bold" style="color:var(--accent-primary);">ตั้งค่าเฉพาะราย · \${mac}</p><p class="text-[9px] mt-1" style="color:var(--text-tertiary);">Normal → Warning → Critical ตามลำดับ</p></div>
+                    <div class="p-3 rounded-xl text-center" style="background:var(--bg-badge);"><p class="text-xs font-bold" style="color:var(--accent-primary);">ตั้งค่าเฉพาะราย · \${mac}</p><p class="text-[10px] mt-1" style="color:var(--text-tertiary);">Normal → Warning → Critical ตามลำดับ</p></div>
                     <div class="alert-settings-modal-grid">\${renderAlertMetricEditor('patient', {hrMin, hrWarningMin, hrWarningMax, hrMax, spo2CriticalMin, spo2WarningMin, tempMin, tempWarningMin, tempWarningMax, tempMax})}</div>
                     <div class="space-y-2">
                         <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="as-sound" \${enableSound?'checked':''}> เสียงเตือน</label>
@@ -10049,7 +10217,7 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
             const wardIds = userWards.rows.map(r => r.ward_id);
             if (wardIds.length === 0) {
                 // No wards assigned -> show empty
-                return res.send(ui(req.user, 'audit-log', '<p class="text-center text-slate-400 py-12">No audit logs available for your wards.</p>', ''));
+                return res.send(ui(req.user, 'audit-log', '<p class="text-center text-slate-500 py-12">No audit logs available for your wards.</p>', ''));
             }
             whereClauses.push(`al.ward_id = ANY($${paramIndex++})`);
             params.push(wardIds);
@@ -10130,23 +10298,23 @@ app.get('/audit-log', requireCapability('audit:read:all', 'audit:read:ward'), as
                             <tr class="border-b border-slate-50 hover:bg-slate-50">
                                 <td class="text-slate-500 whitespace-nowrap">${new Date(l.created_at).toLocaleString('th-TH')}</td>
                                 <td class="font-bold">${escapeHtml(l.username || 'System')}</td>
-                                <td><span class="px-2 py-1 rounded-full text-[9px] bg-slate-100">${escapeHtml(l.actor_role || '-')}</span></td>
+                                <td><span class="px-2 py-1 rounded-full text-[10px] bg-slate-100">${escapeHtml(l.actor_role || '-')}</span></td>
                                 <td class="font-bold ${
                                     l.action === 'LOGIN' ? 'text-green-600' :
                                     l.action === 'DELETE' ? 'text-red-500' :
                                     l.action === 'CREATE' ? 'text-blue-500' : 'text-slate-600'
                                 }">${escapeHtml(l.action)}</td>
                                 <td>
-                                    <span class="uppercase font-mono text-[9px] text-slate-400">${escapeHtml(l.entity_type)}</span>
+                                    <span class="uppercase font-mono text-[10px] text-slate-500">${escapeHtml(l.entity_type)}</span>
                                     ${l.entity_id ? ` <span class="font-bold">#${escapeHtml(l.entity_id)}</span>` : ''}
                                 </td>
                                 <td class="max-w-[200px] truncate" title='${escapeHtml(JSON.stringify(l.details))}'>
-                                    <code class="text-[9px] text-slate-500 bg-slate-50 px-1 py-0.5 rounded">${escapeHtml(JSON.stringify(l.details))}</code>
+                                    <code class="text-[10px] text-slate-500 bg-slate-50 px-1 py-0.5 rounded">${escapeHtml(JSON.stringify(l.details))}</code>
                                 </td>
-                                <td class="text-slate-400 font-mono text-[10px]">${escapeHtml(l.ip_address || '-')}</td>
+                                <td class="text-slate-500 font-mono text-[10px]">${escapeHtml(l.ip_address || '-')}</td>
                             </tr>
                         `).join('')}
-                        ${logs.length === 0 ? '<tr><td colspan="7" class="text-center py-8 text-slate-400">No logs found</td></tr>' : ''}
+                        ${logs.length === 0 ? '<tr><td colspan="7" class="text-center py-8 text-slate-500">No logs found</td></tr>' : ''}
                     </tbody>
                 </table>
             </div>
