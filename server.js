@@ -8769,12 +8769,25 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
 </head>
 <body class="flex items-center justify-center min-h-[100dvh] bg-slate-900 font-['Prompt']">
     <main class="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[2.5rem] w-full max-w-sm shadow-2xl">
-        <h1 class="text-3xl font-black text-blue-600 italic text-center mb-8 sm:mb-10">Nurse Aid</h1>
-        <div class="space-y-4">
-            <input id="u" autocomplete="username" placeholder="User" class="w-full p-4 rounded-2xl bg-slate-100 outline-none focus:ring-2 focus:ring-blue-500">
-            <input id="p" type="password" autocomplete="current-password" placeholder="Password" class="w-full p-4 rounded-2xl bg-slate-100 outline-none focus:ring-2 focus:ring-blue-500">
-            <button onclick="login()" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold active:bg-blue-700">SIGN IN</button>
+        <div class="text-center mb-7 sm:mb-9">
+            <h1 class="text-3xl font-extrabold tracking-tight text-blue-600">Nurse<span class="text-slate-900">Aid</span></h1>
+            <p class="mt-1.5 text-sm text-slate-600">ระบบติดตามสัญญาณชีพและแจ้งเตือนพยาบาล</p>
         </div>
+        <!-- A real form, so Enter submits from either field and password managers
+             can recognise the credential pair. login() is wired to onsubmit rather
+             than the button, which is why the old keydown listener on #p was
+             removed: with a form it would fire login() a second time. -->
+        <form id="loginForm" class="space-y-4" novalidate>
+            <div>
+                <label for="u" class="block mb-1.5 text-sm font-semibold text-slate-700">ชื่อผู้ใช้</label>
+                <input id="u" name="username" type="text" required autocomplete="username" autocapitalize="none" spellcheck="false" class="w-full p-4 rounded-2xl bg-slate-100 text-slate-900 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label for="p" class="block mb-1.5 text-sm font-semibold text-slate-700">รหัสผ่าน</label>
+                <input id="p" name="password" type="password" required autocomplete="current-password" class="w-full p-4 rounded-2xl bg-slate-100 text-slate-900 focus:ring-2 focus:ring-blue-500">
+            </div>
+            <button type="submit" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold active:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
+        </form>
         <div class="mt-6 flex items-center justify-center" aria-label="v${APP_VERSION}" title="v${APP_VERSION}">
             <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-mono font-bold text-slate-500">v${APP_VERSION}</span>
         </div>
@@ -8797,7 +8810,7 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
                 showNotice('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ');
             }
         }
-        document.getElementById('p').addEventListener('keydown', event => { if (event.key === 'Enter') login(); });
+        document.getElementById('loginForm').addEventListener('submit', event => { event.preventDefault(); login(); });
     </script>
 </body>
 </html>`));
