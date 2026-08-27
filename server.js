@@ -12204,6 +12204,53 @@ app.get('/fw/:token/firmware.bin', async (req, res) => {
     }
 });
 
+app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.body.versionId, 10);
+    const targets = Array.isArray(req.body.targets) ? req.body.targets.map(String) : [];
+    if (!Number.isInteger(versionId) || targets.length === 0) {
+        return res.status(400).json({ error: 'INVALID_REQUEST' });
+    }
+
+    try {
+        const versionResult = await pool.query(`SELECT id, download_token FROM firmware_versions WHERE id=$1`, [versionId]);
+        if (!versionResult.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        const { download_token } = versionResult.rows[0];
+
+        const existingDeployments = await pool.query(
+            `SELECT status FROM firmware_deployments WHERE version_id=$1`, [versionId]
+        );
+        const gate = canDeployToTargets(existingDeployments.rows, targets.length);
+        if (!gate.allowed) return res.status(400).json({ error: 'CANARY_REQUIRED', message: gate.reason });
+
+        const origin = APP_ORIGIN || `${req.protocol}://${req.get('host')}`;
+        const url = `${origin}/fw/${download_token}/firmware.bin`;
+        if (!isValidOtaUrl(url)) return res.status(500).json({ error: 'INVALID_URL' });
+
+        const topology = await esp32NodesForUi(req);
+        const results = [];
+        for (const boardMac of targets) {
+            const nodeId = resolveNodeIdForMac(topology.nodes, boardMac);
+            if (!nodeId) {
+                results.push({ boardMac, ok: false, error: 'NODE_NOT_FOUND' });
+                continue;
+            }
+            await pool.query(
+                `INSERT INTO firmware_deployments (version_id, board_mac, status, requested_by)
+                 VALUES ($1, $2, 'pending', $3)`,
+                [versionId, boardMac, req.user.id]
+            );
+            const cmdTopic = `ble/node/${nodeId}/cmd`; // per-node only — never ble/node/all/cmd
+            mqttClient.publish(cmdTopic, `ota ${url}`, { qos: 1 });
+            results.push({ boardMac, ok: true, nodeId });
+        }
+        logAudit(req, 'system:firmware_deploy:start', 'firmware_version', String(versionId), { targets }).catch(console.error);
+        res.json({ success: true, results });
+    } catch (error) {
+        console.error('[Firmware Deploy]', error.message);
+        res.status(500).json({ error: 'DEPLOY_FAILED' });
+    }
+});
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
