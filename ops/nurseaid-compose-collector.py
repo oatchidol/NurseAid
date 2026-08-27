@@ -27,8 +27,37 @@ INITIAL_LOG_HISTORY_MINUTES = min(
 CENTRAL_URL = os.getenv("NURSEAID_CENTRAL_URL", "https://nurseaid-central.softsquaregroup.com").strip().rstrip("/")
 HEARTBEAT_INTERVAL = max(10, int(os.getenv("NURSEAID_HEARTBEAT_INTERVAL", "60")))
 CREDENTIAL_FILE = SPOOL_DIR / "central-credential.json"
-NURSEAID_APP_VERSION = os.getenv("NURSEAID_APP_VERSION", "1.0.0")
 ENROLL_BACKOFF_MAX = 900
+
+
+def read_app_version():
+    """Return the real running version, derived from the repo, not .env.
+
+    The collector container mounts the repo at /repo, so package.json is the
+    source of truth. Fall back to `git describe` and finally a hard default.
+    """
+    for path in ("/repo/package.json", "package.json"):
+        try:
+            data = json.loads(Path(path).read_text())
+            version = (data.get("version") or "").strip()
+            if version:
+                return version
+        except (OSError, ValueError):
+            pass
+
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", "/repo", "describe", "--tags", "--always", "--dirty"],
+            stderr=subprocess.DEVNULL,
+        )
+        text = out.decode("utf-8", "replace").strip()
+        if text:
+            return text
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    return "1.0.0"
+
 
 # Backoff state for enrollment retries: (until_timestamp, current_backoff_seconds, last_logged_value)
 _enrollment_backoff_until = 0.0
@@ -37,10 +66,14 @@ _last_enrollment_backoff_logged = None
 SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 def get_machine_device_id():
-    env_id = os.getenv("NURSEAID_DEVICE_ID", "").strip().upper()
-    if env_id and re.match(r"^NA-[A-F0-9]{8}$", env_id):
-        return env_id
-    
+    """Derive this machine's NurseAid device id from real hardware, not .env.
+
+    The id must be a property of the machine itself so Central sees the same
+    identity every boot. Order: Raspberry Pi CPU serial (matches the original
+    NA-43F42F4B units), then the host machine-id, then a hash of the hostname.
+    An operator-set NURSEAID_DEVICE_ID is intentionally ignored — it would make
+    Central-bound identity configurable rather than machine-derived.
+    """
     # Try Raspberry Pi CPU Serial Number first (to match original NA-43F42F4B)
     try:
         cpuinfo = Path("/proc/cpuinfo").read_text()
@@ -549,7 +582,7 @@ def http_json_request(url, method="POST", payload=None, headers=None, timeout=10
     headers = dict(headers or {})
     # Set default User-Agent and Accept, but allow explicit overrides
     if "User-Agent" not in headers:
-        headers["User-Agent"] = f"NurseAid-Agent/{NURSEAID_APP_VERSION} (device {DEVICE_ID})"
+        headers["User-Agent"] = f"NurseAid-Agent/{read_app_version()} (device {DEVICE_ID})"
     if "Accept" not in headers:
         headers["Accept"] = "application/json"
     if payload is not None and "Content-Type" not in headers:
@@ -713,15 +746,15 @@ def central_cycle(snap):
         metrics = host_metrics()
 
     unhealthy = any(s.get("status") != "healthy" for s in services.values())
+    # Only machine-derived facts go up. hospitalCode/hospitalName/wardCode/
+    # wardName/installPoint are deliberately absent: those are Central's
+    # deployment *assignment* for this device, not something the device can
+    # observe about itself. Sending them would let a local file (or a stale
+    # .env) overwrite the assignment an operator made in Central.
     hb_payload = {
         "deviceId": DEVICE_ID,
         "hostname": os.uname().nodename[:160],
-        "appVersion": os.getenv("NURSEAID_APP_VERSION", "1.0.0"),
-        "hospitalCode": os.getenv("NURSEAID_HOSPITAL_CODE", ""),
-        "hospitalName": os.getenv("NURSEAID_HOSPITAL_NAME", ""),
-        "wardCode": os.getenv("NURSEAID_WARD_CODE", ""),
-        "wardName": os.getenv("NURSEAID_WARD_NAME", ""),
-        "installPoint": os.getenv("NURSEAID_INSTALL_POINT", ""),
+        "appVersion": read_app_version(),
         "status": "unhealthy" if unhealthy else "healthy",
         "services": services,
         "metrics": metrics,
