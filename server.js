@@ -2281,78 +2281,93 @@ function ui(user, active, content, script = "") {
         /* Theme Toggle Switch - Simple & Compact */
         .theme-toggle-container {
             display: flex;
-            justify-content: center;
-            margin: 0 auto 0.75rem auto;
+            /* No auto side margins: the sidebar is a flex column, so an auto margin
+               absorbs the free space and shrinks this to its content -- which left
+               the control visibly narrower than the nav rows beneath it. */
+            margin: 0 0 0.75rem 0;
             padding: 0.25rem 0;
         }
+        #sidebar.collapsed .theme-toggle-container { justify-content: center; }
 
+        /* Segmented rather than a sliding knob: both destinations stay visible and
+           named, so nobody has to work out which way the switch goes. It is still
+           one button with role="switch" -- two states, one control -- so
+           applyTheme()'s aria-checked contract is unchanged. The old knob used an
+           amber gradient (#fbbf24) that exists nowhere else in the palette, and
+           text glyphs for sun and moon instead of the icon set. */
         .theme-toggle-switch {
-            position: relative;
-            /* Now a <button> for keyboard access; strip UA button chrome so the
-               switch renders exactly as it did when it was a <div>. */
             appearance: none;
             -webkit-appearance: none;
-            border: 0;
-            padding: 0;
-            margin: 0 auto;
-            display: block;
-            width: 48px;
-            height: 26px;
-            border-radius: 13px;
-            background: linear-gradient(135deg, var(--bg-toggle) 0%, var(--bg-toggle) 100%);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            align-items: stretch;
+            /* flex:1 rather than width:100%: the container is a flex row, so a
+               percentage width still lets the item shrink to its content and the
+               control ends up narrower than the nav rows it sits above. */
+            flex: 1 1 auto;
+            min-width: 0;
+            padding: 2px;
+            margin: 0;
+            border: 1px solid var(--border-color);
+            border-radius: 0.7rem;
+            background: var(--bg-input);
             cursor: pointer;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
-            overflow: hidden;
+            font-family: inherit;
+            transition: background 0.2s ease, border-color 0.2s ease;
         }
 
-        .theme-toggle-switch::before {
-            content: '';
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 4px rgba(251, 191, 36, 0.3);
-            z-index: 2;
+        .theme-toggle-switch .tt-half {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.3rem;
+            padding: 0.3rem 0;
+            border-radius: 0.55rem;
+            font-size: 0.65rem;
+            font-weight: 700;
+            white-space: nowrap;
+            color: var(--text-tertiary);
+            transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .theme-toggle-switch::after {
-            content: '☀';
-            position: absolute;
-            top: 50%;
-            left: 5px;
-            transform: translateY(-50%);
-            font-size: 12px;
-            font-weight: bold;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 1;
-            filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
+        .theme-toggle-switch .tt-half svg { flex-shrink: 0; }
+
+        /* Light is the default theme, so the light half reads as active until
+           [data-theme="dark"] hands that role to the other side. */
+        .theme-toggle-switch .tt-light {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
         }
 
-        [data-theme="dark"] .theme-toggle-switch {
-            background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(96, 165, 250, 0.15);
+        [data-theme="dark"] .theme-toggle-switch .tt-light {
+            background: transparent;
+            color: var(--text-tertiary);
+            box-shadow: none;
         }
 
-        [data-theme="dark"] .theme-toggle-switch::before {
-            left: 24px;
-            background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        [data-theme="dark"] .theme-toggle-switch .tt-dark {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            box-shadow: var(--shadow-sm);
         }
 
-        [data-theme="dark"] .theme-toggle-switch::after {
-            content: '☾';
-            left: 5px;
-            opacity: 0.3;
-        }
+        .theme-toggle-switch:hover { border-color: var(--accent-primary); }
 
-        .theme-toggle-switch:hover::before {
-            transform: scale(1.05);
+        /* Collapsed sidebar has no room for two labelled halves, so it shows just
+           the active theme's icon. Driven by the same [data-theme] flag as above,
+           not by extra state. */
+        #sidebar.collapsed .theme-toggle-switch {
+            grid-template-columns: 1fr;
+            flex: 0 0 auto;
+            width: 2.25rem;
+            margin: 0 auto;
         }
+        #sidebar.collapsed .theme-toggle-switch .tt-half { padding: 0.35rem 0; }
+        #sidebar.collapsed .theme-toggle-switch .tt-label { display: none; }
+        #sidebar.collapsed .theme-toggle-switch .tt-dark { display: none; }
+        [data-theme="dark"] #sidebar.collapsed .theme-toggle-switch .tt-light { display: none; }
+        [data-theme="dark"] #sidebar.collapsed .theme-toggle-switch .tt-dark { display: flex; }
 
         #sidebarToggle {
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2478,6 +2493,12 @@ function ui(user, active, content, script = "") {
                 border: 1px solid var(--border-color);
                 font-size: 1.2rem;
             }
+
+            /* Show only the active theme's icon, same rule shape as the sidebar
+               control so the two never disagree. */
+            #mobileThemeButton .mt-moon { display: none; }
+            [data-theme="dark"] #mobileThemeButton .mt-sun { display: none; }
+            [data-theme="dark"] #mobileThemeButton .mt-moon { display: block; }
 
             #sidebarBackdrop {
                 position: fixed;
@@ -3666,7 +3687,10 @@ function ui(user, active, content, script = "") {
             <p class="font-extrabold tracking-tight truncate" style="color: var(--accent-primary);">Nurse<span style="color: var(--text-primary);">Aid</span></p>
             <p class="text-[10px] font-bold uppercase tracking-widest" style="color: var(--text-tertiary);">Hospital System</p>
         </div>
-        <button id="mobileThemeButton" type="button" onclick="toggleTheme()" aria-label="สลับโหมดสี" title="สลับโหมดสี">◐</button>
+        <button id="mobileThemeButton" type="button" onclick="toggleTheme()" aria-label="สลับโหมดแสงและโหมดมืด" title="สลับโหมดแสงและโหมดมืด">
+            <svg class="mt-sun" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            <svg class="mt-moon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
     </header>
     <div id="sidebarBackdrop" onclick="closeMobileMenu()" aria-hidden="true"></div>
     <aside id="sidebar" class="p-6 flex flex-col shadow-sm z-50" style="background: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
@@ -3683,7 +3707,16 @@ function ui(user, active, content, script = "") {
 
         <!-- Theme Toggle Switch -->
         <div class="theme-toggle-container">
-            <button type="button" id="themeToggle" class="theme-toggle-switch" onclick="toggleTheme()" role="switch" aria-checked="false" aria-label="สลับโหมดแสง/มืด" title="สลับโหมดแสง/มืดย"></button>
+            <button type="button" id="themeToggle" class="theme-toggle-switch" onclick="toggleTheme()" role="switch" aria-checked="false" aria-label="สลับโหมดแสงและโหมดมืด" title="สลับโหมดแสงและโหมดมืด">
+                <span class="tt-half tt-light">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                    <span class="tt-label">สว่าง</span>
+                </span>
+                <span class="tt-half tt-dark">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                    <span class="tt-label">มืด</span>
+                </span>
+            </button>
         </div>
 
         <div class="sidebar-hide mb-4 p-3 rounded-xl text-xs" style="background: var(--bg-sidebar-info); border: 1px solid var(--border-color);">
@@ -3896,11 +3929,19 @@ function ui(user, active, content, script = "") {
         function applyTheme() {
             const theme = localStorage.getItem('theme') || 'light';
             document.documentElement.setAttribute('data-theme', theme);
+            // The tooltip names what clicking will DO, not the current state, so it
+            // stays useful next to a control that already shows the state visually.
+            const nextLabel = theme === 'dark' ? 'สลับไปโหมดแสง' : 'สลับไปโหมดมืด';
             const toggleBtn = document.getElementById('themeToggle');
             if (toggleBtn) {
-                toggleBtn.title = theme === 'dark' ? 'สลับไปโหมดแสง' : 'สลับไปโหมดมืดย';
+                toggleBtn.title = nextLabel;
                 // role="switch" needs its state kept in sync for screen readers.
                 toggleBtn.setAttribute('aria-checked', theme === 'dark' ? 'true' : 'false');
+            }
+            const mobileBtn = document.getElementById('mobileThemeButton');
+            if (mobileBtn) {
+                mobileBtn.title = nextLabel;
+                mobileBtn.setAttribute('aria-label', nextLabel);
             }
         }
 
