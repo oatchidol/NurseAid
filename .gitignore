@@ -48,3 +48,6 @@ docker-compose.override.yml
 
 .serena/
 nul
+
+# Local skill tooling lockfile — machine-specific, not part of the deployable app.
+skills-lock.json
