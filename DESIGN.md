@@ -291,6 +291,53 @@ light and `#0d1117` in dark and is correct in both.
 `color-mix(in srgb, <its text token> 15%, transparent)` keeps its contrast ratio in both themes
 automatically. A fixed hex for either half breaks the other theme.
 
+## Where Colour Is Decided
+
+Tailwind's colour utilities are not absolute values in this codebase. `tailwind.config.js` maps
+every shade the dark theme needs onto a `--tw-<property>-<family>-<shade>` custom property, and
+the two values live side by side in the token blocks in `server.js`:
+
+```
+:root                { --tw-bg-slate-50: #f8fafc; }        /* Tailwind's own value */
+[data-theme="dark"]  { --tw-bg-slate-50: var(--bg-card); }
+```
+
+The mapping is **per property, not per shade**, because a hue that works as a fill is not the
+value that works as text: `.bg-red-600` resolves to the red *fill* token, `.text-red-600` to the
+red *text* token. See "Text Colour vs. Fill Colour" above.
+
+This replaced 59 `[data-theme="dark"] .X { … !important }` rules in a second stylesheet. That
+block was not merely ugly. Because `!important` in a stylesheet outranks an inline `style`
+attribute, `[data-theme="dark"] .bg-red-600 { … !important }` also overrode the background the
+alert code sets from JavaScript — so in the dark theme a **warning-only** site banner painted
+itself in the **critical** red. Colour semantics are safety-critical here; they cannot live
+somewhere a specificity fight can reach them.
+
+### Named Rules
+
+**Only remapped shades are var-backed.** Everything else keeps its literal Tailwind value, so
+this mapping can never move a colour the dark theme was not already moving. Each family is
+listed in full in the config, because `extend` replaces a family wholesale rather than merging.
+
+**Utilities cannot flip a foreground.** A background token says nothing about the text on it.
+The dark accents are light, so the handful of fills that carry text keep an explicit
+`color: var(--text-inverse)` rule. Same for hover states that differ from their rest state —
+Tailwind emits a variant as its own selector reading the same token.
+
+## Both Documents Inline the Tokens
+
+`server.js` renders two complete HTML documents: the app shell (`ui()`) and `/login`. Tokens are
+defined once, in `DESIGN_TOKENS`, and the drawn icons in `ICON_SET`; both documents inline both.
+
+This is load-bearing, not tidiness. `/login` previously carried no token block, so every
+var-backed utility on it resolved to an invalid declaration — `text-3xl` fell back to 16px and
+`rounded-2xl` to 0. Nothing errored and nothing looked obviously broken; the page just rendered
+at the wrong size. A page that inlines neither constant fails the same silent way.
+
+`/login` owns one token of its own, `--bg-login`, because the page background is the one surface
+a Tailwind neutral cannot carry: `.bg-slate-900` means "dark button" everywhere else in the
+product and maps to the accent in dark.
+
 ## Documented Deviations
 
 Two patterns here would be flagged as decorative side-borders by a generic rule, and are kept
@@ -303,3 +350,9 @@ deliberately because they are the opposite of decorative:
 
 Shadow and overlay values use raw `rgba(0,0,0,…)` by design — they are opacity over an unknown
 surface, not palette colours, and are enumerated in the Elevation & Depth vocabulary above.
+
+`#sidebar` animates `width` and `min-width`, which a generic rule flags as a layout transition.
+It is kept: collapsing the sidebar *is* a layout change, and the main content has to reflow into
+the space. A `transform` would slide the sidebar over the content or leave a gap instead of
+handing the width back. The progress fills that had no such excuse — `.qs-fill` and the update
+progress bar — animate `transform: scaleX()` instead.

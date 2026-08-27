@@ -1727,24 +1727,79 @@ function renderNavLinks(user, active) {
     return { main, alerts };
 }
 
-function ui(user, active, content, script = "") {
-    const navs = renderNavLinks(user, active);
-    return `
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>NurseAid PRO</title>
-    <!-- All assets are served from this host. A ward behind a firewall with no
-         outbound internet must still render a working UI, so nothing here may
-         point at an external origin. scripts/check-offline-assets.js enforces that.
-         tailwind.css is a committed build artifact: run "npm run build:css" after
-         changing any utility class in this file, or the new class ships unstyled. -->
-    <link rel="stylesheet" href="/assets/fonts.css">
-    <script src="/assets/chart.umd.js"></script>
-    <script src="/assets/html5-qrcode.min.js"></script>
-    <style>
+// The design tokens, defined once. Both full documents in this file - the app shell
+// below and /login - inline this. A page without it renders every var()-backed
+// Tailwind utility as an invalid declaration, which is silent and looks like nothing
+// more than slightly wrong type.
+// The drawn icon set, shared for the same reason DESIGN_TOKENS is: an .ic span on a
+// page without these rules is an empty inline box, which is silent.
+const ICON_SET = `
+        /* ── Icon set ────────────────────────────────────────────────────────
+           124 Unicode glyphs and emoji used to stand in for icons here. An emoji is
+           whatever the viewer's OS ships: different glyph, different weight, and often a
+           fixed colour that fights the status palette beside it. PRODUCT.md requires every
+           status to pair colour WITH an icon, so the icon half cannot be outsourced to a
+           font. These are drawn on one 24x24 grid at one stroke weight, masked so they
+           inherit currentColor, and inlined so they still render with no network. */
+        :root {
+            /* These two are also drawn by ::before markers, so the artwork lives
+               here once rather than as a copy that can drift out of step. */
+            --ic-check-url: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%206%209%2017l-5-5%22%2F%3E%3C%2Fsvg%3E");
+            --ic-warning-url: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10.3%203.9%201.8%2018a2%202%200%200%200%201.7%203h17a2%202%200%200%200%201.7-3L13.7%203.9a2%202%200%200%200-3.4%200z%22%2F%3E%3Cpath%20d%3D%22M12%209v4M12%2017h.01%22%2F%3E%3C%2Fsvg%3E");
+        }
+        .ic { display:inline-block; width:1em; height:1em; vertical-align:-0.125em; flex:none;
+              background-color:currentColor;
+              -webkit-mask:var(--ic) center/contain no-repeat; mask:var(--ic) center/contain no-repeat; }
+        /* Icon sizes, independent of the text they sit beside. */
+        .ic--md { width: var(--icon-md); height: var(--icon-md); }
+        /* The global prefers-reduced-motion catch-all already neutralises this. */
+        .ic--spin { animation: ic-spin 1s linear infinite; }
+        @keyframes ic-spin { to { transform: rotate(360deg); } }
+        .ic--lg { width: var(--icon-lg); height: var(--icon-lg); }
+        .ic-critical { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7.9%202h8.2L22%207.9v8.2L16.1%2022H7.9L2%2016.1V7.9z%22%2F%3E%3Cpath%20d%3D%22M12%207v6M12%2017h.01%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-users { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M16%2020v-2a4%204%200%200%200-4-4H6a4%204%200%200%200-4%204v2%22%2F%3E%3Ccircle%20cx%3D%229%22%20cy%3D%227%22%20r%3D%224%22%2F%3E%3Cpath%20d%3D%22M22%2020v-2a4%204%200%200%200-3-3.9M16%203.1a4%204%200%200%201%200%207.8%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-zap { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M13%2010V3L4%2014h7v7l9-11h-7z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-chevron-r { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018l6-6-6-6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-sliders { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M4%2021v-7M4%2010V3M12%2021v-9M12%208V3M20%2021v-5M20%2012V3M1%2014h6M9%208h6M17%2016h6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-info { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%229%22%2F%3E%3Cpath%20d%3D%22M12%2011v5M12%208h.01%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-pulse { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2012h4l3-8%204%2016%203-8h4%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-build { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%208v8a2%202%200%200%201-1%201.7l-7%204a2%202%200%200%201-2%200l-7-4A2%202%200%200%201%203%2016V8a2%202%200%200%201%201-1.7l7-4a2%202%200%200%201%202%200l7%204A2%202%200%200%201%2021%208z%22%2F%3E%3Cpath%20d%3D%22m3.3%207%208.7%205%208.7-5M12%2022V12%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-undo { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%207v6h6%22%2F%3E%3Cpath%20d%3D%22M3.5%2013a9%209%200%201%200%202.6-6.4L3%209.5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-clock { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%229%22%2F%3E%3Cpath%20d%3D%22M12%207v5l3%202%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-grip { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22black%22%3E%3Ccircle%20cx%3D%229%22%20cy%3D%225%22%20r%3D%221.6%22%2F%3E%3Ccircle%20cx%3D%2215%22%20cy%3D%225%22%20r%3D%221.6%22%2F%3E%3Ccircle%20cx%3D%229%22%20cy%3D%2212%22%20r%3D%221.6%22%2F%3E%3Ccircle%20cx%3D%2215%22%20cy%3D%2212%22%20r%3D%221.6%22%2F%3E%3Ccircle%20cx%3D%229%22%20cy%3D%2219%22%20r%3D%221.6%22%2F%3E%3Ccircle%20cx%3D%2215%22%20cy%3D%2219%22%20r%3D%221.6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-warning { --ic:var(--ic-warning-url); }
+        .ic-check { --ic:var(--ic-check-url); }
+        .ic-close { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M18%206%206%2018M6%206l12%2012%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-arrow-r { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012h14M12%205l7%207-7%207%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-arrow-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M19%2012H5M12%2019l-7-7%207-7%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-chevron-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15%2018l-6-6%206-6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-refresh { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2012a9%209%200%201%201-3-6.7L21%208%22%2F%3E%3Cpath%20d%3D%22M21%203v5h-5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-download { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2015v4a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2v-4M7%2010l5%205%205-5M12%2015V3%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-gear { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%2F%3E%3Cpath%20d%3D%22M19.4%2015a1.7%201.7%200%200%200%20.3%201.9l.1.1a2%202%200%201%201-2.8%202.8l-.1-.1a1.7%201.7%200%200%200-1.9-.3%201.7%201.7%200%200%200-1%201.5V21a2%202%200%201%201-4%200v-.1A1.7%201.7%200%200%200%209%2019.4a1.7%201.7%200%200%200-1.9.3l-.1.1a2%202%200%201%201-2.8-2.8l.1-.1a1.7%201.7%200%200%200%20.3-1.9%201.7%201.7%200%200%200-1.5-1H3a2%202%200%201%201%200-4h.1A1.7%201.7%200%200%200%204.6%209a1.7%201.7%200%200%200-.3-1.9l-.1-.1a2%202%200%201%201%202.8-2.8l.1.1a1.7%201.7%200%200%200%201.9.3H9a1.7%201.7%200%200%200%201-1.5V3a2%202%200%201%201%204%200v.1a1.7%201.7%200%200%200%201%201.5%201.7%201.7%200%200%200%201.9-.3l.1-.1a2%202%200%201%201%202.8%202.8l-.1.1a1.7%201.7%200%200%200-.3%201.9V9a1.7%201.7%200%200%200%201.5%201H21a2%202%200%201%201%200%204h-.1a1.7%201.7%200%200%200-1.5%201z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-sound { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M11%205%206%209H2v6h4l5%204V5z%22%2F%3E%3Cpath%20d%3D%22M15.5%208.5a5%205%200%200%201%200%207M19%205a9%209%200%200%201%200%2014%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-alert { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%208a6%206%200%200%201%2012%200c0%207%203%209%203%209H3s3-2%203-9%22%2F%3E%3Cpath%20d%3D%22M10.3%2021a2%202%200%200%200%203.4%200%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-heart { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20.8%204.6a5.5%205.5%200%200%200-7.8%200L12%205.7l-1-1.1a5.5%205.5%200%200%200-7.8%207.8l1%201.1L12%2021.2l7.8-7.7%201-1.1a5.5%205.5%200%200%200%200-7.8z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-thermo { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M14%2014.8V4a2%202%200%201%200-4%200v10.8a4%204%200%201%200%204%200z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-droplet { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%202.7%206.3%208.4a8%208%200%201%200%2011.4%200z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-signal { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012.5a7%207%200%200%201%200-9M19%203.5a7%207%200%200%201%200%209M8%2010a3%203%200%200%201%200-4M16%206a3%203%200%200%201%200%204%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%228%22%20r%3D%221%22%2F%3E%3Cpath%20d%3D%22M12%209v12%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-battery { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222%22%20y%3D%227%22%20width%3D%2216%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M22%2011v2%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-camera { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%209a2%202%200%200%201%202-2h1.9l1-1.5A2%202%200%200%201%209.6%204h4.8a2%202%200%200%201%201.7.9l1%201.6H19a2%202%200%200%201%202%202v9a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%223%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-search { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2211%22%20cy%3D%2211%22%20r%3D%227%22%2F%3E%3Cpath%20d%3D%22m20%2020-3.5-3.5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-key { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%227.5%22%20cy%3D%2215.5%22%20r%3D%224.5%22%2F%3E%3Cpath%20d%3D%22m10.7%2012.3%209.3-9.3M17%206l2.5%202.5M14.5%208.5%2017%2011%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-clipboard { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%228%22%20y%3D%222%22%20width%3D%228%22%20height%3D%224%22%20rx%3D%221%22%2F%3E%3Cpath%20d%3D%22M16%204h2a2%202%200%200%201%202%202v14a2%202%200%200%201-2%202H6a2%202%200%200%201-2-2V6a2%202%200%200%201%202-2h2%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-link { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10%2013a5%205%200%200%200%207.5.5l3-3A5%205%200%200%200%2013.5%203.5l-1.7%201.7%22%2F%3E%3Cpath%20d%3D%22M14%2011a5%205%200%200%200-7.5-.5l-3%203A5%205%200%200%200%2010.5%2020.5l1.7-1.7%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-plus { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%205v14M5%2012h14%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-edit { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%2020h9%22%2F%3E%3Cpath%20d%3D%22M16.5%203.5a2.1%202.1%200%200%201%203%203L7%2019l-4%201%201-4z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-person { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%2021v-2a4%204%200%200%200-4-4H8a4%204%200%200%200-4%204v2%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%227%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-menu { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%206h18M3%2012h18M3%2018h18%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-sparkle { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v4M12%2017v4M3%2012h4M17%2012h4M6.2%206.2%209%209M15%2015l2.8%202.8M6.2%2017.8%209%2015M15%209l2.8-2.8%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-target { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%229%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%225%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-bulb { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018h6M10%2022h4%22%2F%3E%3Cpath%20d%3D%22M12%202a7%207%200%200%200-4%2012.7V17h8v-2.3A7%207%200%200%200%2012%202z%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-hospital { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2021h18M5%2021V7l7-4%207%204v14%22%2F%3E%3Cpath%20d%3D%22M12%209v6M9%2012h6%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-watch { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22%2F%3E%3Cpath%20d%3D%22M9%203h6l.5%203M9%2021h6l.5-3M12%2010v2.5l1.5%201%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }`;
+
+const DESIGN_TOKENS = `
         :root {
             /* Light Theme (Default) */
             --bg-primary: #f0f4f8;
@@ -1823,6 +1878,9 @@ function ui(user, active, content, script = "") {
                lines, where the 3:1 non-text threshold applies. It is NOT safe as small text
                (3.33) or as a fill behind white text (3.68). This is its text-safe companion;
                the One Accent Rule holds because it is the same hue, one step darker. */
+            /* Ink for text sitting ON --accent-yellow. Correct in both themes:
+               7.47 on the light amber, 5.82 on the dark one. */
+            --text-on-caution: #422006;
             --accent-primary-strong: #2563eb;  /* worst 4.68 · white-on-it 5.17 */
 
             /* ── Structural scales ───────────────────────────────────────────
@@ -1872,6 +1930,71 @@ function ui(user, active, content, script = "") {
             --sp-6: 1.5rem;    /* 24px */
             --sp-8: 2rem;      /* 32px */
             --sp-10: 2.5rem;   /* 40px */
+
+            /* ── Tailwind utility colours ──────────────────────────────────────
+               Consumed by tailwind.config.js. Light holds Tailwind's own values, so
+               nothing about the light theme changes; the dark block below is what
+               used to be 59 !important overrides in a second stylesheet. */
+            --tw-bg-slate-50: #f8fafc;
+            --tw-bg-slate-100: #f1f5f9;
+            --tw-bg-slate-200: #e2e8f0;
+            --tw-bg-slate-300: #cbd5e1;
+            --tw-bg-slate-800: #1e293b;
+            --tw-bg-slate-900: #0f172a;
+            --tw-bg-gray-500: #6b7280;
+            --tw-bg-gray-700: #374151;
+            --tw-bg-gray-800: #1f2937;
+            --tw-bg-red-50: #fef2f2;
+            --tw-bg-red-100: #fee2e2;
+            --tw-bg-red-400: #f87171;
+            --tw-bg-red-600: #dc2626;
+            --tw-bg-green-50: #f0fdf4;
+            --tw-bg-green-100: #dcfce7;
+            --tw-bg-green-500: #22c55e;
+            --tw-bg-green-600: #16a34a;
+            --tw-bg-blue-50: #eff6ff;
+            --tw-bg-blue-600: #2563eb;
+            --tw-bg-blue-700: #1d4ed8;
+            --tw-bg-amber-50: #fffbeb;
+            --tw-bg-yellow-100: #fef9c3;
+            --tw-bg-purple-100: #f3e8ff;
+            --tw-text-slate-300: #cbd5e1;
+            --tw-text-slate-400: #94a3b8;
+            /* Retuned from Tailwind's #64748b, which measures 4.31 on --bg-primary
+               (#f0f4f8). It cleared AA only against a white card, and /audit-log puts
+               it on the page. #5b6777 is the ink-tertiary already in DESIGN.md: 5.15. */
+            --tw-text-slate-500: #5b6777;
+            --tw-text-slate-600: #475569;
+            --tw-text-slate-700: #334155;
+            --tw-text-slate-800: #1e293b;
+            --tw-text-gray-100: #f3f4f6;
+            --tw-text-gray-400: #9ca3af;
+            --tw-text-gray-500: #5b6777;  /* Tailwind's #6b7280 measures 4.40 on --bg-primary */
+            --tw-text-gray-600: #4b5563;
+            --tw-text-red-400: #f87171;
+            --tw-text-red-500: #ef4444;
+            --tw-text-red-600: #dc2626;
+            --tw-text-red-700: #b91c1c;
+            --tw-text-red-800: #991b1b;
+            --tw-text-green-500: #22c55e;
+            --tw-text-green-600: #16a34a;
+            --tw-text-green-700: #15803d;
+            --tw-text-green-800: #166534;
+            --tw-text-amber-500: #f59e0b;
+            --tw-text-amber-800: #92400e;
+            --tw-text-blue-400: #60a5fa;
+            --tw-text-blue-500: #3b82f6;
+            --tw-text-blue-600: #2563eb;
+            --tw-text-blue-800: #1e40af;
+            --tw-text-purple-700: #7e22ce;
+            --tw-text-yellow-700: #a16207;
+            --tw-text-emerald-600: #059669;
+            --tw-border-slate-50: #f8fafc;
+            --tw-border-red-300: #fca5a5;
+            --tw-border-red-800: #991b1b;
+            --tw-border-green-300: #86efac;
+            --tw-border-amber-300: #fcd34d;
+            --tw-border-blue-300: #93c5fd;
         }
 
         [data-theme="dark"] {
@@ -1943,7 +2066,89 @@ function ui(user, active, content, script = "") {
             /* Dark accents are LIGHT, so text on them must be --text-inverse (#0d1117),
                never white. White on #58a6ff measures 2.53; #0d1117 on it measures 7.49. */
             --accent-primary-strong: #58a6ff;  /* worst 6.41 · --text-inverse on it 7.49 */
-        }
+
+            /* ── Tailwind utility colours (dark) ───────────────────────────────
+               A hue that works as a fill is not the same value that works as text:
+               .bg-red-600 becomes the red fill token, .text-red-600 the red TEXT
+               token. That distinction is why these are per-property. */
+            --tw-bg-slate-50: var(--bg-card);
+            --tw-bg-slate-100: var(--bg-input);
+            --tw-bg-slate-200: var(--bg-input);
+            --tw-bg-slate-300: var(--bg-card-hover);
+            --tw-bg-slate-800: var(--accent-primary-strong);
+            --tw-bg-slate-900: var(--accent-primary-strong);
+            --tw-bg-gray-500: var(--bg-input);
+            --tw-bg-gray-700: var(--accent-primary-strong);
+            --tw-bg-gray-800: var(--accent-primary-strong);
+            --tw-bg-red-50: color-mix(in srgb, var(--accent-red) 15%, transparent);
+            --tw-bg-red-100: color-mix(in srgb, var(--accent-red) 15%, transparent);
+            --tw-bg-red-400: var(--accent-red);
+            --tw-bg-red-600: var(--accent-red);
+            --tw-bg-green-50: color-mix(in srgb, var(--accent-green) 15%, transparent);
+            --tw-bg-green-100: color-mix(in srgb, var(--accent-green) 15%, transparent);
+            --tw-bg-green-500: var(--accent-green);
+            --tw-bg-green-600: var(--accent-green);
+            --tw-bg-blue-50: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+            --tw-bg-blue-600: var(--accent-primary-strong);
+            --tw-bg-blue-700: var(--accent-primary-strong);
+            --tw-bg-amber-50: color-mix(in srgb, var(--accent-amber) 15%, transparent);
+            --tw-bg-yellow-100: color-mix(in srgb, var(--accent-yellow) 15%, transparent);
+            --tw-bg-purple-100: color-mix(in srgb, var(--accent-secondary) 15%, transparent);
+            --tw-text-slate-300: var(--text-tertiary);
+            --tw-text-slate-400: var(--text-tertiary);
+            --tw-text-slate-500: var(--text-secondary);
+            --tw-text-slate-600: var(--text-secondary);
+            --tw-text-slate-700: var(--text-primary);
+            --tw-text-slate-800: var(--text-primary);
+            --tw-text-gray-100: var(--text-primary);
+            --tw-text-gray-400: var(--text-tertiary);
+            --tw-text-gray-500: var(--text-secondary);
+            --tw-text-gray-600: var(--text-secondary);
+            --tw-text-red-400: var(--status-critical-text);
+            --tw-text-red-500: var(--status-critical-text);
+            --tw-text-red-600: var(--status-critical-text);
+            --tw-text-red-700: var(--status-critical-text);
+            --tw-text-red-800: var(--status-critical-text);
+            --tw-text-green-500: var(--status-success-text);
+            --tw-text-green-600: var(--status-success-text);
+            --tw-text-green-700: var(--status-success-text);
+            --tw-text-green-800: var(--status-success-text);
+            --tw-text-amber-500: var(--accent-amber);
+            --tw-text-amber-800: var(--accent-amber);
+            --tw-text-blue-400: var(--accent-primary-strong);
+            --tw-text-blue-500: var(--accent-primary-strong);
+            --tw-text-blue-600: var(--accent-primary-strong);
+            --tw-text-blue-800: var(--accent-primary-strong);
+            --tw-text-purple-700: var(--accent-secondary);
+            --tw-text-yellow-700: var(--status-warning-text);
+            --tw-text-emerald-600: var(--status-success-text);
+            --tw-border-slate-50: var(--border-color);
+            --tw-border-red-300: color-mix(in srgb, var(--accent-red) 45%, var(--border-color));
+            --tw-border-red-800: color-mix(in srgb, var(--accent-red) 45%, var(--border-color));
+            --tw-border-green-300: color-mix(in srgb, var(--accent-green) 45%, var(--border-color));
+            --tw-border-amber-300: color-mix(in srgb, var(--accent-amber) 45%, var(--border-color));
+            --tw-border-blue-300: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color));
+        }`;
+
+function ui(user, active, content, script = "") {
+    const navs = renderNavLinks(user, active);
+    return `
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>NurseAid PRO</title>
+    <!-- All assets are served from this host. A ward behind a firewall with no
+         outbound internet must still render a working UI, so nothing here may
+         point at an external origin. scripts/check-offline-assets.js enforces that.
+         tailwind.css is a committed build artifact: run "npm run build:css" after
+         changing any utility class in this file, or the new class ships unstyled. -->
+    <link rel="stylesheet" href="/assets/fonts.css">
+    <script src="/assets/chart.umd.js"></script>
+    <script src="/assets/html5-qrcode.min.js"></script>
+    <style>
+${DESIGN_TOKENS}
 
 
         /* ── Browser surfaces ────────────────────────────────────────────────
@@ -1969,47 +2174,7 @@ function ui(user, active, content, script = "") {
             font-feature-settings: "tnum" 1;
         }
 
-        /* ── Icon set ────────────────────────────────────────────────────────
-           124 Unicode glyphs and emoji used to stand in for icons here. An emoji is
-           whatever the viewer's OS ships: different glyph, different weight, and often a
-           fixed colour that fights the status palette beside it. PRODUCT.md requires every
-           status to pair colour WITH an icon, so the icon half cannot be outsourced to a
-           font. These are drawn on one 24x24 grid at one stroke weight, masked so they
-           inherit currentColor, and inlined so they still render with no network. */
-        .ic { display:inline-block; width:1em; height:1em; vertical-align:-0.125em; flex:none;
-              background-color:currentColor;
-              -webkit-mask:var(--ic) center/contain no-repeat; mask:var(--ic) center/contain no-repeat; }
-        .ic-warning { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10.3%203.9%201.8%2018a2%202%200%200%200%201.7%203h17a2%202%200%200%200%201.7-3L13.7%203.9a2%202%200%200%200-3.4%200z%22%2F%3E%3Cpath%20d%3D%22M12%209v4M12%2017h.01%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-check { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%206%209%2017l-5-5%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-close { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M18%206%206%2018M6%206l12%2012%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-arrow-r { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012h14M12%205l7%207-7%207%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-arrow-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M19%2012H5M12%2019l-7-7%207-7%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-chevron-l { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15%2018l-6-6%206-6%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-refresh { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2012a9%209%200%201%201-3-6.7L21%208%22%2F%3E%3Cpath%20d%3D%22M21%203v5h-5%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-download { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M21%2015v4a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2v-4M7%2010l5%205%205-5M12%2015V3%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-gear { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%2F%3E%3Cpath%20d%3D%22M19.4%2015a1.7%201.7%200%200%200%20.3%201.9l.1.1a2%202%200%201%201-2.8%202.8l-.1-.1a1.7%201.7%200%200%200-1.9-.3%201.7%201.7%200%200%200-1%201.5V21a2%202%200%201%201-4%200v-.1A1.7%201.7%200%200%200%209%2019.4a1.7%201.7%200%200%200-1.9.3l-.1.1a2%202%200%201%201-2.8-2.8l.1-.1a1.7%201.7%200%200%200%20.3-1.9%201.7%201.7%200%200%200-1.5-1H3a2%202%200%201%201%200-4h.1A1.7%201.7%200%200%200%204.6%209a1.7%201.7%200%200%200-.3-1.9l-.1-.1a2%202%200%201%201%202.8-2.8l.1.1a1.7%201.7%200%200%200%201.9.3H9a1.7%201.7%200%200%200%201-1.5V3a2%202%200%201%201%204%200v.1a1.7%201.7%200%200%200%201%201.5%201.7%201.7%200%200%200%201.9-.3l.1-.1a2%202%200%201%201%202.8%202.8l-.1.1a1.7%201.7%200%200%200-.3%201.9V9a1.7%201.7%200%200%200%201.5%201H21a2%202%200%201%201%200%204h-.1a1.7%201.7%200%200%200-1.5%201z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-sound { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M11%205%206%209H2v6h4l5%204V5z%22%2F%3E%3Cpath%20d%3D%22M15.5%208.5a5%205%200%200%201%200%207M19%205a9%209%200%200%201%200%2014%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-alert { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%208a6%206%200%200%201%2012%200c0%207%203%209%203%209H3s3-2%203-9%22%2F%3E%3Cpath%20d%3D%22M10.3%2021a2%202%200%200%200%203.4%200%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-heart { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20.8%204.6a5.5%205.5%200%200%200-7.8%200L12%205.7l-1-1.1a5.5%205.5%200%200%200-7.8%207.8l1%201.1L12%2021.2l7.8-7.7%201-1.1a5.5%205.5%200%200%200%200-7.8z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-thermo { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M14%2014.8V4a2%202%200%201%200-4%200v10.8a4%204%200%201%200%204%200z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-droplet { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%202.7%206.3%208.4a8%208%200%201%200%2011.4%200z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-signal { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M5%2012.5a7%207%200%200%201%200-9M19%203.5a7%207%200%200%201%200%209M8%2010a3%203%200%200%201%200-4M16%206a3%203%200%200%201%200%204%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%228%22%20r%3D%221%22%2F%3E%3Cpath%20d%3D%22M12%209v12%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-battery { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%222%22%20y%3D%227%22%20width%3D%2216%22%20height%3D%2210%22%20rx%3D%222%22%2F%3E%3Cpath%20d%3D%22M22%2011v2%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-camera { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%209a2%202%200%200%201%202-2h1.9l1-1.5A2%202%200%200%201%209.6%204h4.8a2%202%200%200%201%201.7.9l1%201.6H19a2%202%200%200%201%202%202v9a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2213%22%20r%3D%223%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-search { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2211%22%20cy%3D%2211%22%20r%3D%227%22%2F%3E%3Cpath%20d%3D%22m20%2020-3.5-3.5%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-key { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%227.5%22%20cy%3D%2215.5%22%20r%3D%224.5%22%2F%3E%3Cpath%20d%3D%22m10.7%2012.3%209.3-9.3M17%206l2.5%202.5M14.5%208.5%2017%2011%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-clipboard { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%228%22%20y%3D%222%22%20width%3D%228%22%20height%3D%224%22%20rx%3D%221%22%2F%3E%3Cpath%20d%3D%22M16%204h2a2%202%200%200%201%202%202v14a2%202%200%200%201-2%202H6a2%202%200%200%201-2-2V6a2%202%200%200%201%202-2h2%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-link { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M10%2013a5%205%200%200%200%207.5.5l3-3A5%205%200%200%200%2013.5%203.5l-1.7%201.7%22%2F%3E%3Cpath%20d%3D%22M14%2011a5%205%200%200%200-7.5-.5l-3%203A5%205%200%200%200%2010.5%2020.5l1.7-1.7%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-plus { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%205v14M5%2012h14%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-edit { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%2020h9%22%2F%3E%3Cpath%20d%3D%22M16.5%203.5a2.1%202.1%200%200%201%203%203L7%2019l-4%201%201-4z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-person { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M20%2021v-2a4%204%200%200%200-4-4H8a4%204%200%200%200-4%204v2%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%227%22%20r%3D%224%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-menu { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%206h18M3%2012h18M3%2018h18%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-sparkle { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M12%203v4M12%2017v4M3%2012h4M17%2012h4M6.2%206.2%209%209M15%2015l2.8%202.8M6.2%2017.8%209%2015M15%209l2.8-2.8%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-target { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%229%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%225%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%221%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-bulb { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018h6M10%2022h4%22%2F%3E%3Cpath%20d%3D%22M12%202a7%207%200%200%200-4%2012.7V17h8v-2.3A7%207%200%200%200%2012%202z%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-hospital { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2021h18M5%2021V7l7-4%207%204v14%22%2F%3E%3Cpath%20d%3D%22M12%209v6M9%2012h6%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-watch { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22%2F%3E%3Cpath%20d%3D%22M9%203h6l.5%203M9%2021h6l.5-3M12%2010v2.5l1.5%201%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }
+${ICON_SET}
 
         /*
          * Dark-theme override for hard-coded Tailwind palette utilities.
@@ -2034,98 +2199,34 @@ function ui(user, active, content, script = "") {
          * are covered explicitly below; add to that list, not to this one.
          */
 
-        /* Light neutral surfaces -> dark surface tokens */
-        [data-theme="dark"] .bg-slate-50 { background-color: var(--bg-card) !important; }
-        .audit-act-login  { color: var(--status-success-text); }
-        .audit-act-delete { color: var(--status-critical-text); }
-        .audit-act-create { color: var(--accent-primary-strong); }
-        .audit-act-other  { color: var(--text-secondary); }
-        /* Tailwind VARIANTS emit their own selectors (.hover\:bg-slate-50:hover), which the
-           plain .bg-slate-50 rules above never match. Untreated, hovering a table row in the
-           dark theme painted it light while the text stayed light — 1.04:1 on /audit-log. */
-        [data-theme="dark"] .hover\\:bg-slate-50:hover { background-color: var(--bg-card-hover) !important; }
-        [data-theme="dark"] .hover\\:bg-slate-200:hover { background-color: var(--bg-card-hover) !important; }
-        [data-theme="dark"] .hover\\:bg-slate-300:hover { background-color: var(--bg-card-hover) !important; }
-        [data-theme="dark"] .hover\\:bg-slate-900:hover { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
+        /* What survives of the old override block.
+           The base utilities now resolve through --tw-* and need no rules here at all.
+           Only two things cannot be expressed by a colour token alone:
+
+           1. HOVER states that differ from the rest state. Tailwind emits a variant as
+              its own selector (.hover\\:bg-slate-50:hover), and it reads the same
+              --tw-bg-slate-50 as the rest state, so a distinct hover still needs a rule.
+           2. A background whose FOREGROUND has to flip. The dark accents are light, so
+              text on them must be --text-inverse; a background-color token cannot say
+              anything about colour.
+
+           No !important: [data-theme="dark"] .x:hover is (0,3,0) and beats Tailwind's
+           (0,2,0) regardless of which stylesheet loads last. */
+        [data-theme="dark"] .hover\\:bg-slate-50:hover,
+        [data-theme="dark"] .hover\\:bg-slate-200:hover,
+        [data-theme="dark"] .hover\\:bg-slate-300:hover { background-color: var(--bg-card-hover); }
         [data-theme="dark"] .hover\\:bg-blue-700:hover,
-        [data-theme="dark"] .active\\:bg-blue-700:active { background-color: var(--accent-primary-light) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .hover\\:text-red-800:hover { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .hover\\:text-gray-600:hover { color: var(--text-secondary) !important; }
-        [data-theme="dark"] .hover\\:text-blue-600:hover,
-        [data-theme="dark"] .hover\\:text-blue-400:hover { color: var(--accent-primary-strong) !important; }
-        [data-theme="dark"] .bg-slate-100 { background-color: var(--bg-input) !important; }
-        [data-theme="dark"] .bg-slate-200 { background-color: var(--bg-input) !important; }
-        [data-theme="dark"] .bg-slate-300 { background-color: var(--bg-card-hover) !important; }
+        [data-theme="dark"] .active\\:bg-blue-700:active { background-color: var(--accent-primary-light); }
 
-        /* Mid/neutral gray surface */
-        [data-theme="dark"] .bg-gray-500 { background-color: var(--bg-input) !important; }
-
-        /* Already-dark neutral backgrounds (button-like on light theme): keep them
-         * visible on a dark page by mapping to the accent-primary button color. */
-        [data-theme="dark"] .bg-slate-800 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-slate-900 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-gray-700 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
-        [data-theme="dark"] .bg-gray-800 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }
-
-        /* Neutral text */
-        [data-theme="dark"] .text-slate-800 { color: var(--text-primary) !important; }
-        [data-theme="dark"] .text-slate-700 { color: var(--text-primary) !important; }
-        [data-theme="dark"] .text-slate-600 { color: var(--text-secondary) !important; }
-        [data-theme="dark"] .text-slate-500 { color: var(--text-secondary) !important; }
-        [data-theme="dark"] .text-gray-100 { color: var(--text-primary) !important; }
-        [data-theme="dark"] .text-gray-600 { color: var(--text-secondary) !important; }
-        [data-theme="dark"] .text-gray-500 { color: var(--text-secondary) !important; }
-        [data-theme="dark"] .text-gray-400 { color: var(--text-tertiary) !important; }
-        [data-theme="dark"] .text-slate-400 { color: var(--text-tertiary) !important; }
-        [data-theme="dark"] .text-slate-300 { color: var(--text-tertiary) !important; }
-
-        /* Neutral border */
-        [data-theme="dark"] .border-slate-50 { border-color: var(--border-color) !important; }
-
-        /* Semantic status text (hue preserved via dark accent tokens) */
-        [data-theme="dark"] .text-red-400 { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .text-red-500 { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .text-red-600 { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .text-red-700 { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .text-red-800 { color: var(--status-critical-text) !important; }
-        [data-theme="dark"] .text-green-500 { color: var(--status-success-text) !important; }
-        [data-theme="dark"] .text-green-600 { color: var(--status-success-text) !important; }
-        [data-theme="dark"] .text-green-700 { color: var(--status-success-text) !important; }
-        [data-theme="dark"] .text-green-800 { color: var(--status-success-text) !important; }
-        [data-theme="dark"] .text-amber-500 { color: var(--accent-amber) !important; }
-        [data-theme="dark"] .text-amber-800 { color: var(--accent-amber) !important; }
-        [data-theme="dark"] .text-blue-400 { color: var(--accent-primary-strong) !important; }
-        [data-theme="dark"] .text-blue-500 { color: var(--accent-primary-strong) !important; }
-        [data-theme="dark"] .text-blue-600 { color: var(--accent-primary-strong) !important; }
-        [data-theme="dark"] .text-blue-800 { color: var(--accent-primary-strong) !important; }
-        [data-theme="dark"] .text-purple-700 { color: var(--accent-secondary) !important; }
-        [data-theme="dark"] .text-yellow-700 { color: var(--status-warning-text) !important; }
-        [data-theme="dark"] .text-emerald-600 { color: var(--status-success-text) !important; }
-
-        /* Saturated status button backgrounds (hue preserved) */
-        [data-theme="dark"] .bg-red-400 { background-color: var(--accent-red) !important; }
-        [data-theme="dark"] .bg-red-600 { background-color: var(--accent-red) !important; }
-        [data-theme="dark"] .bg-green-500 { background-color: var(--accent-green) !important; }
-        [data-theme="dark"] .bg-green-600 { background-color: var(--accent-green) !important; }
-        [data-theme="dark"] .bg-blue-600 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }  /* dark accent is LIGHT: white text on it is 2.53 */
-        [data-theme="dark"] .bg-blue-700 { background-color: var(--accent-primary-strong) !important; color: var(--text-inverse) !important; }  /* dark accent is LIGHT: white text on it is 2.53 */
-
-        /* Pale status tints -> low-alpha tints of the same hue */
-        [data-theme="dark"] .bg-red-50 { background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-red-100 { background-color: color-mix(in srgb, var(--accent-red) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-green-50 { background-color: color-mix(in srgb, var(--accent-green) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-green-100 { background-color: color-mix(in srgb, var(--accent-green) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-amber-50 { background-color: color-mix(in srgb, var(--accent-amber) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-blue-50 { background-color: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-purple-100 { background-color: color-mix(in srgb, var(--accent-secondary) 15%, transparent) !important; }
-        [data-theme="dark"] .bg-yellow-100 { background-color: color-mix(in srgb, var(--accent-yellow) 15%, transparent) !important; }
-
-        /* Status borders -> tinted with the same hue */
-        [data-theme="dark"] .border-red-300 { border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)) !important; }
-        [data-theme="dark"] .border-red-800 { border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)) !important; }
-        [data-theme="dark"] .border-green-300 { border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border-color)) !important; }
-        [data-theme="dark"] .border-amber-300 { border-color: color-mix(in srgb, var(--accent-amber) 45%, var(--border-color)) !important; }
-        [data-theme="dark"] .border-blue-300 { border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color)) !important; }
+        [data-theme="dark"] .bg-slate-800,
+        [data-theme="dark"] .bg-slate-900,
+        [data-theme="dark"] .bg-gray-700,
+        [data-theme="dark"] .bg-gray-800,
+        [data-theme="dark"] .bg-blue-600,
+        [data-theme="dark"] .bg-blue-700,
+        [data-theme="dark"] .hover\\:bg-slate-900:hover,
+        [data-theme="dark"] .hover\\:bg-blue-700:hover,
+        [data-theme="dark"] .active\\:bg-blue-700:active { color: var(--text-inverse); }
 
         html {
             transition: background-color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2936,14 +3037,6 @@ function ui(user, active, content, script = "") {
             letter-spacing: -0.02em;
         }
 
-        #sidePanel .panel-kicker {
-            margin-bottom: 0.2rem;
-            color: var(--text-tertiary);
-            font-size: var(--fs-label);
-            font-weight: 700;
-            letter-spacing: 0.18em;
-        }
-
         #sidePanel .panel-close-btn {
             display: inline-flex;
             align-items: center;
@@ -3391,7 +3484,6 @@ function ui(user, active, content, script = "") {
                 margin-bottom: 0.55rem !important;
                 padding: 0 0 0.5rem;
             }
-            #sidePanel .panel-kicker { display: none; }
             #sidePanel #p-title {
                 max-width: calc(100vw - 4.5rem);
                 font-size: var(--fs-title) !important;
@@ -3424,11 +3516,11 @@ function ui(user, active, content, script = "") {
             #sidePanel #panel-export-btn {
                 min-width: 3.5rem;
                 padding: 0.3rem 0.55rem !important;
-                font-size: 0 !important;
                 justify-content: center;
             }
+            #sidePanel #panel-export-btn #panel-export-label { display: none; }
             #sidePanel #panel-export-btn::after {
-                content: '⬇ CSV';
+                content: 'CSV';
                 font-size: var(--fs-label);
             }
 
@@ -3673,7 +3765,9 @@ function ui(user, active, content, script = "") {
         .ai-chat-message--error { align-self: stretch; max-width: 100%; color: var(--status-critical-text); background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); }
         .ai-chat-message--fallback { background: color-mix(in srgb, var(--status-warning-text) 8%, transparent); }
         .ai-chat-message--system { align-self: center; max-width: 92%; font-size: var(--fs-sm); font-style: italic; color: var(--text-muted); background: transparent; border: none; padding: .2rem .5rem; text-align: center; }
-        .ai-chat-message-kicker { display: block; font-size: var(--fs-label); font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--text-muted); margin-bottom: .3rem; }
+        /* Not an eyebrow: this says the answer came from deterministic rules rather
+           than the model, which is information a nurse acts on. Kept, restyled as a chip. */
+        .ai-chat-message-provenance { display: inline-block; font-size: var(--fs-label); font-weight: 700; color: var(--status-warning-text); background: color-mix(in srgb, var(--status-warning-text) 14%, transparent); border-radius: var(--r-pill); padding: .1rem .5rem; margin-bottom: .35rem; }
         .ai-welcome { display:grid; gap:.9rem; padding:.3rem 0; }
         .ai-welcome-hero { padding:1.1rem; border:1px solid rgba(59,130,246,.2); border-radius: var(--r-lg); background:color-mix(in srgb, var(--accent-primary) 10%, transparent); }
         .ai-welcome-hero h3 { color:var(--text-heading); font-size: var(--fs-body-lg); font-weight:900; text-wrap:balance; }
@@ -3681,15 +3775,13 @@ function ui(user, active, content, script = "") {
         .ai-answer { display:grid; gap:.7rem; width:100%; }
         .ai-answer-card { overflow:hidden; border:1px solid var(--border-color); border-radius: var(--r-lg); background:var(--bg-card); box-shadow:var(--shadow-sm); }
         .ai-answer-head { padding:1rem; }
-        .ai-answer[data-risk="warning"] .ai-answer-head { border-left-color:#eab308; }
-        .ai-answer[data-risk="critical"] .ai-answer-head { border-left-color:#ef4444; }
-        .ai-answer[data-risk="normal"] .ai-answer-head { border-left-color:#22c55e; }
-        .ai-answer-kicker { display:flex; align-items:center; justify-content:space-between; gap:.7rem; margin-bottom:.55rem; }
         .ai-risk-badge { display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .55rem; border-radius: var(--r-pill); font-size: var(--fs-label); font-weight:900; }
-        .ai-risk-badge--normal { color:#15803d; background:rgba(34,197,94,.13); }
-        .ai-risk-badge--warning { color:#a16207; background:rgba(234,179,8,.16); }
-        .ai-risk-badge--critical { color:var(--status-critical-text); background:rgba(239,68,68,.13); }
-        .ai-risk-badge--insufficient_data { color:#475569; background:rgba(100,116,139,.13); }
+        /* Tinted from their own text token, so the fill tracks the text in both themes
+           instead of a light-theme rgba sitting on a near-black surface. */
+        .ai-risk-badge--normal { color:var(--status-success-text); background:color-mix(in srgb, var(--status-success-text) 14%, transparent); }
+        .ai-risk-badge--warning { color:var(--status-warning-text); background:color-mix(in srgb, var(--status-warning-text) 16%, transparent); }
+        .ai-risk-badge--critical { color:var(--status-critical-text); background:color-mix(in srgb, var(--status-critical-text) 14%, transparent); }
+        .ai-risk-badge--insufficient_data { color:var(--text-secondary); background:color-mix(in srgb, var(--text-secondary) 13%, transparent); }
         .ai-answer h3 { color:var(--text-heading); font-size: var(--fs-body-lg); font-weight:900; line-height:1.35; text-wrap:balance; }
         .ai-answer-summary { margin-top:0; color:var(--text-secondary); font-size: var(--fs-body); line-height:1.65; }
         .ai-answer-risklabel--normal { color:#15803d; }
@@ -3706,8 +3798,8 @@ function ui(user, active, content, script = "") {
         .ai-observation p { margin-top:.2rem; color:var(--text-secondary); font-size: var(--fs-sm); line-height:1.55; }
         .ai-check-list,.ai-limit-list { display:grid; gap:.45rem; list-style:none; }
         .ai-check-list li,.ai-limit-list li { position:relative; padding-left:1.35rem; color:var(--text-secondary); font-size: var(--fs-sm); line-height:1.55; }
-        .ai-check-list li::before { content:'✓'; position:absolute; left:0; color:var(--status-success-text); font-weight:900; }
-        .ai-limit-list li::before { content:'!'; position:absolute; left:.15rem; color:var(--status-warning-text); font-weight:900; }
+        .ai-check-list li::before { content:''; position:absolute; left:0; top:.3em; width:var(--icon-sm); height:var(--icon-sm); background-color:var(--status-success-text); -webkit-mask:var(--ic-check-url) center/contain no-repeat; mask:var(--ic-check-url) center/contain no-repeat; }
+        .ai-limit-list li::before { content:''; position:absolute; left:0; top:.3em; width:var(--icon-sm); height:var(--icon-sm); background-color:var(--status-warning-text); -webkit-mask:var(--ic-warning-url) center/contain no-repeat; mask:var(--ic-warning-url) center/contain no-repeat; }
         .ai-evidence { border-top:1px solid var(--border-color); }
         .ai-evidence summary { cursor:pointer; padding:.8rem 1rem; color:var(--accent-primary-strong); font-size: var(--fs-sm); font-weight:800; list-style:none; }
         .ai-evidence summary::-webkit-details-marker { display:none; }
@@ -3751,8 +3843,9 @@ function ui(user, active, content, script = "") {
         .qs-step--complete .qs-step-check { display:block; }
         .qs-step-connector { position:relative; flex:0 0 auto; height:44px; width:min(64px, calc(100% - 44px)); align-self:center; margin-left:-2px; }
         .qs-step-connector .qs-track { position:absolute; inset:0; height:3px; margin-top:20px; border-radius: var(--r-xs); background:var(--border-color); overflow:hidden; }
-        .qs-step-connector .qs-fill { position:absolute; inset:0 auto 0 0; width:0%; height:100%; background:var(--accent-primary-strong); border-radius: var(--r-xs); transition:width .3s ease; }
-        .qs-step--complete + .qs-step-connector .qs-fill { width:100%; }
+        /* scaleX, not width: animating width relayouts the stepper on every frame. */
+        .qs-step-connector .qs-fill { position:absolute; inset:0; width:100%; height:100%; background:var(--accent-primary-strong); transform:scaleX(0); transform-origin:left center; transition:transform .3s ease; }
+        .qs-step--complete + .qs-step-connector .qs-fill { transform:scaleX(1); }
         .qs-panel { transition:opacity .2s ease; }
         .is-hidden { display:none; }
         .qs-mode-btn { padding:.5rem .85rem; border-radius: var(--r-md); font-size: var(--fs-sm); font-weight:700; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-secondary); transition:color .2s ease, border-color .2s ease, background .2s ease; }
@@ -3864,19 +3957,19 @@ function ui(user, active, content, script = "") {
             </div>
 
             <button id="sidebarToggle" onclick="toggleSidebar()" type="button"
-                class="shrink-0 w-8 h-8 rounded-lg font-black"
-                aria-label="Toggle sidebar" title="หุบเมนู">❮</button>
+                class="shrink-0 w-8 h-8 rounded-lg font-black inline-flex items-center justify-center"
+                aria-label="Toggle sidebar" title="หุบเมนู"><span id="sidebarToggleIcon" class="ic ic-chevron-l" aria-hidden="true"></span></button>
         </div>
 
         <!-- Theme Toggle Switch -->
         <div class="theme-toggle-container">
             <button type="button" id="themeToggle" class="theme-toggle-switch" onclick="toggleTheme()" role="switch" aria-checked="false" aria-label="สลับโหมดแสงและโหมดมืด" title="สลับโหมดแสงและโหมดมืด">
                 <span class="tt-half tt-light">
-                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
                     <span class="tt-label">สว่าง</span>
                 </span>
                 <span class="tt-half tt-dark">
-                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
                     <span class="tt-label">มืด</span>
                 </span>
             </button>
@@ -3909,7 +4002,7 @@ function ui(user, active, content, script = "") {
     <main id="appMain" tabindex="-1" class="flex-1 p-6 md:p-8 overflow-auto">${content}</main>
     <a id="siteAlertBanner" href="/alert-history" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[100] bg-red-600 text-white px-5 py-3 rounded-xl shadow-2xl font-bold text-sm" role="alert" aria-live="assertive"></a>
 
-        <div id="globalModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" aria-hidden="true"><div class="modal-card p-6 sm:p-8" tabindex="-1"><div class="flex items-start gap-4"><div id="modalIcon" class="dialog-icon" aria-hidden="true">ℹ</div><div class="min-w-0 flex-1"><h3 id="modalTitle" class="text-xl font-bold text-pretty" style="color:var(--text-primary);"></h3></div></div><div id="modalBody" class="space-y-4 mt-5 break-words" style="color:var(--text-secondary);"></div><div class="flex flex-col-reverse sm:flex-row gap-3 mt-7"><button id="modalCancel" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ยกเลิก</button><button id="modalSubmit" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ตกลง</button></div></div></div>
+        <div id="globalModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" aria-hidden="true"><div class="modal-card p-6 sm:p-8" tabindex="-1"><div class="flex items-start gap-4"><div class="dialog-icon" aria-hidden="true"><span id="modalIcon" class="ic ic-info"></span></div><div class="min-w-0 flex-1"><h3 id="modalTitle" class="text-xl font-bold text-pretty" style="color:var(--text-primary);"></h3></div></div><div id="modalBody" class="space-y-4 mt-5 break-words" style="color:var(--text-secondary);"></div><div class="flex flex-col-reverse sm:flex-row gap-3 mt-7"><button id="modalCancel" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ยกเลิก</button><button id="modalSubmit" type="button" class="modal-button flex-1 p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ตกลง</button></div></div></div>
 
     <div id="panelOverlay" class="panel-overlay" onclick="closePanel()" aria-hidden="true"></div>
     <div id="sidePanel" style="background: var(--bg-card); border-left: 1px solid var(--border-color);">
@@ -3941,12 +4034,12 @@ function ui(user, active, content, script = "") {
                         <span aria-hidden="true"><span class="ic ic-gear" aria-hidden="true"></span></span><span class="panel-settings-label">ตั้งค่าช่วง</span>
                     </a>
                     <button onclick="closePanel()" class="panel-close-btn p-2 transition-all" aria-label="ปิดหน้ากราฟ"
-                        style="background: var(--bg-badge); color: var(--text-secondary); border: 1px solid var(--border-color);">✕</button>
+                        style="background: var(--bg-badge); color: var(--text-secondary); border: 1px solid var(--border-color);"><span class="ic ic-close" aria-hidden="true"></span></button>
                 </div>
                 <button id="panel-export-btn" type="button"
-                    class="text-2xs px-3 py-1 rounded-full font-black uppercase shadow-sm transition-all"
+                    class="text-2xs px-3 py-1 rounded-full font-black uppercase shadow-sm transition-all inline-flex items-center justify-center gap-1.5"
                     style="background: var(--accent-primary-strong); color: var(--text-inverse);">
-                    ⬇ Export CSV 24h
+                    <span class="ic ic-download" aria-hidden="true"></span><span id="panel-export-label">Export CSV 24h</span>
                 </button>
             </div>
         </div>
@@ -4082,7 +4175,8 @@ function ui(user, active, content, script = "") {
             }
 
             sidebar.classList.toggle('collapsed', collapsed);
-            btn.innerText = collapsed ? '❯' : '❮';
+            const toggleIcon = document.getElementById('sidebarToggleIcon');
+            if (toggleIcon) toggleIcon.className = 'ic ' + (collapsed ? 'ic-chevron-r' : 'ic-chevron-l');
             btn.title = collapsed ? 'เปิดเมนู' : 'หุบเมนู';
             btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         }
@@ -4182,7 +4276,10 @@ function ui(user, active, content, script = "") {
         function setModalOpen(open) { const modal=document.getElementById('globalModal'); modal.style.removeProperty('display'); modal.classList.toggle('is-open',open); modal.setAttribute('aria-hidden',open?'false':'true'); document.body.style.overflow=(open||document.getElementById('sidebar')?.classList.contains('mobile-open'))?'hidden':''; }
         function setModalBusy(busy) { modalBusy=Boolean(busy); const cancel=document.getElementById('modalCancel'); if(cancel) cancel.disabled=modalBusy; }
         function closeModal(result=false,force=false) { if(modalBusy&&!force)return false; const resolve=modalResolver; modalResolver=null; if(resolve) resolve(Boolean(result)); modalSession++;setModalBusy(false);setModalOpen(false);const modal=document.getElementById('globalModal');modal.className='modal';modal.style.removeProperty('display');const body=document.getElementById('modalBody');body.replaceChildren();const cancel=document.getElementById('modalCancel'),submit=document.getElementById('modalSubmit');cancel.onclick=null;cancel.hidden=false;cancel.disabled=false;submit.onclick=null;submit.disabled=false;submit.type='button';submit.removeAttribute('form');if(modalReturnFocus&&document.contains(modalReturnFocus))modalReturnFocus.focus();modalReturnFocus=null;return true; }
-        function prepareModal(title,body,options={}) { const previousResolve=modalResolver;modalResolver=null;if(previousResolve)previousResolve(false);modalSession++;setModalBusy(false);const modal=document.getElementById('globalModal');modal.style.removeProperty('display');document.getElementById('modalTitle').textContent=title;const bodyEl=document.getElementById('modalBody');if(options.textOnly){bodyEl.replaceChildren();String(body||'').split('\\n').forEach(line=>{const p=document.createElement('p');p.textContent=line;bodyEl.appendChild(p);});}else{bodyEl.innerHTML=body||'';}modal.className='modal'+(options.wide?' modal--wide':'')+(options.kind?' modal--notice modal--'+options.kind:'');document.getElementById('modalIcon').textContent=({info:'ℹ',success:'✓',warning:'!',error:'×',danger:'!'})[options.kind]||'ℹ';const cancel=document.getElementById('modalCancel'),submit=document.getElementById('modalSubmit');cancel.onclick=null;submit.onclick=null;submit.type='button';submit.removeAttribute('form');cancel.textContent=options.cancelText||'ยกเลิก';cancel.hidden=options.hideCancel===true;cancel.disabled=false;submit.textContent=options.confirmText||'ตกลง';submit.disabled=false;setModalOpen(true);const session=modalSession;requestAnimationFrame(()=>{if(session!==modalSession)return;const target=options.initialFocus?document.querySelector(options.initialFocus):(options.focusConfirm||cancel.hidden?submit:cancel);target?.focus();});return session; }
+        // Status text is assembled as DOM, never innerHTML: the bed numbers and
+        // error strings interpolated beside it come from live data.
+        function statusIcon(name) { const el=document.createElement('span'); el.className='ic '+name; el.setAttribute('aria-hidden','true'); return el; }
+        function prepareModal(title,body,options={}) { const previousResolve=modalResolver;modalResolver=null;if(previousResolve)previousResolve(false);modalSession++;setModalBusy(false);const modal=document.getElementById('globalModal');modal.style.removeProperty('display');document.getElementById('modalTitle').textContent=title;const bodyEl=document.getElementById('modalBody');if(options.textOnly){bodyEl.replaceChildren();String(body||'').split('\\n').forEach(line=>{const p=document.createElement('p');p.textContent=line;bodyEl.appendChild(p);});}else{bodyEl.innerHTML=body||'';}modal.className='modal'+(options.wide?' modal--wide':'')+(options.kind?' modal--notice modal--'+options.kind:'');document.getElementById('modalIcon').className='ic '+(({info:'ic-info',success:'ic-check',warning:'ic-warning',error:'ic-close',danger:'ic-warning'})[options.kind]||'ic-info');const cancel=document.getElementById('modalCancel'),submit=document.getElementById('modalSubmit');cancel.onclick=null;submit.onclick=null;submit.type='button';submit.removeAttribute('form');cancel.textContent=options.cancelText||'ยกเลิก';cancel.hidden=options.hideCancel===true;cancel.disabled=false;submit.textContent=options.confirmText||'ตกลง';submit.disabled=false;setModalOpen(true);const session=modalSession;requestAnimationFrame(()=>{if(session!==modalSession)return;const target=options.initialFocus?document.querySelector(options.initialFocus):(options.focusConfirm||cancel.hidden?submit:cancel);target?.focus();});return session; }
         function openModal(title,bodyHtml,submitFn,variant,options={}) { modalReturnFocus=document.activeElement;const session=prepareModal(title,bodyHtml,{wide:variant==='wide',initialFocus:options.initialFocus});document.getElementById('modalSubmit').onclick=submitFn;document.getElementById('modalCancel').onclick=()=>closeModal(false);return session; }
         function showNotice(message,options={}) { modalReturnFocus=document.activeElement;const text=String(message||'');const kind=options.kind||(/สำเร็จ|เรียบร้อย|บันทึก.*แล้ว/.test(text)?'success':/ผิดพลาด|ไม่สามารถ|ไม่สำเร็จ|Connection error|Error:|Failed/.test(text)?'error':/กรุณา|ต้อง|ไม่พบ|ไม่มี/.test(text)?'warning':'info');prepareModal(options.title||(kind==='success'?'ดำเนินการสำเร็จ':kind==='warning'?'โปรดตรวจสอบ':kind==='error'?'เกิดข้อผิดพลาด':'แจ้งเตือน'),message,{textOnly:true,kind,hideCancel:true,confirmText:'รับทราบ',focusConfirm:true});return new Promise(resolve=>{modalResolver=resolve;document.getElementById('modalSubmit').onclick=()=>closeModal(true);}); }
         function confirmAction(options={}) { modalReturnFocus=document.activeElement;const session=prepareModal(options.title||'ยืนยันการดำเนินการ',options.body||'',{kind:options.kind||'danger',cancelText:options.cancelText||'ยกเลิก',confirmText:options.confirmText||'ยืนยัน'});return new Promise(resolve=>{modalResolver=resolve;document.getElementById('modalCancel').onclick=()=>closeModal(false);document.getElementById('modalSubmit').onclick=async()=>{const submit=document.getElementById('modalSubmit');if(typeof options.onConfirm!=='function')return closeModal(true);const original=submit.textContent;setModalBusy(true);submit.disabled=true;submit.textContent=options.loadingText||'กำลังดำเนินการ…';try{await options.onConfirm();if(session===modalSession)closeModal(true,true);}catch(error){if(session!==modalSession)return;submit.disabled=false;submit.textContent=original;setModalBusy(false);closeModal(false,true);await showNotice(error?.message||'ไม่สามารถดำเนินการได้',{kind:'error'});}};}); }
@@ -4458,13 +4555,15 @@ function ui(user, active, content, script = "") {
                 const banner = document.getElementById('siteAlertBanner');
                 if (banner) {
                     banner.classList.toggle('hidden', state.count === 0);
-                    banner.style.background = state.critical > 0 ? 'var(--accent-red)' : 'var(--accent-yellow)';
-                    banner.style.color = state.critical > 0 ? 'var(--text-inverse)' : '#422006';
-                    banner.textContent = state.count > 0
-                        ? (state.critical > 0 ? '🔴 Critical ' + state.critical : '') +
-                            (state.critical > 0 && state.warning > 0 ? ' · ' : '') +
-                            (state.warning > 0 ? '🟡 Warning ' + state.warning : '') + ' — แตะเพื่อดู'
-                        : '';
+                    banner.style.background = state.critical > 0 ? 'var(--status-critical-text)' : 'var(--accent-yellow)';
+                    banner.style.color = state.critical > 0 ? 'var(--text-inverse)' : 'var(--text-on-caution)';
+                    banner.replaceChildren();
+                    if (state.count > 0) {
+                        if (state.critical > 0) banner.append(statusIcon('ic-critical'), ' Critical ' + state.critical);
+                        if (state.critical > 0 && state.warning > 0) banner.append(' · ');
+                        if (state.warning > 0) banner.append(statusIcon('ic-warning'), ' Warning ' + state.warning);
+                        banner.append(' — แตะเพื่อดู');
+                    }
                 }
                 if (state.shouldSound && !globalAlertSoundTimer) {
                     playAlert();
@@ -4713,7 +4812,8 @@ function ui(user, active, content, script = "") {
             if (!btn) return;
 
             const selectedHours = Number(hours) || 24;
-            btn.innerText = '⬇ Export CSV ' + trendRangeText(selectedHours);
+            const exportLabel = document.getElementById('panel-export-label');
+                    if (exportLabel) exportLabel.textContent = 'Export CSV ' + trendRangeText(selectedHours);
             btn.disabled = false;
             btn.onclick = function() {
                 exportPatientRange(hn, name, selectedHours);
@@ -4794,7 +4894,8 @@ function ui(user, active, content, script = "") {
             } finally {
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerText = '⬇ Export CSV ' + trendRangeText(selectedHours);
+                    const exportLabel = document.getElementById('panel-export-label');
+                    if (exportLabel) exportLabel.textContent = 'Export CSV ' + trendRangeText(selectedHours);
                 }
             }
         }
@@ -5956,7 +6057,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         const messages = document.getElementById('ai-chat-messages');
         const message = document.createElement('div');
         message.className = 'ai-chat-message ' + (isError ? 'ai-chat-message--error' : 'ai-chat-message--' + role + (isFallback ? ' ai-chat-message--fallback' : ''));
-        if (isFallback) message.appendChild(element('div', 'ai-chat-message-kicker', 'สรุปจากกฎระบบ'));
+        if (isFallback) message.appendChild(element('div', 'ai-chat-message-provenance', 'สรุปจากกฎระบบ'));
         if (role === 'assistant' && !isError) renderAiRichText(message, content);
         else message.textContent = content;
         messages.appendChild(message);
@@ -6164,7 +6265,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             </div>
             <button id="reset-patient-limits" type="button" class="w-full mt-4 text-2xs text-slate-500 underline italic">ล้างค่าและใช้ค่าเริ่มต้น</button>
         \`;
-        openModal('⚙️ Settings', html, async () => {
+        openModal('Settings', html, async () => {
             const response = await fetch('/api/alert-settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
                 mac, hrMin: Number(document.getElementById('th-hrMin').value),
                 hrWarningMin: Number(document.getElementById('th-hrWarningMin').value),
@@ -6269,7 +6370,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             if (patientCountEl) patientCountEl.innerText = 'ผู้ป่วย ' + (data && data.length ? data.length : 0) + ' คน';
 
             if(!data || data.length === 0) {
-                grid.innerHTML = '<div class="col-span-full flex flex-col items-center justify-center text-center" style="padding:4rem 1.5rem;"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--text-muted);margin-bottom:1rem;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><p style="color:var(--text-primary);font-weight:700;font-size: var(--fs-body-lg);margin-bottom:.35rem;">ยังไม่มีผู้ป่วยที่กำลังติดตาม</p><p style="color:var(--text-secondary);font-size: var(--fs-body);max-width:34ch;line-height:1.6;">เมื่อจับคู่อุปกรณ์กับผู้ป่วยแล้ว ข้อมูลสัญญาณชีพจะแสดงที่นี่แบบเรียลไทม์</p></div>';
+                grid.innerHTML = '<div class="col-span-full flex flex-col items-center justify-center text-center" style="padding:4rem 1.5rem;"><span class="ic ic-users" style="width:var(--icon-xl);height:var(--icon-xl);color:var(--text-muted);margin-bottom:1rem;" aria-hidden="true"></span><p style="color:var(--text-primary);font-weight:700;font-size: var(--fs-body-lg);margin-bottom:.35rem;">ยังไม่มีผู้ป่วยที่กำลังติดตาม</p><p style="color:var(--text-secondary);font-size: var(--fs-body);max-width:34ch;line-height:1.6;">เมื่อจับคู่อุปกรณ์กับผู้ป่วยแล้ว ข้อมูลสัญญาณชีพจะแสดงที่นี่แบบเรียลไทม์</p></div>';
                 return;
             }
 
@@ -6406,7 +6507,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
                     <div class="flex items-center justify-between mb-4 gap-2 pb-2" style="border-bottom-color: var(--border-color);">
                         <div class="flex min-w-0 items-center gap-2 flex-1">
-                            <button type="button" data-role="drag-handle" class="priority-editable shrink-0" aria-label="ลากเพื่อจัดเรียงลำดับ" title="ลากเพื่อจัดเรียงลำดับ" style="cursor:grab; touch-action:none; background:none; border:none; padding:2px; color:var(--text-tertiary);">⠿</button>
+                            <button type="button" data-role="drag-handle" class="priority-editable shrink-0" aria-label="ลากเพื่อจัดเรียงลำดับ" title="ลากเพื่อจัดเรียงลำดับ" style="cursor:grab; touch-action:none; background:none; border:none; padding:2px; color:var(--text-tertiary); font-size:var(--icon-md);"><span class="ic ic-grip" aria-hidden="true"></span></button>
                             <span class="shrink-0 text-2xs px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: var(--text-inverse);">\${safe.bed}</span>
                             <span data-role="device-status" role="status" class="w-3 h-3 shrink-0 rounded-full \${statusColor}" aria-label="สถานะเครื่อง: \${statusLabel}" title="\${safe.dataMessage}"></span>
                             <div class="flex min-w-0 flex-col gap-0.5">
@@ -6423,7 +6524,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                     </div>
                                 </div>
                             </div>
-                            \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span>' : ''}
+                            \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
                         <select data-action="set-priority" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
                             <option value="">ไม่ระบุ</option>
@@ -6458,15 +6559,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             const shouldSound = data.some(p => p.alertLevel === 'critical' && p.soundEnabled);
             if(criticalBeds.length > 0){
                 globalBanner.classList.remove('hidden');
-                globalBanner.style.background = 'var(--accent-red)';
+                globalBanner.style.background = 'var(--status-critical-text)';
                 globalBanner.style.color = 'var(--text-inverse)';
-                globalBanner.innerText = '🚨 วิกฤต: เตียง ' + criticalBeds.join(', ');
+                globalBanner.replaceChildren(statusIcon('ic-critical'), ' วิกฤต: เตียง ' + criticalBeds.join(', '));
                 stopAlertLoop(); // เสียงส่วนกลางของ layout ทำงานในทุกหน้าเว็บ
             } else if(warningBeds.length > 0){
                 globalBanner.classList.remove('hidden');
                 globalBanner.style.background = 'var(--accent-yellow)';
-                globalBanner.style.color = '#422006';
-                globalBanner.innerText = '⚠️ เฝ้าระวัง: เตียง ' + warningBeds.join(', ');
+                globalBanner.style.color = 'var(--text-on-caution)';
+                globalBanner.replaceChildren(statusIcon('ic-warning'), ' เฝ้าระวัง: เตียง ' + warningBeds.join(', '));
                 stopAlertLoop();
             } else {
                 globalBanner.classList.add('hidden');
@@ -7180,7 +7281,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
                     <div><label class="text-xs font-bold">หอผู้ป่วย</label><div id="eu_wards" class="w-full border p-2 rounded-xl bg-slate-50 max-h-[160px] overflow-y-auto space-y-1">\${wardChecksHtml}</div></div>
                 </div>
             \`;
-            openModal('✏️ แก้ไขผู้ใช้', html, async () => {
+            openModal('แก้ไขผู้ใช้', html, async () => {
                 const wards = Array.from(document.querySelectorAll('#eu_wards input:checked')).map(el => parseInt(el.value));
                 try {
                     const r = await fetch('/api/users/' + id, {
@@ -7210,7 +7311,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
             } catch (_) { /* leave unchecked if this fails — better than blocking the modal */ }
         };
         window.resetUserPass = async (id, username) => {
-            openModal('🔑 รีเซ็ตรหัสผ่าน — ' + username,
+            openModal('รีเซ็ตรหัสผ่าน — ' + username,
                 '<div><label class="text-xs font-bold">รหัสผ่านใหม่</label><input id="rup_pass" type="password" placeholder="Password" class="w-full border p-3 rounded-xl bg-slate-50"></div>',
                 async () => {
                     const password = document.getElementById('rup_pass').value;
@@ -7587,7 +7688,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
             location.reload();
         };
         window.editP = (hn, name, wardId) => {
-            openModal('✏️ แก้ไข', \`
+            openModal('แก้ไข', \`
                 <input id="enm" value="\${escapeHTML(name)}" class="w-full border p-3 rounded-xl bg-slate-50 mb-3">
                 <select id="ew_ward" class="w-full border p-3 rounded-xl bg-slate-50">\${wardOptsForPatients}</select>
             \`, async () => {
@@ -7806,7 +7907,7 @@ app.get('/matching', requireCapability('pairing:write'), async (req, res) => {
         window.openPair = async (mac, dno) => {
             currentMac = mac; const res = await fetch('/api/patients-available'); const pats = await res.json();
             const opts = pats.map(p => '<option value="'+escapeHTML(p.hn_number)+'|'+escapeHTML(p.name)+'">'+escapeHTML(p.name)+' ('+escapeHTML(p.hn_number)+')</option>').join('');
-            openModal('🔗 จับคู่ #'+dno, '<input id="bed" placeholder="Bed (e.g. B01)" class="w-full border p-3 rounded-xl mb-3" style="background: var(--bg-input); color: var(--text-primary);"><select id="selP" class="w-full border p-3 rounded-xl" style="background: var(--bg-input); color: var(--text-primary);">'+opts+'</select>', async () => {
+            openModal('จับคู่ #'+dno, '<input id="bed" placeholder="Bed (e.g. B01)" class="w-full border p-3 rounded-xl mb-3" style="background: var(--bg-input); color: var(--text-primary);"><select id="selP" class="w-full border p-3 rounded-xl" style="background: var(--bg-input); color: var(--text-primary);">'+opts+'</select>', async () => {
                 const bed = document.getElementById('bed').value;
                 const [hn, name] = document.getElementById('selP').value.split('|');
                 await fetch('/api/pair', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mac:currentMac, hn, name, bed}) });
@@ -7824,7 +7925,7 @@ app.get('/matching', requireCapability('pairing:write'), async (req, res) => {
                 return;
             }
             const opts = devices.map(d => '<option value="'+escapeHTML(d.mac)+'">#'+escapeHTML(d.device_no)+' (ว่าง)</option>').join('');
-            openModal('🔄 ย้ายคนไข้ไปเครื่องใหม่',
+            openModal('ย้ายคนไข้ไปเครื่องใหม่',
                 '<p class="text-xs mb-3" style="color: var(--text-secondary);">คนไข้: <strong>'+escapeHTML(patientName)+' (HN: '+escapeHTML(hn)+')</strong> จากเตียง '+escapeHTML(bedNo||'-')+'</p><p class="text-xs mb-3" style="color: var(--text-secondary);">เลือกอุปกรณ์ปลายทาง:</p><select id="change-target" class="w-full border p-3 rounded-xl" style="background: var(--bg-card); color: var(--text-primary);">'+opts+'</select>',
                 async () => {
                     const targetMac = document.getElementById('change-target').value;
@@ -8182,7 +8283,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
                     </div>
                 </div>
             \`;
-            openModal('⚙️ ช่วงค่าและการแจ้งเตือน', html, async () => {
+            openModal('ช่วงค่าและการแจ้งเตือน', html, async () => {
                 const values = alertSettingsValues('patient');
                 const error = validateAlertSettings(values);
                 if (error) return showNotice(error);
@@ -8888,22 +8989,22 @@ app.get('/notification-settings', async (req, res) => {
             if (file.size > 2 * 1024 * 1024) return showNotice('ไฟล์ใหญ่เกินไป (จำกัด 2MB)', {kind:'warning'});
             const ext = (file.name.split('.').pop() || '').toLowerCase();
             if (!['mp3','wav','ogg','mid','midi'].includes(ext)) return showNotice('รองรับเฉพาะไฟล์ mp3, wav, ogg, mid/midi', {kind:'warning'});
-            const previousStatus = statusEl.textContent;
-            statusEl.textContent = '⏳ กำลังอัปโหลด...';
+            const previousStatus = Array.from(statusEl.childNodes, n => n.cloneNode(true));
+            statusEl.replaceChildren(statusIcon('ic-refresh ic--spin'), ' กำลังอัปโหลด...');
             const formData = new FormData();
             formData.append('sound', file);
             try {
                 const r = await fetch('/api/notification-settings/sound', { method: 'POST', body: formData });
                 const result = await r.json();
                 if (!r.ok) {
-                    statusEl.textContent = previousStatus;
+                    statusEl.replaceChildren(...previousStatus);
                     return showNotice(CUSTOM_SOUND_ERROR_MESSAGES[result.error] || 'อัปโหลดไม่สำเร็จ', {kind:'error'});
                 }
                 statusEl.textContent = 'ใช้งานอยู่: ' + result.originalName + (result.converted ? ' (แปลงจาก MIDI แล้ว)' : '');
                 input.value = '';
                 showNotice('อัปโหลดเสียงแจ้งเตือนสำเร็จ!');
             } catch (e) {
-                statusEl.textContent = previousStatus;
+                statusEl.replaceChildren(...previousStatus);
                 showNotice('Connection error: ' + e.message, {kind:'error'});
             }
         }
@@ -8922,7 +9023,7 @@ app.get('/notification-settings', async (req, res) => {
             try {
                 const r = await fetch('/api/notification-settings/sound', { method: 'DELETE' });
                 if (!r.ok) return showNotice('ไม่สามารถคืนค่ามาตรฐานได้', {kind:'error'});
-                document.getElementById('custom-sound-status').textContent = '🔊 ใช้เสียงมาตรฐาน (บี๊บ)';
+                document.getElementById('custom-sound-status').replaceChildren(statusIcon('ic-sound'), ' ใช้เสียงมาตรฐาน (บี๊บ)');
                 showNotice('คืนค่าเสียงมาตรฐานแล้ว');
             } catch (e) {
                 showNotice('Connection error: ' + e.message, {kind:'error'});
@@ -8982,21 +9083,46 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
     <!-- Served locally so the login page still renders on a firewalled ward network.
          /assets is mounted before the auth gate precisely so this page can load. -->
     <link rel="stylesheet" href="/assets/fonts.css">
+    <!-- Set before first paint so the entry screen does not flash the light theme at
+         someone who chose dark. Same localStorage key the app shell writes. -->
+    <script>try{document.documentElement.setAttribute('data-theme',localStorage.getItem('theme')||'light');}catch(e){}</script>
     <style>
+        ${DESIGN_TOKENS}
+        ${ICON_SET}
         html, body { min-height: 100%; }
         body { padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
         input { font-size: var(--fs-body-lg) !important; }
         button, input { min-height: 3rem; touch-action: manipulation; }
         #loginNotice[hidden] { display:none; }
+
+        /* The entry surface. Deep navy is the product's front door and stays that in
+           the light theme; in dark it drops to the app's own page black rather than
+           sitting brighter than the app the nurse is about to enter. */
+        :root { --bg-login: #0f172a; }
+        [data-theme="dark"] { --bg-login: #010409; }
+        body { background: var(--bg-login); }
+        .login-card { background: var(--bg-card); }
+        .login-brand { color: var(--accent-primary-strong); }
+        .login-brand span { color: var(--text-heading); }
+        .login-sub { color: var(--text-secondary); }
+        .login-label { color: var(--text-primary); }
+        .login-input { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color); }
+        .login-input:focus { background: var(--bg-card); border-color: var(--border-focus); }
+        .login-submit { background: var(--accent-primary-strong); color: var(--text-inverse); }
+        .login-version { border: 1px solid var(--border-color); background: var(--bg-badge); color: var(--text-secondary); }
+        .login-notice-card { background: var(--bg-card); border: 1px solid color-mix(in srgb, var(--accent-red) 40%, var(--border-color)); }
+        .login-notice-title { color: var(--text-heading); }
+        /* Tinted from its own text token, so the badge holds its ratio in both themes. */
+        .login-notice-icon { color: var(--status-critical-text); background: color-mix(in srgb, var(--status-critical-text) 14%, transparent); }
     </style>
     <!-- Tailwind must load AFTER the inline <style> above. The Tailwind Play CDN used to inject its stylesheet at runtime, i.e. after inline styles, so loading it earlier flips same-specificity cascade rules. -->
     <link rel="stylesheet" href="/assets/tailwind.css">
 </head>
-<body class="flex items-center justify-center min-h-[100dvh] bg-slate-900 font-['Prompt']">
-    <main class="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[2.5rem] w-full max-w-sm shadow-2xl">
+<body class="flex items-center justify-center min-h-[100dvh] font-['Prompt']">
+    <main class="login-card p-6 sm:p-10 rounded-3xl sm:rounded-[2.5rem] w-full max-w-sm shadow-2xl">
         <div class="text-center mb-7 sm:mb-9">
-            <h1 class="text-3xl font-extrabold tracking-tight text-blue-600">Nurse<span class="text-slate-900">Aid</span></h1>
-            <p class="mt-1.5 text-sm text-slate-600">ระบบติดตามสัญญาณชีพและแจ้งเตือนพยาบาล</p>
+            <h1 class="login-brand text-3xl font-extrabold tracking-tight">Nurse<span>Aid</span></h1>
+            <p class="login-sub mt-1.5 text-sm">ระบบติดตามสัญญาณชีพและแจ้งเตือนพยาบาล</p>
         </div>
         <!-- A real form, so Enter submits from either field and password managers
              can recognise the credential pair. login() is wired to onsubmit rather
@@ -9004,20 +9130,20 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
              removed: with a form it would fire login() a second time. -->
         <form id="loginForm" class="space-y-4" novalidate>
             <div>
-                <label for="u" class="block mb-1.5 text-sm font-semibold text-slate-700">ชื่อผู้ใช้</label>
-                <input id="u" name="username" type="text" required autocomplete="username" autocapitalize="none" spellcheck="false" class="w-full p-4 rounded-2xl bg-slate-100 text-slate-900 focus:ring-2 focus:ring-blue-500">
+                <label for="u" class="login-label block mb-1.5 text-sm font-semibold">ชื่อผู้ใช้</label>
+                <input id="u" name="username" type="text" required autocomplete="username" autocapitalize="none" spellcheck="false" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500">
             </div>
             <div>
-                <label for="p" class="block mb-1.5 text-sm font-semibold text-slate-700">รหัสผ่าน</label>
-                <input id="p" name="password" type="password" required autocomplete="current-password" class="w-full p-4 rounded-2xl bg-slate-100 text-slate-900 focus:ring-2 focus:ring-blue-500">
+                <label for="p" class="login-label block mb-1.5 text-sm font-semibold">รหัสผ่าน</label>
+                <input id="p" name="password" type="password" required autocomplete="current-password" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500">
             </div>
-            <button type="submit" class="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold active:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
+            <button type="submit" class="login-submit w-full p-4 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
         </form>
         <div class="mt-6 flex items-center justify-center" aria-label="v${APP_VERSION}" title="v${APP_VERSION}">
-            <span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-2xs font-mono font-bold text-slate-500">v${APP_VERSION}</span>
+            <span class="login-version rounded-full px-2 py-1 text-2xs font-mono font-bold">v${APP_VERSION}</span>
         </div>
     </main>
-    <div id="loginNotice" hidden class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="loginNoticeTitle" aria-describedby="loginNoticeMessage"><div class="w-full max-w-sm rounded-3xl border border-red-200 bg-white p-6 shadow-2xl"><div class="flex items-start gap-4"><div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-xl font-black text-red-600" aria-hidden="true">!</div><div><h2 id="loginNoticeTitle" class="text-lg font-bold text-slate-900">เข้าสู่ระบบไม่สำเร็จ</h2><p id="loginNoticeMessage" class="mt-2 text-sm leading-6 text-slate-600"></p></div></div><button id="loginNoticeClose" type="button" class="mt-6 w-full rounded-2xl bg-blue-600 p-3 font-bold text-white">ลองอีกครั้ง</button></div></div>
+    <div id="loginNotice" hidden class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="loginNoticeTitle" aria-describedby="loginNoticeMessage"><div class="login-notice-card w-full max-w-sm rounded-3xl p-6 shadow-2xl"><div class="flex items-start gap-4"><div class="login-notice-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" aria-hidden="true"><span class="ic ic-warning" style="width:var(--icon-lg);height:var(--icon-lg);"></span></div><div><h2 id="loginNoticeTitle" class="login-notice-title text-lg font-bold">เข้าสู่ระบบไม่สำเร็จ</h2><p id="loginNoticeMessage" class="login-sub mt-2 text-sm leading-6"></p></div></div><button id="loginNoticeClose" type="button" class="login-submit mt-6 w-full rounded-2xl p-3 font-bold">ลองอีกครั้ง</button></div></div>
     <script>
         function showNotice(message){const notice=document.getElementById('loginNotice');document.getElementById('loginNoticeMessage').textContent=message;notice.hidden=false;document.getElementById('loginNoticeClose').focus();}
         function closeLoginNotice(){document.getElementById('loginNotice').hidden=true;document.getElementById('p').select();}
@@ -9163,7 +9289,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                     <p class="text-sm" style="color: var(--text-secondary);">เพิ่ม แก้ไข หรือลบ Ward และดูสถานะผู้ป่วย อุปกรณ์ และเจ้าหน้าที่ที่ผูกอยู่</p>
                 </div>
                 <button type="button" onclick="openWardModal()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary-strong); color: var(--text-inverse);">
-                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
                     เพิ่ม Ward
                 </button>
             </div>
@@ -9178,7 +9304,7 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                     ${wards.map(w => {
                         const hasRefs = (+w.patient_count > 0 || +w.active_devices > 0 || +w.assigned_users > 0);
                         const stat = (icon, label, value) => `<div class="flex items-center gap-2.5 rounded-xl px-3 py-2" style="background: var(--bg-badge);">
-                            <span style="color: var(--text-tertiary);" aria-hidden="true">${icon}</span>
+                            <span style="color: var(--text-tertiary); font-size: var(--icon-md);" aria-hidden="true">${icon}</span>
                             <div class="min-w-0"><p class="text-2xs font-bold uppercase tracking-wide" style="color: var(--text-tertiary);">${label}</p><p class="text-sm font-black tabular-nums" style="color: var(--text-primary);">${value ?? 0}</p></div>
                         </div>`;
                         return `<div class="card p-5 flex flex-col overflow-hidden">
@@ -9193,9 +9319,9 @@ app.get('/wards-mgmt', requireCapability('wards:manage'), async (req, res) => {
                                 </span>
                             </div>
                             <div class="grid grid-cols-3 gap-2 mb-5">
-                                ${stat('🧍', 'ผู้ป่วย', w.patient_count)}
-                                ${stat('⌚', 'อุปกรณ์', w.active_devices)}
-                                ${stat('👩‍⚕️', 'เจ้าหน้าที่', w.assigned_users)}
+                                ${stat('<span class="ic ic-person"></span>', 'ผู้ป่วย', w.patient_count)}
+                                ${stat('<span class="ic ic-watch"></span>', 'อุปกรณ์', w.active_devices)}
+                                ${stat('<span class="ic ic-users"></span>', 'เจ้าหน้าที่', w.assigned_users)}
                             </div>
                             <div class="flex gap-2 mt-auto">
                                 <button type="button" onclick="openWardModal(${w.id})" class="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border font-bold text-xs transition-colors focus-visible:outline-none focus-visible:ring-2" style="border-color: var(--border-color); color: var(--text-primary);">
@@ -9442,14 +9568,14 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                 <option value="wearos">Wear OS Peripheral</option>
                             </select>
                         </div>
-                        <button type="button" id="qs-d-submit-new" class="qs-primary w-full">เพิ่มอุปกรณ์นี้ →</button>
+                        <button type="button" id="qs-d-submit-new" class="qs-primary w-full">เพิ่มอุปกรณ์นี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
                     </div>
                 </div>
 
                 <div id="qs-existing-section">
                     <div class="space-y-3">
                         <div id="qs-existing-list" role="list" aria-label="อุปกรณ์ที่พร้อมใช้งาน"></div>
-                        <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้ →</button>
+                        <button type="button" id="qs-d-submit-existing" class="qs-primary w-full" disabled>ใช้อุปกรณ์นี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
                     </div>
                 </div>
             </div>
@@ -9495,17 +9621,17 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                 </select>
                                 ${lockedWardId ? '<p class="text-2xs" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                             </div>
-                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้ →</button>
+                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
                         </div>
                     </div>
 
                     <div id="qs-p-existing" class="is-hidden">
                         <div class="space-y-3">
                             <div id="qs-p-existing-list" role="list" aria-label="ผู้ป่วยที่พร้อมใช้งาน"></div>
-                            <button type="button" id="qs-p-submit-existing" class="qs-primary w-full" disabled>ใช้ผู้ป่วยนี้ →</button>
+                            <button type="button" id="qs-p-submit-existing" class="qs-primary w-full" disabled>ใช้ผู้ป่วยนี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
                         </div>
                     </div>
-                    <button type="button" id="qs-p-back" class="qs-secondary w-full mt-4"><span aria-hidden="true">←</span> ย้อนกลับไปเลือกอุปกรณ์</button>
+                    <button type="button" id="qs-p-back" class="qs-secondary w-full mt-4"><span class="ic ic-arrow-l" aria-hidden="true"></span> ย้อนกลับไปเลือกอุปกรณ์</button>
                 `}
             </div>
             <div id="qs-panel-3" class="card qs-panel is-hidden">
@@ -9523,12 +9649,12 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                     <input id="qs-pair-bed" class="qs-field" placeholder="เช่น B01" autocomplete="off" spellcheck="false">
                 </div>
                 <button type="button" id="qs-pair-submit" class="qs-primary w-full mt-5"><span class="ic ic-check" aria-hidden="true"></span> ยืนยันการจับคู่</button>
-                <button type="button" id="qs-pair-back" class="qs-secondary w-full mt-3"><span aria-hidden="true">←</span> ย้อนกลับไปแก้ไขผู้ป่วย</button>
+                <button type="button" id="qs-pair-back" class="qs-secondary w-full mt-3"><span class="ic ic-arrow-l" aria-hidden="true"></span> ย้อนกลับไปแก้ไขผู้ป่วย</button>
             </div>
             <div id="qs-panel-done" class="card qs-panel is-hidden">
                 <div class="text-center mb-5">
-                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style="background: var(--accent-primary-strong); color: #fff;">
-                        <svg class="w-8 h-8" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style="background: var(--accent-primary-strong); color: var(--text-inverse);">
+                        <svg class="w-8 h-8" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                     </div>
                     <p class="text-xl font-black" style="color: var(--text-heading);">ตั้งค่าเสร็จแล้ว</p>
                     <p class="text-sm" style="color: var(--text-secondary);">อุปกรณ์และผู้ป่วยพร้อมใช้งานแล้ว</p>
@@ -9551,15 +9677,18 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
         // state (disabled + loading text) from a *previous* successful
         // submission — matters now that steps are revisitable via Back /
         // clicking a completed stepper circle, not just a one-way forward walk.
+        const ARROW_R = '<span class="ic ic-arrow-r" aria-hidden="true"></span>';
+        const CHECK_MARK = '<span class="ic ic-check" aria-hidden="true"></span>';
         function resetSubmitButtonStates() {
             const resets = [
-                ['qs-d-submit-new', 'เพิ่มอุปกรณ์นี้ →'],
-                ['qs-p-submit-new', 'เพิ่มผู้ป่วยนี้ →'],
-                ['qs-pair-submit', '✓ ยืนยันการจับคู่']
+                ['qs-d-submit-new', 'เพิ่มอุปกรณ์นี้' + ARROW_R],
+                ['qs-p-submit-new', 'เพิ่มผู้ป่วยนี้' + ARROW_R],
+                ['qs-pair-submit', CHECK_MARK + 'ยืนยันการจับคู่']
             ];
-            resets.forEach(([id, text]) => {
+            // Fixed literals only — nothing here is interpolated from data.
+            resets.forEach(([id, html]) => {
                 const el = document.getElementById(id);
-                if (el) { el.disabled = false; el.textContent = text; }
+                if (el) { el.disabled = false; el.innerHTML = html; }
             });
         }
 
@@ -10012,7 +10141,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                     <p class="text-xl font-black" style="color: var(--text-heading);">v${APP_VERSION}</p>
                 </div>
                 <button type="button" id="check-update-btn" onclick="checkForUpdates()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--accent-primary-strong); color: var(--text-inverse);">
-                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m0 0L5.582 5m0 0a9 9 0 1116.828 0"/></svg>
+                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m0 0L5.582 5m0 0a9 9 0 1116.828 0"/></svg>
                     ตรวจสอบอัปเดต
                 </button>
             </div>
@@ -10025,13 +10154,13 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 <p class="text-sm font-bold mb-2" style="color: #92400e;">การติดตั้งอัตโนมัติ</p>
                 <p class="text-xs mb-3" style="color: #a16207;">กดปุ่มด้านล่างเพื่อติดตั้งอัตโนมัติ ระบบจะดึงโค้ด บิลดocker และ recreate container พร้อม auto-rollback หากเวอร์ชันใหม่ไม่ผ่าน health-check</p>
                 <button type="button" id="apply-update-btn" onclick="applyUpdate()" class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2" style="background: var(--status-warning-text);">
-                    <svg class="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span class="ic ic-zap ic--md" aria-hidden="true"></span>
                     ติดตั้งอัตโนมัติทันที
                 </button>
                 <p id="apply-update-status" class="hidden mt-3 rounded-xl border p-3 text-sm font-semibold" role="status" aria-live="polite"></p>
                 <div id="apply-update-progress-wrap" class="hidden mt-3">
                     <div class="rounded-full overflow-hidden" style="background: var(--bg-badge); height: .5rem;">
-                        <div id="apply-update-progress-bar" style="height:.5rem; width:5%; background: var(--accent-primary-strong); transition: width .5s ease, background-color .3s ease; border-radius: var(--r-pill);"></div>
+                        <div id="apply-update-progress-bar" style="height:.5rem; width:100%; transform:scaleX(.05); transform-origin:left center; background: var(--accent-primary-strong); transition: transform .5s ease, background-color .3s ease;"></div>
                     </div>
                     <div class="flex justify-between items-center mt-1.5 text-2xs" style="color: var(--text-tertiary);">
                         <span id="apply-update-phase-label">กำลังเริ่มต้น…</span>
@@ -10053,12 +10182,12 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             if (btn.disabled) return;
             const originalText = btn.textContent;
             btn.disabled = true;
-            btn.textContent = '⏳ กำลังตรวจสอบ…';
+            btn.replaceChildren(statusIcon('ic-refresh ic--spin'), ' กำลังตรวจสอบ…');
             applyEl.classList.add('hidden');
             statusEl.className = 'rounded-xl border p-3 text-sm font-semibold';
             statusEl.style.color = 'var(--text-secondary)';
             statusEl.style.background = 'var(--bg-input)';
-            statusEl.textContent = '⏳ กำลังตรวจสอบ…';
+            statusEl.replaceChildren(statusIcon('ic-clock'), ' กำลังตรวจสอบ…');
             try {
                 updateCheckController?.abort();
                 updateCheckController = new AbortController();
@@ -10068,9 +10197,9 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 if (!r.ok) throw new Error(data.error || 'การเชื่อมต่อล้มเหลว');
                 if (data.error) {
                     statusEl.className = 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700';
-                    statusEl.textContent = data.error === 'timeout'
-                        ? '⚠️ ใช้เวลาในการเชื่อมต่อ GitHub เกินกำหนด โปรดลองใหม่'
-                        : '⚠️ ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่';
+                    statusEl.replaceChildren(statusIcon('ic-warning'), data.error === 'timeout'
+                        ? ' ใช้เวลาในการเชื่อมต่อ GitHub เกินกำหนด โปรดลองใหม่'
+                        : ' ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่');
                     return;
                 }
                 if (data.updateAvailable && data.latestVersion) {
@@ -10078,16 +10207,16 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                     const link = data.releaseUrl
                         ? '<a href="' + escapeHTML(data.releaseUrl) + '" target="_blank" rel="noopener noreferrer" class="underline font-bold">ดูรายละเอียด</a>'
                         : '';
-                    statusEl.innerHTML = '🆕 มีอัปเดตใหม่: v' + escapeHTML(data.latestVersion) + ' (คุณกำลังใช้ v' + escapeHTML(data.currentVersion) + ')' + link;
+                    statusEl.innerHTML = '<span class="ic ic-sparkle" aria-hidden="true"></span> มีอัปเดตใหม่: v' + escapeHTML(data.latestVersion) + ' (คุณกำลังใช้ v' + escapeHTML(data.currentVersion) + ')' + link;
                     applyEl.classList.remove('hidden');
                 } else {
                     statusEl.className = 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800';
-                    statusEl.textContent = '✅ เป็นเวอร์ชันล่าสุดแล้ว (v' + escapeHTML(data.currentVersion) + ')';
+                    statusEl.replaceChildren(statusIcon('ic-check'), ' เป็นเวอร์ชันล่าสุดแล้ว (v' + data.currentVersion + ')');
                 }
             } catch (e) {
                 if (e.name === 'AbortError') return;
                 statusEl.className = 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700';
-                statusEl.textContent = '⚠️ ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่';
+                statusEl.replaceChildren(statusIcon('ic-warning'), ' ไม่สามารถเชื่อมต่อ GitHub ได้ โปรดลองใหม่');
             } finally {
                 btn.disabled = false;
                 btn.textContent = originalText;
@@ -10140,13 +10269,13 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
         // server-side). Order mirrors run_apply_update()'s actual sequence
         // in ops/nurseaid-compose-collector.py.
         const APPLY_UPDATE_PHASES = {
-            checking:               { label: '🔍 กำลังตรวจสอบระบบ…',              percent: 8,  color: 'var(--accent-primary)' },
-            pulling:                { label: '⬇️ กำลังดึงโค้ดล่าสุดจาก GitHub…',    percent: 20, color: 'var(--accent-primary)' },
-            building:               { label: '🏗️ กำลังสร้างเวอร์ชันใหม่ (ขั้นตอนนี้ใช้เวลานานสุด)…', percent: 55, color: 'var(--accent-primary)' },
-            starting:               { label: '🔄 กำลังรีสตาร์ทระบบด้วยเวอร์ชันใหม่…', percent: 78, color: 'var(--accent-primary)' },
-            health_check:           { label: '🩺 กำลังตรวจสอบว่าระบบทำงานปกติ…',    percent: 92, color: 'var(--accent-primary)' },
-            rolling_back:           { label: '↩️ เวอร์ชันใหม่มีปัญหา กำลังย้อนกลับเป็นเวอร์ชันเดิม…', percent: 60, color: 'var(--status-warning-text)' },
-            rollback_health_check:  { label: '🩺 กำลังตรวจสอบว่าย้อนกลับสำเร็จ…',    percent: 88, color: 'var(--status-warning-text)' },
+            checking:               { icon: 'ic-search',  label: 'กำลังตรวจสอบระบบ…',              percent: 8,  color: 'var(--accent-primary)' },
+            pulling:                { icon: 'ic-download', label: 'กำลังดึงโค้ดล่าสุดจาก GitHub…',    percent: 20, color: 'var(--accent-primary)' },
+            building:               { icon: 'ic-build',    label: 'กำลังสร้างเวอร์ชันใหม่ (ขั้นตอนนี้ใช้เวลานานสุด)…', percent: 55, color: 'var(--accent-primary)' },
+            starting:               { icon: 'ic-refresh',  label: 'กำลังรีสตาร์ทระบบด้วยเวอร์ชันใหม่…', percent: 78, color: 'var(--accent-primary)' },
+            health_check:           { icon: 'ic-pulse',    label: 'กำลังตรวจสอบว่าระบบทำงานปกติ…',    percent: 92, color: 'var(--accent-primary)' },
+            rolling_back:           { icon: 'ic-undo',     label: 'เวอร์ชันใหม่มีปัญหา กำลังย้อนกลับเป็นเวอร์ชันเดิม…', percent: 60, color: 'var(--status-warning-text)' },
+            rollback_health_check:  { icon: 'ic-pulse',    label: 'กำลังตรวจสอบว่าย้อนกลับสำเร็จ…',    percent: 88, color: 'var(--status-warning-text)' },
         };
 
         async function pollApplyUpdateStatus(sessionId) {
@@ -10173,10 +10302,10 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 statusEl.classList.add('hidden');
                 criticalEl.classList.add('hidden');
                 progressWrap.classList.remove('hidden');
-                const info = APPLY_UPDATE_PHASES[phase] || { label: '🔄 กำลังเริ่มต้น…', percent: 5, color: 'var(--accent-primary)' };
-                progressBar.style.width = info.percent + '%';
+                const info = APPLY_UPDATE_PHASES[phase] || { icon: 'ic-refresh', label: 'กำลังเริ่มต้น…', percent: 5, color: 'var(--accent-primary)' };
+                progressBar.style.transform = 'scaleX(' + (info.percent / 100) + ')';
                 progressBar.style.background = info.color;
-                phaseLabelEl.textContent = info.label;
+                phaseLabelEl.replaceChildren(statusIcon(info.icon), ' ' + info.label);
                 elapsedEl.textContent = formatElapsed();
             }
             function showStatus(html, className) {
@@ -10197,7 +10326,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
 
             while (true) {
                 if (Date.now() - start > TIMEOUT_MS) {
-                    showStatus('⚠️ หมดเวลารอผล กรุณาตรวจสอบสถานะระบบด้วยตนเอง', 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
+                    showStatus('<span class="ic ic-warning" aria-hidden="true"></span> หมดเวลารอผล กรุณาตรวจสอบสถานะระบบด้วยตนเอง', 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
                     btn.disabled = false;
                     return;
                 }
@@ -10219,21 +10348,21 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                             return;
                         }
                         if (result.rolledBack) {
-                            showStatus('⚠️ อัปเดตล้มเหลว ระบบย้อนกลับเป็นเวอร์ชันเดิมโดยอัตโนมัติ' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
+                            showStatus('<span class="ic ic-undo" aria-hidden="true"></span> อัปเดตล้มเหลว ระบบย้อนกลับเป็นเวอร์ชันเดิมโดยอัตโนมัติ' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800');
                             btn.disabled = false;
                             return;
                         }
                         if (result.healthy) {
-                            showStatus('✅ อัปเดตสำเร็จ v' + escapeHTML(lastUpdateCheckData && lastUpdateCheckData.latestVersion ? lastUpdateCheckData.latestVersion : ''), 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800');
+                            showStatus('<span class="ic ic-check" aria-hidden="true"></span> อัปเดตสำเร็จ v' + escapeHTML(lastUpdateCheckData && lastUpdateCheckData.latestVersion ? lastUpdateCheckData.latestVersion : ''), 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800');
                             btn.disabled = false;
                             checkForUpdates();
                             return;
                         }
-                        showStatus('⚠️ อัปเดตล้มเหลว' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
+                        showStatus('<span class="ic ic-critical" aria-hidden="true"></span> อัปเดตล้มเหลว' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
                         btn.disabled = false;
                         return;
                     } else if (data && data.status === 'failed') {
-                        showStatus('⚠️ ไม่สามารถเริ่มอัปเดตได้: ' + escapeHTML(data.error || 'ไม่ทราบเหตุผล'), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
+                        showStatus('<span class="ic ic-critical" aria-hidden="true"></span> ไม่สามารถเริ่มอัปเดตได้: ' + escapeHTML(data.error || 'ไม่ทราบเหตุผล'), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');
                         btn.disabled = false;
                         return;
                     } else {
