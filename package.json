@@ -1,6 +1,6 @@
 {
   "name": "nurseaid",
-  "version": "2.20.1",
+  "version": "2.20.2",
   "main": "server.js",
   "scripts": {
     "test": "node --check server.js && node --test test_wards_mgmt.js test_monitor_ai_chat.js && python3 -m unittest test_mqtt_bridge",
