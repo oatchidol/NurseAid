@@ -40,3 +40,8 @@ test_wards_mgmt.js
 test_mqtt_bridge.py
 eval_monitor_ai.js
 pytest.ini
+
+# machine-local docker-compose override (see Apply Update docs) — never
+# committed; the update pipeline's clean-tree guard treats any untracked
+# file as a local change and refuses to update, so this must stay ignored
+docker-compose.override.yml
