@@ -12092,6 +12092,54 @@ function parseOtaStatusPayload(buffer) {
     }
 }
 
+const FIRMWARE_UPLOAD_DIR = process.env.FIRMWARE_UPLOAD_DIR || path.join(__dirname, 'uploads', 'firmware');
+try { fs.mkdirSync(FIRMWARE_UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('[Firmware] mkdir failed:', e.message); }
+
+const FIRMWARE_MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB — ESP32 app partitions are typically ~1.3-1.9MB
+
+const firmwareUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: FIRMWARE_MAX_UPLOAD_BYTES },
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').replace('.', '').toLowerCase();
+        if (ext === 'bin') return cb(null, true);
+        cb(new Error('UNSUPPORTED_FIRMWARE_FORMAT'));
+    }
+}).single('firmware');
+
+app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (req, res) => {
+    firmwareUpload(req, res, async (err) => {
+        if (err) {
+            const error = err.message === 'UNSUPPORTED_FIRMWARE_FORMAT' ? 'UNSUPPORTED_FIRMWARE_FORMAT'
+                : err.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'UPLOAD_FAILED';
+            return res.status(400).json({ error });
+        }
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: 'NO_FILE' });
+        const version = String(req.body.version || '').trim().slice(0, 40);
+        const notes = String(req.body.notes || '').trim();
+        if (!version) return res.status(400).json({ error: 'VERSION_REQUIRED' });
+
+        try {
+            const token = generateFirmwareDownloadToken();
+            const inserted = await pool.query(
+                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                [version, notes, '', file.size, token, req.user.id]
+            );
+            const versionId = inserted.rows[0].id;
+            const filename = buildFirmwareFilename(versionId, file.originalname);
+            fs.writeFileSync(path.join(FIRMWARE_UPLOAD_DIR, filename), file.buffer);
+            await pool.query(`UPDATE firmware_versions SET filename=$1 WHERE id=$2`, [filename, versionId]);
+            logAudit(req, 'CREATE', 'firmware_version', String(versionId), { version, file_size: file.size }).catch(console.error);
+            res.json({ success: true, id: versionId, version });
+        } catch (error) {
+            console.error('[Firmware Upload]', error.message);
+            res.status(500).json({ error: 'UPLOAD_FAILED' });
+        }
+    });
+});
+
 async function startServer() {
     await initDatabase();
     initMqttClient();
