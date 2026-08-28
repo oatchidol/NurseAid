@@ -11572,8 +11572,31 @@ async function loadFirmwareVersions() {
         btn.style.color = 'var(--text-inverse)';
         btn.textContent = firmwareOpenVersionId === v.id ? 'ปิด' : 'ส่งไปเครื่อง...';
         btn.onclick = () => toggleFirmwareDeployPanel(v.id);
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        editBtn.style.background = 'var(--bg-card-hover)';
+        editBtn.style.color = 'var(--text-heading)';
+        editBtn.textContent = 'แก้ไข';
+        editBtn.onclick = () => editFirmwareNotes(v.id, v.notes || '');
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        deleteBtn.style.background = 'var(--status-critical-text)';
+        deleteBtn.style.color = 'var(--text-inverse)';
+        deleteBtn.textContent = 'ลบ';
+        deleteBtn.onclick = () => deleteFirmwareVersion(v.id, v.version);
+
+        const actions = document.createElement('div');
+        actions.className = 'flex items-center gap-2';
+        actions.appendChild(editBtn);
+        actions.appendChild(deleteBtn);
+        actions.appendChild(btn);
+
         row.appendChild(label);
-        row.appendChild(btn);
+        row.appendChild(actions);
         wrap.appendChild(row);
 
         const panel = document.createElement('div');
@@ -11585,6 +11608,54 @@ async function loadFirmwareVersions() {
     });
     if (firmwareOpenVersionId) renderFirmwareDeployPanel(firmwareOpenVersionId);
 }
+
+window.editFirmwareNotes = (versionId, currentNotes) => {
+    openModal('แก้ไขรายละเอียดเฟิร์มแวร์',
+        '<div class="space-y-2">' +
+            '<label for="firmwareNotesEdit" class="block text-sm font-bold mb-1">รายละเอียด</label>' +
+            '<textarea id="firmwareNotesEdit" maxlength="2000" rows="4" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);">' + escapeHTML(currentNotes) + '</textarea>' +
+        '</div>',
+        async () => {
+            const input = document.getElementById('firmwareNotesEdit');
+            const submit = document.getElementById('modalSubmit');
+            setModalBusy(true);
+            submit.textContent = 'กำลังบันทึก…';
+            try {
+                const response = await fetch('/api/firmware/versions/' + versionId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notes: String(input?.value || '') })
+                });
+                if (!response.ok) throw new Error(await apiErrorMessage(response, 'บันทึกไม่สำเร็จ'));
+                closeModal(true, true);
+                showNotice('บันทึกรายละเอียดเรียบร้อยแล้ว');
+                await loadFirmwareVersions();
+            } catch (error) {
+                closeModal(false, true);
+                showNotice(error.message || 'บันทึกไม่สำเร็จ');
+            }
+        });
+};
+
+window.deleteFirmwareVersion = async (versionId, version) => {
+    await confirmAction({
+        title: 'ลบเฟิร์มแวร์',
+        body: '<p>คุณต้องการลบเฟิร์มแวร์เวอร์ชัน v' + escapeHTML(version) + ' ใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> การลบไม่สามารถย้อนกลับได้ และจะลบประวัติการ deploy ของเวอร์ชันนี้ด้วย</div>',
+        confirmText: 'ลบเฟิร์มแวร์',
+        loadingText: 'กำลังลบ…',
+        onConfirm: async () => {
+            const response = await fetch('/api/firmware/versions/' + versionId, { method: 'DELETE' });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                if (data.error === 'ACTIVE_DEPLOYMENT_IN_PROGRESS') {
+                    throw new Error('ไม่สามารถลบได้ ขณะนี้มีการ deploy เวอร์ชันนี้อยู่ ให้รอจนเสร็จก่อน');
+                }
+                throw new Error(await apiErrorMessage(response, 'ไม่สามารถลบเฟิร์มแวร์ได้'));
+            }
+            await loadFirmwareVersions();
+        }
+    });
+};
 
 async function toggleFirmwareDeployPanel(versionId) {
     if (firmwareDeployPollTimer) { clearInterval(firmwareDeployPollTimer); firmwareDeployPollTimer = null; }
@@ -12712,6 +12783,59 @@ app.get('/api/firmware/versions', requireCapability('devices:firmware:write'), a
     } catch (error) {
         console.error('[Firmware Versions]', error.message);
         res.status(500).json({ error: 'QUERY_FAILED' });
+    }
+});
+
+app.put('/api/firmware/versions/:id', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    const notes = String(req.body.notes || '').trim();
+    try {
+        const result = await pool.query(
+            `UPDATE firmware_versions SET notes=$1 WHERE id=$2 RETURNING id`,
+            [notes, versionId]
+        );
+        if (!result.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        logAudit(req, 'UPDATE', 'firmware_version', String(versionId), { notes }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[Firmware Update]', error.message);
+        res.status(500).json({ error: 'UPDATE_FAILED' });
+    }
+});
+
+// Deleting a version is blocked only while a deployment of it is actively in
+// flight (pending/start) — a terminal-status history (success/failed/etc.) is
+// not a reason to keep a version around, so it's removed along with the
+// version row rather than left dangling against the FK.
+app.delete('/api/firmware/versions/:id', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+        const activeCheck = await pool.query(
+            `SELECT 1 FROM firmware_deployments WHERE version_id=$1 AND status IN ('pending','start') LIMIT 1`,
+            [versionId]
+        );
+        if (activeCheck.rows.length) {
+            return res.status(400).json({ error: 'ACTIVE_DEPLOYMENT_IN_PROGRESS' });
+        }
+        const versionResult = await pool.query(`SELECT filename FROM firmware_versions WHERE id=$1`, [versionId]);
+        if (!versionResult.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        const { filename } = versionResult.rows[0];
+
+        await pool.query(`DELETE FROM firmware_deployments WHERE version_id=$1`, [versionId]);
+        await pool.query(`DELETE FROM firmware_versions WHERE id=$1`, [versionId]);
+
+        if (filename) {
+            try { fs.unlinkSync(path.join(FIRMWARE_UPLOAD_DIR, filename)); }
+            catch (e) { console.error('[Firmware Delete] Failed to remove .bin file:', e.message); }
+        }
+
+        logAudit(req, 'DELETE', 'firmware_version', String(versionId), {}).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[Firmware Delete]', error.message);
+        res.status(500).json({ error: 'DELETE_FAILED' });
     }
 });
 
