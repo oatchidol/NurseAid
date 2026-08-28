@@ -12819,11 +12819,11 @@ app.delete('/api/firmware/versions/:id', requireCapability('devices:firmware:wri
         if (activeCheck.rows.length) {
             return res.status(400).json({ error: 'ACTIVE_DEPLOYMENT_IN_PROGRESS' });
         }
-        const versionResult = await pool.query(`SELECT filename FROM firmware_versions WHERE id=$1`, [versionId]);
+        const versionResult = await pool.query(`SELECT filename, version FROM firmware_versions WHERE id=$1`, [versionId]);
         if (!versionResult.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
-        const { filename } = versionResult.rows[0];
+        const { filename, version } = versionResult.rows[0];
 
-        await pool.query(`DELETE FROM firmware_deployments WHERE version_id=$1`, [versionId]);
+        const deploymentsDeleted = await pool.query(`DELETE FROM firmware_deployments WHERE version_id=$1`, [versionId]);
         await pool.query(`DELETE FROM firmware_versions WHERE id=$1`, [versionId]);
 
         if (filename) {
@@ -12831,7 +12831,17 @@ app.delete('/api/firmware/versions/:id', requireCapability('devices:firmware:wri
             catch (e) { console.error('[Firmware Delete] Failed to remove .bin file:', e.message); }
         }
 
-        logAudit(req, 'DELETE', 'firmware_version', String(versionId), {}).catch(console.error);
+        // Success-path console log — previously only the error path logged
+        // anything, so a successful delete left no trace in `docker compose
+        // logs` and could only be reconstructed from audit_logs after the
+        // fact. Logging here makes it visible in real time too.
+        console.log(`[Firmware Delete] version_id=${versionId} (v${version}) deleted by user ${req.user?.id ?? 'unknown'}; file=${filename || 'none'}; ${deploymentsDeleted.rowCount} deployment row(s) removed`);
+
+        logAudit(req, 'DELETE', 'firmware_version', String(versionId), {
+            version,
+            filename,
+            deploymentRowsRemoved: deploymentsDeleted.rowCount
+        }).catch(console.error);
         res.json({ success: true });
     } catch (error) {
         console.error('[Firmware Delete]', error.message);
