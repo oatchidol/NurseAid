@@ -172,19 +172,36 @@ function initMqttClient() {
         mqttClient.subscribe('ble/node/+/ota', { qos: 1 }, (err) => {
             if (err) console.error('[MQTT] Failed to subscribe to ble/node/+/ota:', err.message);
         });
+        // The bare heartbeat topic ble/node/<id> (no suffix). Subscribed alongside
+        // the OTA status topic so both are handled in the single message handler.
+        mqttClient.subscribe('ble/node/+', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+:', err.message);
+        });
     });
     mqttClient.on('error', (err) => console.error('[MQTT] Connection error:', err.message));
     mqttClient.on('offline', () => console.warn('[MQTT] Client went offline, will reconnect'));
     mqttClient.on('message', (topic, payload) => {
         const nodeId = parseOtaStatusTopic(topic);
-        if (!nodeId) return; // not an OTA status message — nothing else is subscribed today, but stay defensive
-        const parsed = parseOtaStatusPayload(payload);
-        if (!parsed) {
-            console.error(`[Firmware OTA] Malformed status payload from node ${nodeId}`);
+        if (nodeId) {
+            const parsed = parseOtaStatusPayload(payload);
+            if (!parsed) {
+                console.error(`[Firmware OTA] Malformed status payload from node ${nodeId}`);
+                return;
+            }
+            handleOtaStatusMessage(nodeId, parsed).catch(err =>
+                console.error('[Firmware OTA] Failed to record status:', err.message));
             return;
         }
-        handleOtaStatusMessage(nodeId, parsed).catch(err =>
-            console.error('[Firmware OTA] Failed to record status:', err.message));
+        // Bare heartbeat message (ble/node/<id>, no suffix).
+        const heartbeatNodeId = parseHeartbeatTopic(topic);
+        if (!heartbeatNodeId) return; // not a heartbeat — nothing else is subscribed today, but stay defensive
+        const parsed = parseHeartbeatPayload(payload);
+        if (!parsed) {
+            console.error(`[ESP32 Heartbeat] Malformed heartbeat payload from node ${heartbeatNodeId}`);
+            return;
+        }
+        handleHeartbeatMessage(heartbeatNodeId, parsed).catch(err =>
+            console.error('[ESP32 Heartbeat] Failed to record status:', err.message));
     });
 }
 
@@ -213,6 +230,34 @@ async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
              ORDER BY requested_at DESC LIMIT 1
          )`,
         [state, detail || null, version || null, node.boardMac]
+    );
+}
+
+// Persist ESP32 board health/status from a heartbeat message. Resolves the bare
+// nodeId carried in the topic to a board_mac via the same topology data that
+// /api/esp32-nodes builds (mirrors handleOtaStatusMessage), then upserts one row
+// per board so the admin UI can show fw version, uptime, WiFi signal, free heap,
+// boot reason and last-seen freshness.
+async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip }) {
+    const topology = await esp32NodesForUi({ user: { role: 'super_admin' } });
+    const node = (topology.nodes || []).find(n => n.nodeId === nodeId);
+    if (!node) {
+        console.error(`[ESP32 Heartbeat] Heartbeat from unknown nodeId ${nodeId} — no matching board_mac`);
+        return;
+    }
+    await pool.query(
+        `INSERT INTO esp32_node_status
+             (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (board_mac) DO UPDATE SET
+             fw_version = EXCLUDED.fw_version,
+             ip_address = EXCLUDED.ip_address,
+             wifi_rssi = EXCLUDED.wifi_rssi,
+             uptime_sec = EXCLUDED.uptime_sec,
+             boot_reason = EXCLUDED.boot_reason,
+             free_heap_bytes = EXCLUDED.free_heap_bytes,
+             last_seen_at = NOW()`,
+        [node.boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null]
     );
 }
 
@@ -1037,6 +1082,20 @@ async function initDatabase() {
             updated_at TIMESTAMP DEFAULT NOW()
         )`,
         `CREATE INDEX IF NOT EXISTS idx_firmware_deployments_version ON firmware_deployments(version_id)`,
+        // ESP32 board health/status captured from the bare MQTT heartbeat topic
+        // ble/node/<NODE_ID> (see handleHeartbeatMessage). One row per board,
+        // upserted on every heartbeat so the admin UI can show fw version, uptime,
+        // WiFi signal, free heap, boot reason and last-seen freshness.
+        `CREATE TABLE IF NOT EXISTS esp32_node_status (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            fw_version VARCHAR(40),
+            ip_address VARCHAR(45),
+            wifi_rssi INTEGER,
+            uptime_sec INTEGER,
+            boot_reason TEXT,
+            free_heap_bytes INTEGER,
+            last_seen_at TIMESTAMP DEFAULT NOW()
+        )`,
         `CREATE TABLE IF NOT EXISTS user_notification_settings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) UNIQUE,
@@ -1770,7 +1829,11 @@ const ICON_SET = `
         .ic-bulb { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018h6M10%2022h4%22%2F%3E%3Cpath%20d%3D%22M12%202a7%207%200%200%200-4%2012.7V17h8v-2.3A7%207%200%200%200%2012%202z%22%2F%3E%3C%2Fsvg%3E"); }
         .ic-hospital { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2021h18M5%2021V7l7-4%207%204v14%22%2F%3E%3Cpath%20d%3D%22M12%209v6M9%2012h6%22%2F%3E%3C%2Fsvg%3E"); }
         .ic-watch { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22%2F%3E%3Cpath%20d%3D%22M9%203h6l.5%203M9%2021h6l.5-3M12%2010v2.5l1.5%201%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }`;
+        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }
+        /* Password visibility toggle. --ic-eye-open is the resting (hidden) state;
+           .ic-eye-off swaps to the slashed eye so the current state is legible at a glance. */
+        .ic-eye-open { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%2012s3.5-7%2010-7%2010%207%2010%207-3.5%207-10%207-10-7-10-7z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%222.5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-eye-off { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3.5%205.5a15%2015%200%200%201%2017%200%22%2F%3E%3Cpath%20d%3D%22M2%2012s3.5-7%2010-7%2010%207%2010%207-3.5%207-10%207-10-7-10-7z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%222.5%22%2F%3E%3Cpath%20d%3D%22M4%204l16%2016%22%2F%3E%3C%2Fsvg%3E"); }`;
 
 const DESIGN_TOKENS = `
         :root {
@@ -7164,6 +7227,10 @@ async function esp32NodesForUi(req) {
         'SELECT board_mac, description, updated_at FROM esp32_node_metadata'
     );
     const metadataByMac = new Map(metadata.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    const healthStatus = await pool.query(
+        'SELECT board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at FROM esp32_node_status'
+    );
+    const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
 
     // The collector observes established TCP sessions to Mosquitto from host /proc.
     // This is a stronger online signal than the ble/esp32 inventory message, which
@@ -7195,6 +7262,10 @@ async function esp32NodesForUi(req) {
 
     const nodes = topology.nodes.map(node => {
         const meta = metadataByMac.get(node.boardMac) || {};
+        const health = healthByMac.get(node.boardMac) || {};
+        const lastSeenAt = health.last_seen_at || null;
+        const staleAfterMs = 180000; // 3x the 60s heartbeat interval
+        const stale = !lastSeenAt || (Date.now() - new Date(lastSeenAt).getTime() > staleAfterMs);
         const status = mqttSessionSignalAvailable
             ? (mqttClientIps.has(node.ipAddress) ? 'connected' : 'disconnected')
             : node.status;
@@ -7209,7 +7280,14 @@ async function esp32NodesForUi(req) {
             jstyles,
             patients: jstyles.map(item => item.patient).filter(Boolean),
             description: String(meta.description || ''),
-            descriptionUpdatedAt: meta.updated_at || null
+            descriptionUpdatedAt: meta.updated_at || null,
+            fwVersion: health.fw_version || null,
+            uptimeSec: health.uptime_sec ?? null,
+            wifiRssi: health.wifi_rssi ?? null,
+            freeHeapBytes: health.free_heap_bytes ?? null,
+            bootReason: health.boot_reason || null,
+            lastSeenAt,
+            stale
         };
     });
     return {
@@ -7442,6 +7520,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                     '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">IP Address</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.ipAddress || '-') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">Board MAC</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.boardMac || '-') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">เวอร์ชันเฟิร์มแวร์</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.fwVersion || 'ไม่ทราบ') + (node.stale ? ' <span style="color:var(--status-warning-text);">⚠️ ไม่มีข้อมูลสถานะล่าสุด</span>' : '') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">หน่วยความจำว่าง</div><div class="receiver-metric-value">' + (typeof node.freeHeapBytes === 'number' ? Math.round(node.freeHeapBytes / 1024) + ' KB' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">อัปไทม์</div><div class="receiver-metric-value">' + (typeof node.uptimeSec === 'number' ? Math.floor(node.uptimeSec / 3600) + ' ชม ' + Math.floor((node.uptimeSec % 3600) / 60) + ' น' : 'ไม่มีข้อมูล') + '</div></div>' +
                 '</div>' +
                 renderReceiverPatients(node) +
                 '<details class="receiver-tech"><summary>ข้อมูลเพิ่มเติมของตัวรับสัญญาณ</summary><div class="mt-2 space-y-1 text-xs" style="color:var(--text-tertiary);"><div>Node ID: <span class="font-mono">' + escapeHTML(node.nodeId || '-') + '</span></div><div>จำนวน JStyle ที่เชื่อม: ' + escapeHTML(String(jstyleCount)) + '</div><div>แหล่งข้อมูล: MQTT</div></div></details>' +
@@ -9945,6 +10026,20 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
         .login-notice-title { color: var(--text-heading); }
         /* Tinted from its own text token, so the badge holds its ratio in both themes. */
         .login-notice-icon { color: var(--status-critical-text); background: color-mix(in srgb, var(--status-critical-text) 14%, transparent); }
+
+        /* Password field with an inline visibility toggle. The wrapper is the input's
+           containing block so the button sits flush on the right edge; the icon tints
+           from its own text token so it holds AA ratio in both themes and matches the
+           rest of the form rather than importing a new colour. */
+        .login-pw-wrap { position: relative; display: flex; align-items: center; }
+        .login-pw-wrap .login-input { padding-right: 3.25rem; flex: 1 1 auto; }
+        .login-pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem;
+            padding: 0; border: none; border-radius: 999px; background: transparent;
+            color: var(--text-secondary); cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+        .login-pw-toggle:hover { background: var(--bg-card-hover); color: var(--text-heading); }
+        .login-pw-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--border-focus); }
+        .login-pw-toggle .ic { width: 1.25rem; height: 1.25rem; }
     </style>
     <!-- Tailwind must load AFTER the inline <style> above. The Tailwind Play CDN used to inject its stylesheet at runtime, i.e. after inline styles, so loading it earlier flips same-specificity cascade rules. -->
     <link rel="stylesheet" href="/assets/tailwind.css">
@@ -9966,7 +10061,13 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             </div>
             <div>
                 <label for="p" class="login-label block mb-1.5 text-sm font-semibold">รหัสผ่าน</label>
-                <input id="p" name="password" type="password" required autocomplete="current-password" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500">
+                <div class="login-pw-wrap">
+                    <input id="p" name="password" type="password" required autocomplete="current-password" inputmode="text" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500" aria-describedby="pwHelp">
+                    <button type="button" id="pwToggle" class="login-pw-toggle" aria-label="แสดงรหัสผ่าน" title="แสดงรหัสผ่าน">
+                        <span class="ic ic-eye-open" aria-hidden="true"></span>
+                    </button>
+                </div>
+                <p id="pwHelp" class="mt-1.5 text-xs login-sub hidden">แตะไอคอนดวงตาเพื่อแสดงหรือซ่อนรหัสผ่าน</p>
             </div>
             <button type="submit" class="login-submit w-full p-4 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
         </form>
@@ -9993,6 +10094,24 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             }
         }
         document.getElementById('loginForm').addEventListener('submit', event => { event.preventDefault(); login(); });
+        // Password visibility toggle. Switches the input between type="password" and
+        // type="text", swaps the eye glyph for its slashed state, and updates the
+        // accessible label so keyboard/AT users know the current state. inputmode is set
+        // to text too so mobile keyboards show letters rather than a masked keypad.
+        (function(){
+            const pw = document.getElementById('p');
+            const btn = document.getElementById('pwToggle');
+            const icon = btn.querySelector('.ic');
+            let visible = false;
+            function apply(){
+                pw.type = visible ? 'text' : 'password';
+                icon.classList.toggle('ic-eye-off', visible);
+                icon.classList.toggle('ic-eye-open', !visible);
+                btn.setAttribute('aria-label', visible ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน');
+                btn.title = visible ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน';
+            }
+            btn.addEventListener('click', function(){ visible = !visible; apply(); });
+        })();
     </script>
 </body>
 </html>`));
@@ -11517,7 +11636,8 @@ async function renderFirmwareDeployPanel(versionId) {
         const span = document.createElement('span');
         span.textContent = (n.status === 'connected' ? '🟢 ' : '⚪ ') + n.boardMac +
             (n.description ? ' - ' + n.description : '') +
-            (n.status === 'connected' ? ' (ออนไลน์)' : ' (ออฟไลน์)');
+            (n.status === 'connected' ? ' (ออนไลน์)' : ' (ออฟไลน์)') +
+            (n.fwVersion ? ' — ปัจจุบัน: ' + n.fwVersion : ' — ยังไม่ทราบเวอร์ชัน');
         item.appendChild(input);
         item.appendChild(span);
         pickList.appendChild(item);
@@ -12399,6 +12519,37 @@ function parseOtaStatusPayload(buffer) {
     }
 }
 
+// The ESP32 heartbeat publishes to the BARE topic ble/node/<NODE_ID> with NO
+// suffix (unlike the OTA status topic which is ble/node/<id>/ota). Matching the
+// bare topic exactly keeps us from mistaking other ble/node/... messages (log,
+// boot, devices, etc.) for a heartbeat.
+function parseHeartbeatTopic(topic) {
+    const match = /^ble\/node\/([^/]+)$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+// Parse the heartbeat JSON payload. Fields are read by name (not position) so the
+// order in the payload does not matter. boot_reason is optional: older firmware in
+// the field predates that field, so its absence must not fail parsing — it is
+// surfaced as null and left untouched on upsert.
+function parseHeartbeatPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+        return {
+            uptime: data.uptime ?? null,
+            heap: data.heap ?? null,
+            wifi_rssi: data.wifi_rssi ?? null,
+            time_ok: data.time_ok ?? null,
+            boot_reason: data.boot_reason ?? null,
+            version: data.version ?? null,
+            ip: data.ip ?? null
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
 const FIRMWARE_UPLOAD_DIR = process.env.FIRMWARE_UPLOAD_DIR || path.join(__dirname, 'uploads', 'firmware');
 try { fs.mkdirSync(FIRMWARE_UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('[Firmware] mkdir failed:', e.message); }
 
@@ -12618,5 +12769,7 @@ module.exports = {
     canDeployToTargets,
     isValidOtaUrl,
     parseOtaStatusTopic,
-    parseOtaStatusPayload
+    parseOtaStatusPayload,
+    parseHeartbeatTopic,
+    parseHeartbeatPayload
 };
