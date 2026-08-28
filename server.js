@@ -33,7 +33,7 @@ const {
 const {
     OrPatientError,
     getCurrentPatientsByWard,
-    validateWardCode
+    validatePatientSearch
 } = require('./or-patients');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
@@ -85,6 +85,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const APP_ORIGIN = process.env.APP_ORIGIN || '';
 const SESSION_COOKIE = 'nurseaid_session';
 const OR_PATIENT_API_BASE_URL = String(process.env.OR_PATIENT_API_BASE_URL || '').trim();
+const OR_PATIENT_ALLOW_HTTP = String(process.env.OR_PATIENT_ALLOW_HTTP || 'false').toLowerCase() === 'true';
 const parsedOrPatientTimeout = Number.parseInt(process.env.OR_PATIENT_TIMEOUT_MS || '10000', 10);
 const OR_PATIENT_TIMEOUT_MS = Number.isFinite(parsedOrPatientTimeout)
     ? Math.min(30000, Math.max(1000, parsedOrPatientTimeout))
@@ -7844,11 +7845,11 @@ app.get('/api/or-patients', requireCapability('patients:write'), async (req, res
         Expires: '0'
     });
 
-    let hisWardCode;
+    let patientSearch;
     try {
-        hisWardCode = validateWardCode(req.query.ward);
+        patientSearch = validatePatientSearch(req.query.search);
     } catch (_) {
-        return res.status(400).json({ error: 'รหัส Ward HIS ไม่ถูกต้อง' });
+        return res.status(400).json({ error: 'คำค้นหาผู้ป่วย HIS ไม่ถูกต้อง' });
     }
 
     const localWardIdText = typeof req.query.ward_id === 'string' ? req.query.ward_id : '';
@@ -7885,13 +7886,14 @@ app.get('/api/or-patients', requireCapability('patients:write'), async (req, res
     try {
         const result = await getCurrentPatientsByWard({
             baseUrl: OR_PATIENT_API_BASE_URL,
-            wardCode: hisWardCode,
+            wardCode: patientSearch,
             timeoutMs: OR_PATIENT_TIMEOUT_MS,
-            production: process.env.NODE_ENV === 'production'
+            production: process.env.NODE_ENV === 'production',
+            allowHttp: OR_PATIENT_ALLOW_HTTP
         });
-        logAudit(req, 'READ', 'external_patient_census', hisWardCode, {
+        // Search terms can contain HN, CID, or a patient name. Never persist them in audit logs.
+        logAudit(req, 'READ', 'external_patient_search', null, {
             ward_id: localWardId,
-            his_ward: hisWardCode,
             count: result.count
         }).catch(console.error);
         return res.json(result);
@@ -7968,14 +7970,14 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
         <section class="card p-6 mt-7" aria-labelledby="his-patient-heading">
             <div class="mb-4">
                 <h3 id="his-patient-heading" class="font-bold mb-1">ดึงรายชื่อผู้ป่วยจาก HIS</h3>
-                <p class="text-xs" style="color:var(--text-secondary);">เลือก Ward ปลายทางด้านบนก่อน แล้วระบุรหัส Ward HIS เพื่อโหลดรายชื่อทั้ง Ward จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
+                <p class="text-xs" style="color:var(--text-secondary);">เลือก Ward ปลายทางด้านบนก่อน แล้วค้นหาผู้ป่วยด้วย HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
             </div>
             <div class="grid md:grid-cols-3 gap-3 items-end">
                 <div class="md:col-span-2">
-                    <label for="his_ward" class="block text-xs font-bold mb-1" style="color:var(--text-secondary);">รหัส Ward HIS</label>
-                    <input id="his_ward" type="text" maxlength="20" placeholder="เช่น 08" autocomplete="off" spellcheck="false" class="w-full border p-3 rounded-xl bg-slate-50">
+                    <label for="his_search" class="block text-xs font-bold mb-1" style="color:var(--text-secondary);">ค้นหาผู้ป่วย HIS</label>
+                    <input id="his_search" type="search" maxlength="100" placeholder="HN, ชื่อ-นามสกุล หรือเลขบัตรประชาชน" autocomplete="off" spellcheck="false" class="w-full border p-3 rounded-xl bg-slate-50">
                 </div>
-                <button id="his_load_btn" type="button" onclick="loadHISPatients()" class="w-full p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">โหลดรายชื่อทั้ง Ward</button>
+                <button id="his_load_btn" type="button" onclick="loadHISPatients()" class="w-full p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ค้นหาผู้ป่วย</button>
             </div>
             <p id="his_status" class="text-xs mt-3" style="color:var(--text-secondary);" role="status" aria-live="polite"></p>
             <div id="his_table_wrap" class="mt-4 overflow-x-auto" style="max-height:24rem;overflow-y:auto;" hidden>
@@ -8033,7 +8035,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
 
         window.loadHISPatients = async () => {
             const localWardId = document.getElementById('p_ward').value;
-            const hisWardCode = document.getElementById('his_ward').value.trim();
+            const patientSearch = document.getElementById('his_search').value.trim();
             const statusEl = document.getElementById('his_status');
             const loadButton = document.getElementById('his_load_btn');
             const tableWrap = document.getElementById('his_table_wrap');
@@ -8044,10 +8046,10 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 document.getElementById('p_ward').focus();
                 return;
             }
-            if (!hisWardCode || hisWardCode.length > 20 || /[\\u0000-\\u001f\\u007f]/.test(hisWardCode)) {
-                statusEl.textContent = 'กรุณากรอกรหัส Ward HIS ให้ถูกต้อง';
+            if (!patientSearch || patientSearch.length > 100 || /[\\u0000-\\u001f\\u007f]/.test(patientSearch)) {
+                statusEl.textContent = 'กรุณากรอก HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน';
                 statusEl.style.color = 'var(--status-critical-text)';
-                document.getElementById('his_ward').focus();
+                document.getElementById('his_search').focus();
                 return;
             }
 
@@ -8060,7 +8062,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
             loadButton.setAttribute('aria-busy', 'true');
 
             try {
-                const params = new URLSearchParams({ ward: hisWardCode, ward_id: localWardId });
+                const params = new URLSearchParams({ search: patientSearch, ward_id: localWardId });
                 const response = await fetch('/api/or-patients?' + params.toString(), {
                     method: 'GET',
                     headers: { Accept: 'application/json' },
@@ -8095,7 +8097,7 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 renderHISPatients(hisWardPatients);
                 statusEl.textContent = hisWardPatients.length
                     ? 'พบผู้ป่วย ' + hisWardPatients.length + ' คน กรุณาเลือกหนึ่งราย'
-                    : 'ไม่พบผู้ป่วยที่กำลัง Admit ใน Ward นี้';
+                    : 'ไม่พบผู้ป่วยจากคำค้นหานี้';
                 statusEl.style.color = hisWardPatients.length
                     ? 'var(--status-success-text)'
                     : 'var(--text-secondary)';

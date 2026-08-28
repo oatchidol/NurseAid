@@ -20,14 +20,14 @@ function response(payload, { status = 200, rawBody, contentLength } = {}) {
     };
 }
 
-test('builds the endpoint with ward 08 preserved as a string', () => {
+test('builds the patient search endpoint with a leading-zero HN preserved', () => {
     const url = buildPatientsByWardUrl('https://his.example.test/or_patient', '08', { production: true });
-    assert.equal(url.toString(), 'https://his.example.test/or_patient/get_patients_by_ward.php?ward=08');
+    assert.equal(url.toString(), 'https://his.example.test/or_patient/get_patient.php?search=08');
 });
 
 test('supports another exact ward code without numeric conversion', () => {
     const url = buildPatientsByWardUrl('https://his.example.test/or_patient/', 'A-03');
-    assert.equal(url.searchParams.get('ward'), 'A-03');
+    assert.equal(url.searchParams.get('search'), 'A-03');
 });
 
 test('rejects an HTTP provider URL in production', () => {
@@ -35,6 +35,14 @@ test('rejects an HTTP provider URL in production', () => {
         () => buildPatientsByWardUrl('http://his.example.test/or_patient', '08', { production: true }),
         error => error instanceof OrPatientError && error.code === 'INSECURE_BASE_URL'
     );
+});
+
+test('allows an HTTP provider URL in production only with explicit opt-in', () => {
+    const url = buildPatientsByWardUrl('http://his.internal.test/or_patient', '08', {
+        production: true,
+        allowHttp: true
+    });
+    assert.equal(url.toString(), 'http://his.internal.test/or_patient/get_patient.php?search=08');
 });
 
 test('rejects a missing provider base URL', async () => {
@@ -50,7 +58,7 @@ test('preserves leading-zero HNs and removes fields outside the contract', async
         wardCode: '08',
         production: true,
         fetchImpl: async url => {
-            assert.equal(url.searchParams.get('ward'), '08');
+            assert.equal(url.searchParams.get('search'), '08');
             return response({
                 status: 'success',
                 count: 1,

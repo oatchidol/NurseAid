@@ -23,7 +23,21 @@ function validateWardCode(value) {
     return wardCode;
 }
 
-function buildPatientsByWardUrl(baseUrl, wardCode, { production = false } = {}) {
+function validatePatientSearch(value) {
+    if (typeof value !== 'string') {
+        throw new OrPatientError('Patient search must be a string', { code: 'INVALID_PATIENT_SEARCH' });
+    }
+    const search = value.trim();
+    if (!search || search.length > 100 || /[\u0000-\u001f\u007f]/.test(search)) {
+        throw new OrPatientError('Patient search is invalid', { code: 'INVALID_PATIENT_SEARCH' });
+    }
+    return search;
+}
+
+function buildPatientsByWardUrl(baseUrl, search, {
+    production = false,
+    allowHttp = false
+} = {}) {
     const configuredBaseUrl = typeof baseUrl === 'string' ? baseUrl.trim() : '';
     if (!configuredBaseUrl) {
         throw new OrPatientError('OR patient API base URL is not configured', { code: 'MISSING_BASE_URL' });
@@ -40,12 +54,12 @@ function buildPatientsByWardUrl(baseUrl, wardCode, { production = false } = {}) 
         || root.username || root.password || root.search || root.hash) {
         throw new OrPatientError('OR patient API base URL is invalid', { code: 'INVALID_BASE_URL' });
     }
-    if (production && root.protocol !== 'https:') {
+    if (production && !allowHttp && root.protocol !== 'https:') {
         throw new OrPatientError('OR patient API must use HTTPS in production', { code: 'INSECURE_BASE_URL' });
     }
 
-    const url = new URL('get_patients_by_ward.php', root);
-    url.searchParams.set('ward', validateWardCode(wardCode));
+    const url = new URL('get_patient.php', root);
+    url.searchParams.set('search', validatePatientSearch(search));
     return url;
 }
 
@@ -109,13 +123,14 @@ async function getCurrentPatientsByWard({
     wardCode,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     production = false,
+    allowHttp = false,
     fetchImpl = globalThis.fetch
 }) {
     if (typeof fetchImpl !== 'function') {
         throw new OrPatientError('Fetch implementation is unavailable', { code: 'FETCH_UNAVAILABLE' });
     }
 
-    const url = buildPatientsByWardUrl(baseUrl, wardCode, { production });
+    const url = buildPatientsByWardUrl(baseUrl, wardCode, { production, allowHttp });
     const parsedTimeout = Number(timeoutMs);
     const effectiveTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0
         ? parsedTimeout
@@ -184,6 +199,7 @@ module.exports = {
     buildPatientsByWardUrl,
     getCurrentPatientsByWard,
     readResponseText,
+    validatePatientSearch,
     validatePatientWardResponse,
     validateWardCode
 };
