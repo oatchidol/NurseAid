@@ -30,6 +30,11 @@ const {
     offlineThresholdMinutes,
     shouldRaiseOfflineAlert
 } = require('./live-status');
+const {
+    OrPatientError,
+    getCurrentPatientsByWard,
+    validateWardCode
+} = require('./or-patients');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
 // forwards X-Forwarded-Proto/X-Forwarded-For) so req.protocol reflects the real
@@ -79,6 +84,11 @@ const LIVE_STATUS_FALLBACK_MS = (Number.isFinite(parsedLiveFallback) && parsedLi
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const APP_ORIGIN = process.env.APP_ORIGIN || '';
 const SESSION_COOKIE = 'nurseaid_session';
+const OR_PATIENT_API_BASE_URL = String(process.env.OR_PATIENT_API_BASE_URL || '').trim();
+const parsedOrPatientTimeout = Number.parseInt(process.env.OR_PATIENT_TIMEOUT_MS || '10000', 10);
+const OR_PATIENT_TIMEOUT_MS = Number.isFinite(parsedOrPatientTimeout)
+    ? Math.min(30000, Math.max(1000, parsedOrPatientTimeout))
+    : 10000;
 const AI_CHAT_ENABLED = String(process.env.AI_CHAT_ENABLED || 'false').toLowerCase() === 'true';
 const AI_BASE_URL = String(process.env.AI_BASE_URL || 'https://sai.softsquaregroup.com/v1').replace(/\/+$/, '');
 const AI_API_KEY = String(process.env.AI_API_KEY || '');
@@ -7827,6 +7837,79 @@ app.delete('/api/user-wards', requireCapability('users:manage:ward', 'users:mana
     }
 });
 
+app.get('/api/or-patients', requireCapability('patients:write'), async (req, res) => {
+    res.set({
+        'Cache-Control': 'private, no-store, max-age=0',
+        Pragma: 'no-cache',
+        Expires: '0'
+    });
+
+    let hisWardCode;
+    try {
+        hisWardCode = validateWardCode(req.query.ward);
+    } catch (_) {
+        return res.status(400).json({ error: 'รหัส Ward HIS ไม่ถูกต้อง' });
+    }
+
+    const localWardIdText = typeof req.query.ward_id === 'string' ? req.query.ward_id : '';
+    if (!/^[1-9]\d*$/.test(localWardIdText)) {
+        return res.status(400).json({ error: 'กรุณาเลือก Ward ปลายทางใน NurseAid' });
+    }
+    const localWardId = Number(localWardIdText);
+    if (!Number.isSafeInteger(localWardId)) {
+        return res.status(400).json({ error: 'Ward ปลายทางไม่ถูกต้อง' });
+    }
+    if (!OR_PATIENT_API_BASE_URL) {
+        return res.status(503).json({ error: 'ยังไม่ได้ตั้งค่าการเชื่อมต่อ HIS' });
+    }
+
+    try {
+        const activeWard = await pool.query(
+            'SELECT id FROM wards WHERE id=$1 AND is_active=true',
+            [localWardId]
+        );
+        if (!activeWard.rows.length) {
+            return res.status(400).json({ error: 'Ward ปลายทางไม่ถูกต้องหรือไม่ได้เปิดใช้งาน' });
+        }
+        if (req.user.role !== 'super_admin') {
+            const allowedWardIds = req.user.wardIds || await getUserWardIds(req.user.id);
+            if (!allowedWardIds.some(id => Number(id) === localWardId)) {
+                return res.status(403).json({ error: 'ไม่มีสิทธิ์เพิ่มผู้ป่วยเข้า Ward นี้' });
+            }
+        }
+    } catch (error) {
+        console.error('[OR Patient Ward] Local ward authorization failed:', error.message);
+        return res.status(503).json({ error: 'ไม่สามารถตรวจสอบสิทธิ์ Ward ได้ในขณะนี้' });
+    }
+
+    try {
+        const result = await getCurrentPatientsByWard({
+            baseUrl: OR_PATIENT_API_BASE_URL,
+            wardCode: hisWardCode,
+            timeoutMs: OR_PATIENT_TIMEOUT_MS,
+            production: process.env.NODE_ENV === 'production'
+        });
+        logAudit(req, 'READ', 'external_patient_census', hisWardCode, {
+            ward_id: localWardId,
+            his_ward: hisWardCode,
+            count: result.count
+        }).catch(console.error);
+        return res.json(result);
+    } catch (error) {
+        const code = error instanceof OrPatientError ? error.code : 'UNKNOWN';
+        const upstreamStatus = error instanceof OrPatientError ? error.upstreamStatus : null;
+        console.error('[OR Patient Ward] Fetch failed:', code, upstreamStatus || '');
+
+        if (['MISSING_BASE_URL', 'INVALID_BASE_URL', 'INSECURE_BASE_URL'].includes(code)) {
+            return res.status(503).json({ error: 'การตั้งค่าการเชื่อมต่อ HIS ไม่ถูกต้อง' });
+        }
+        if (code === 'TIMEOUT') {
+            return res.status(504).json({ error: 'HIS ใช้เวลาตอบกลับนานเกินไป กรุณาลองใหม่' });
+        }
+        return res.status(502).json({ error: 'ไม่สามารถดึงรายชื่อผู้ป่วยจาก HIS ได้ในขณะนี้' });
+    }
+});
+
 app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) => {
     const scope = await wardScopeSql(req, 'p.ward_id', 1);
     const r = await pool.query(
@@ -7882,9 +7965,153 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 <table><thead><tr><th>HN</th><th>ชื่อ-สกุล</th><th>หอผู้ป่วย</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
             </div>
         </div>
+        <section class="card p-6 mt-7" aria-labelledby="his-patient-heading">
+            <div class="mb-4">
+                <h3 id="his-patient-heading" class="font-bold mb-1">ดึงรายชื่อผู้ป่วยจาก HIS</h3>
+                <p class="text-xs" style="color:var(--text-secondary);">เลือก Ward ปลายทางด้านบนก่อน แล้วระบุรหัส Ward HIS เพื่อโหลดรายชื่อทั้ง Ward จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-3 items-end">
+                <div class="md:col-span-2">
+                    <label for="his_ward" class="block text-xs font-bold mb-1" style="color:var(--text-secondary);">รหัส Ward HIS</label>
+                    <input id="his_ward" type="text" maxlength="20" placeholder="เช่น 08" autocomplete="off" spellcheck="false" class="w-full border p-3 rounded-xl bg-slate-50">
+                </div>
+                <button id="his_load_btn" type="button" onclick="loadHISPatients()" class="w-full p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">โหลดรายชื่อทั้ง Ward</button>
+            </div>
+            <p id="his_status" class="text-xs mt-3" style="color:var(--text-secondary);" role="status" aria-live="polite"></p>
+            <div id="his_table_wrap" class="mt-4 overflow-x-auto" style="max-height:24rem;overflow-y:auto;" hidden>
+                <table class="w-full">
+                    <thead><tr><th scope="col">HN</th><th scope="col">ชื่อ-สกุล</th><th scope="col" class="text-right">เลือก</th></tr></thead>
+                    <tbody id="his_rows"></tbody>
+                </table>
+            </div>
+        </section>
     `, `
         const wardOptsForPatients = \`${wardOpts}\`;
         const wardSelectLocked = ${lockedWardId ? 'true' : 'false'};
+        let hisWardPatients = [];
+
+        function renderHISPatients(patients) {
+            const rowsEl = document.getElementById('his_rows');
+            const tableWrap = document.getElementById('his_table_wrap');
+            rowsEl.replaceChildren();
+            patients.forEach((patient, index) => {
+                const row = document.createElement('tr');
+                const hnCell = document.createElement('td');
+                const nameCell = document.createElement('td');
+                const actionCell = document.createElement('td');
+                const selectButton = document.createElement('button');
+
+                hnCell.textContent = patient.hn;
+                hnCell.className = 'font-bold';
+                hnCell.style.color = 'var(--accent-primary-strong)';
+                nameCell.textContent = patient.fullname;
+                actionCell.className = 'text-right';
+                selectButton.type = 'button';
+                selectButton.textContent = 'เลือก';
+                selectButton.className = 'px-4 py-2 rounded-lg font-bold text-xs';
+                selectButton.style.color = 'var(--accent-primary-strong)';
+                selectButton.style.border = '1px solid var(--border-color)';
+                selectButton.addEventListener('click', () => window.selectHISPatient(index));
+
+                actionCell.appendChild(selectButton);
+                row.append(hnCell, nameCell, actionCell);
+                rowsEl.appendChild(row);
+            });
+            tableWrap.hidden = patients.length === 0;
+        }
+
+        window.selectHISPatient = index => {
+            const patient = hisWardPatients[index];
+            if (!patient) return;
+            document.getElementById('p_hn').value = patient.hn;
+            document.getElementById('p_nm').value = patient.fullname;
+            const statusEl = document.getElementById('his_status');
+            statusEl.textContent = 'เลือกข้อมูลแล้ว กรุณาตรวจสอบ Ward ปลายทางและกดบันทึก';
+            statusEl.style.color = 'var(--status-success-text)';
+            document.getElementById('p_hn').focus();
+        };
+
+        window.loadHISPatients = async () => {
+            const localWardId = document.getElementById('p_ward').value;
+            const hisWardCode = document.getElementById('his_ward').value.trim();
+            const statusEl = document.getElementById('his_status');
+            const loadButton = document.getElementById('his_load_btn');
+            const tableWrap = document.getElementById('his_table_wrap');
+
+            if (!localWardId) {
+                statusEl.textContent = 'กรุณาเลือก Ward ปลายทางใน NurseAid ก่อน';
+                statusEl.style.color = 'var(--status-critical-text)';
+                document.getElementById('p_ward').focus();
+                return;
+            }
+            if (!hisWardCode || hisWardCode.length > 20 || /[\\u0000-\\u001f\\u007f]/.test(hisWardCode)) {
+                statusEl.textContent = 'กรุณากรอกรหัส Ward HIS ให้ถูกต้อง';
+                statusEl.style.color = 'var(--status-critical-text)';
+                document.getElementById('his_ward').focus();
+                return;
+            }
+
+            hisWardPatients = [];
+            document.getElementById('his_rows').replaceChildren();
+            tableWrap.hidden = true;
+            statusEl.textContent = 'กำลังโหลดรายชื่อผู้ป่วย…';
+            statusEl.style.color = 'var(--text-secondary)';
+            loadButton.disabled = true;
+            loadButton.setAttribute('aria-busy', 'true');
+
+            try {
+                const params = new URLSearchParams({ ward: hisWardCode, ward_id: localWardId });
+                const response = await fetch('/api/or-patients?' + params.toString(), {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                    cache: 'no-store'
+                });
+                const payload = await response.json().catch(() => null);
+                if (!response.ok) {
+                    throw new Error(payload && typeof payload.error === 'string'
+                        ? payload.error
+                        : 'ไม่สามารถโหลดข้อมูลจาก HIS ได้');
+                }
+                if (!payload || payload.status !== 'success' || !Array.isArray(payload.data)
+                    || !Number.isInteger(payload.count) || payload.count !== payload.data.length) {
+                    throw new Error('รูปแบบข้อมูลที่ได้รับจาก HIS ไม่ถูกต้อง');
+                }
+
+                const seenHns = new Set();
+                hisWardPatients = payload.data.map(patient => {
+                    if (!patient || typeof patient.hn !== 'string' || typeof patient.fullname !== 'string') {
+                        throw new Error('รูปแบบข้อมูลผู้ป่วยจาก HIS ไม่ถูกต้อง');
+                    }
+                    const hn = patient.hn.trim();
+                    const fullname = patient.fullname.trim();
+                    const hnKey = hn.toLowerCase();
+                    if (!hn || !fullname || hn.length > 50 || fullname.length > 200 || seenHns.has(hnKey)) {
+                        throw new Error('รูปแบบข้อมูลผู้ป่วยจาก HIS ไม่ถูกต้อง');
+                    }
+                    seenHns.add(hnKey);
+                    return { hn, fullname };
+                });
+
+                renderHISPatients(hisWardPatients);
+                statusEl.textContent = hisWardPatients.length
+                    ? 'พบผู้ป่วย ' + hisWardPatients.length + ' คน กรุณาเลือกหนึ่งราย'
+                    : 'ไม่พบผู้ป่วยที่กำลัง Admit ใน Ward นี้';
+                statusEl.style.color = hisWardPatients.length
+                    ? 'var(--status-success-text)'
+                    : 'var(--text-secondary)';
+            } catch (error) {
+                hisWardPatients = [];
+                renderHISPatients([]);
+                statusEl.textContent = error && error.message
+                    ? error.message
+                    : 'ไม่สามารถโหลดข้อมูลจาก HIS ได้';
+                statusEl.style.color = 'var(--status-critical-text)';
+            } finally {
+                loadButton.disabled = false;
+                loadButton.removeAttribute('aria-busy');
+            }
+        };
+
         window.addP = async () => {
             const wardId = document.getElementById('p_ward').value;
             if (!wardId) return showNotice('กรุณาเลือก Ward');
