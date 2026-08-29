@@ -38,7 +38,9 @@ const {
 const {
     canonicalMac: canonicalEsp32Mac,
     readEsp32Topology,
-    readMqttClientIps
+    readMqttClientIps,
+    summariseEsp32Uptime,
+    summariseEsp32Reboots
 } = require('./esp32-status');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
@@ -162,6 +164,25 @@ const MQTT_PAIRED_TOPIC = 'nurseaid/paired_devices';
 
 let mqttClient = null;
 
+// Pending heartbeat buffer: heartbeats whose nodeId cannot yet be resolved to a
+// board_mac are stored here until the authoritative ble/esp32 inventory message
+// arrives and calls upsertEsp32NodeIdentity, which flushes them through the
+// normal heartbeat path. Bounded by max size and TTL so it never grows without
+// bound — a misbehaving or spoofed nodeId cannot exhaust memory.
+const ESP32_PENDING_HEARTBEAT_MAX = 64;
+const ESP32_PENDING_HEARTBEAT_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const esp32PendingHeartbeats = new Map(); // nodeId -> { parsed, receivedAt }
+// Pending boot messages whose nodeId cannot yet be resolved to a board_mac.
+// Mirrors the heartbeat buffer: bounded by the same max/TTL so it never grows
+// without bound, and flushed from the same ble/esp32 handler after identity
+// resolution. Keeps only the latest payload per nodeId so a rapid sequence of
+// retained /boot re-deliveries does not accumulate entries.
+const esp32PendingBoots = new Map(); // nodeId -> { parsed, receivedAt }
+// Tracks when the sweep should resume after an infra (MQTT) outage recovers.
+// Boards need a full threshold window to deliver their first heartbeat after
+// the link returns, or they would all be declared dead instantly.
+let esp32SweepGraceUntilMs = 0;
+
 function initMqttClient() {
     const url = `mqtt://${MQTT_HOST}:${MQTT_PORT}`;
     const options = { clientId: `nurseaid_server_${Date.now()}`, reconnectPeriod: 5000 };
@@ -176,6 +197,19 @@ function initMqttClient() {
         // the OTA status topic so both are handled in the single message handler.
         mqttClient.subscribe('ble/node/+', { qos: 1 }, (err) => {
             if (err) console.error('[MQTT] Failed to subscribe to ble/node/+:', err.message);
+        });
+        // The ESP32 publishes a RETAINED boot message once per power-on so the
+        // server can reconstruct reboot history even after restarts. Subscribed
+        // alongside the bare heartbeat topic; dispatched before it in the handler
+        // so intent is explicit and robust to future regex edits.
+        mqttClient.subscribe('ble/node/+/boot', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+/boot:', err.message);
+        });
+        // The legacy ble/esp32 topic carries the ONLY authoritative nodeId<->board_mac
+        // mapping. Subscribed so we can resolve unknown heartbeats and keep the
+        // durable esp32_nodes registry current.
+        mqttClient.subscribe('ble/esp32', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/esp32:', err.message);
         });
     });
     mqttClient.on('error', (err) => console.error('[MQTT] Connection error:', err.message));
@@ -192,6 +226,36 @@ function initMqttClient() {
                 console.error('[Firmware OTA] Failed to record status:', err.message));
             return;
         }
+        // Legacy ble/esp32 inventory snapshot — the authoritative source for
+        // nodeId<->board_mac resolution. Flushes any buffered heartbeat for this node.
+        if (topic === 'ble/esp32') {
+            const parsed = parseEsp32InventoryPayload(payload);
+            if (!parsed) {
+                console.error('[ESP32 Inventory] Malformed ble/esp32 payload');
+                return;
+            }
+            upsertEsp32NodeIdentity(parsed.boardMac, parsed.nodeId, parsed.ipAddress)
+                .then(() => {
+                    flushPendingHeartbeat(parsed.nodeId);
+                    flushPendingBoot(parsed.nodeId);
+                })
+                .catch(err => console.error('[ESP32 Inventory] Failed to upsert identity:', err.message));
+            return;
+        }
+        // Boot message (ble/node/<id>/boot) — RETAINED, published once per power-on.
+        // Checked before the bare heartbeat so intent is explicit and robust to
+        // future regex edits that might broaden parseHeartbeatTopic.
+        const bootNodeId = parseBootTopic(topic);
+        if (bootNodeId) {
+            const parsed = parseBootPayload(payload);
+            if (!parsed) {
+                console.error(`[ESP32 Boot] Malformed boot payload from node ${bootNodeId}`);
+                return;
+            }
+            handleBootMessage(bootNodeId, parsed).catch(err =>
+                console.error('[ESP32 Boot] Failed to record boot:', err.message));
+            return;
+        }
         // Bare heartbeat message (ble/node/<id>, no suffix).
         const heartbeatNodeId = parseHeartbeatTopic(topic);
         if (!heartbeatNodeId) return; // not a heartbeat — nothing else is subscribed today, but stay defensive
@@ -206,17 +270,12 @@ function initMqttClient() {
 }
 
 async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
-    // The status message carries nodeId (from the topic), not board_mac —
-    // map it via the same topology data /api/esp32-nodes already builds.
-    // esp32NodesForUi() calls wardScopeSql(req,...), which short-circuits
-    // to "no ward filter" for role==='super_admin' before touching any
-    // other field (server.js:337-338) — so this synthetic super_admin
-    // "request" is sufficient for a background MQTT handler that has no
-    // real req, and deliberately sees every ward (this handler must be
-    // able to match ANY node, not just ones in some ward's scope).
-    const topology = await esp32NodesForUi({ user: { role: 'super_admin' } });
-    const node = (topology.nodes || []).find(n => n.nodeId === nodeId);
-    if (!node) {
+    // Resolve nodeId -> board_mac via the durable esp32_nodes registry instead
+    // of reading the volatile topology snapshot file. This is the same path used
+    // by handleHeartbeatMessage and avoids an expensive per-OTA-call file read
+    // plus several DB queries that esp32NodesForUi performs.
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
         console.error(`[Firmware OTA] Status from unknown nodeId ${nodeId} — no matching board_mac`);
         return;
     }
@@ -229,22 +288,51 @@ async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
              WHERE board_mac=$4 AND status IN ('pending','start')
              ORDER BY requested_at DESC LIMIT 1
          )`,
-        [state, detail || null, version || null, node.boardMac]
+        [state, detail || null, version || null, boardMac]
     );
 }
 
 // Persist ESP32 board health/status from a heartbeat message. Resolves the bare
-// nodeId carried in the topic to a board_mac via the same topology data that
-// /api/esp32-nodes builds (mirrors handleOtaStatusMessage), then upserts one row
-// per board so the admin UI can show fw version, uptime, WiFi signal, free heap,
-// boot reason and last-seen freshness.
+// nodeId carried in the topic to a board_mac via the durable esp32_nodes
+// registry (mirrors handleOtaStatusMessage), then upserts one row per board so
+// the admin UI can show fw version, uptime, WiFi signal, free heap, boot reason
+// and last-seen freshness. Also keeps the esp32_nodes registry fresh with
+// last_seen_at / ip_address / last_fw_version. If the nodeId is not yet known,
+// the heartbeat is buffered (not dropped) until the authoritative ble/esp32
+// inventory message resolves it.
 async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip }) {
-    const topology = await esp32NodesForUi({ user: { role: 'super_admin' } });
-    const node = (topology.nodes || []).find(n => n.nodeId === nodeId);
-    if (!node) {
-        console.error(`[ESP32 Heartbeat] Heartbeat from unknown nodeId ${nodeId} — no matching board_mac`);
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
+        // Heartbeat arrived before the authoritative ble/esp32 inventory message.
+        // Buffer it so it is not silently lost — flush when identity resolves.
+        bufferPendingHeartbeat(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip });
+        console.warn(`[ESP32 Heartbeat] Heartbeat from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
         return;
     }
+    // Detect firmware upgrades: if both the stored and incoming versions are
+    // non-null and differ, record a fw_changed event. We deliberately skip the
+    // case where the stored value is null (first-ever observation) so we do not
+    // fabricate a "change" from nothing. Detected here only — not in the boot
+    // handler — to avoid logging the same upgrade twice from two topics.
+    if (version != null) {
+        const prev = await pool.query(
+            'SELECT last_fw_version FROM esp32_nodes WHERE board_mac = $1',
+            [boardMac]
+        );
+        const oldVersion = prev.rows[0] ? prev.rows[0].last_fw_version : null;
+        if (oldVersion != null && oldVersion !== version) {
+            await recordEsp32Event(boardMac, nodeId, 'fw_changed', { from: oldVersion, to: version });
+        }
+    }
+    // Keep the durable registry fresh: last_seen_at, ip_address and last_fw_version.
+    await pool.query(
+        `UPDATE esp32_nodes SET
+             last_seen_at = NOW(),
+             ip_address = COALESCE($1, ip_address),
+             last_fw_version = COALESCE($2, last_fw_version)
+         WHERE board_mac = $3`,
+        [ip || null, version || null, boardMac]
+    );
     await pool.query(
         `INSERT INTO esp32_node_status
              (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at)
@@ -257,7 +345,85 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
              boot_reason = EXCLUDED.boot_reason,
              free_heap_bytes = EXCLUDED.free_heap_bytes,
              last_seen_at = NOW()`,
-        [node.boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null]
+        [boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null]
+    );
+}
+
+// Handle a RETAINED boot message published once per power-on by the ESP32.
+// The topic carries nodeId but NOT board_mac, so we resolve via the durable
+// esp32_nodes registry. The retained flag means the broker re-delivers this
+// message on every subscribe (server restart, MQTT reconnect), so the monotonic
+// bootCount guard is essential: only a strictly greater count (or a counter
+// reset after reflashing) counts as a genuine reboot event.
+//
+// Deliberately NOT implementing uptime-goes-backwards detection as a second
+// heuristic. The retained /boot message plus the monotonic counter guard is
+// already self-healing — a missed boot message sits retained on the broker and
+// gets delivered on the next reconnect where bootCount > baseline still holds.
+// A second heuristic would double-count the same reboot and corrupt the
+// "how flaky is this board" number, which is the entire purpose of this feature.
+async function handleBootMessage(nodeId, { bootCount, reason, version }) {
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
+        // Boot arrived before the authoritative ble/esp32 inventory message.
+        // Buffer it so it is not silently lost — flush when identity resolves.
+        bufferPendingBoot(nodeId, { bootCount, reason, version });
+        console.warn(`[ESP32 Boot] Boot from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
+        return;
+    }
+    // Read the current baseline so we can apply the decision table.
+    const prev = await pool.query(
+        'SELECT last_boot_count FROM esp32_nodes WHERE board_mac = $1',
+        [boardMac]
+    );
+    const lastBootCount = prev.rows[0] ? prev.rows[0].last_boot_count : null;
+
+    if (lastBootCount === null) {
+        // First time we see this board — store the bootCount as baseline.
+        // Do NOT record an event: we have no idea whether this boot just happened
+        // or happened last week, and inventing history would be fabrication.
+        await pool.query(
+            `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+            [bootCount, boardMac]
+        );
+        return;
+    }
+
+    if (bootCount === lastBootCount) {
+        // RETAINED MESSAGE REPLAY: the broker re-delivers retained messages on
+        // every subscribe (server restart, MQTT reconnect). Do not fabricate a
+        // phantom reboot event.
+        return;
+    }
+
+    if (bootCount > lastBootCount) {
+        // Genuine reboot — counter advanced.
+        await recordEsp32Event(boardMac, nodeId, 'reboot', {
+            bootCount,
+            previousBootCount: lastBootCount,
+            reason
+        });
+        await pool.query(
+            `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+            [bootCount, boardMac]
+        );
+        return;
+    }
+
+    // bootCount < lastBootCount: the counter went backwards, which means the
+    // board was reflashed or its RTC memory was cleared. Record a reboot event
+    // with counterReset:true and RESET the baseline to the new lower count.
+    // Do NOT ignore this case — if we only ever accept >, a reflashed board
+    // goes silent for every reboot until it climbs back past its old count.
+    await recordEsp32Event(boardMac, nodeId, 'reboot', {
+        bootCount,
+        previousBootCount: lastBootCount,
+        reason,
+        counterReset: true
+    });
+    await pool.query(
+        `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+        [bootCount, boardMac]
     );
 }
 
@@ -1096,6 +1262,32 @@ async function initDatabase() {
             free_heap_bytes INTEGER,
             last_seen_at TIMESTAMP DEFAULT NOW()
         )`,
+        // esp32_nodes is the durable nodeId<->board_mac registry so a heartbeat is
+        // never dropped just because the volatile topology snapshot file is missing
+        // that board. One row per board, upserted from topology and from the live
+        // heartbeat stream.
+        `CREATE TABLE IF NOT EXISTS esp32_nodes (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            node_id VARCHAR(64) UNIQUE,
+            ip_address VARCHAR(45),
+            last_boot_count INTEGER,
+            last_fw_version VARCHAR(40),
+            first_seen_at TIMESTAMP DEFAULT NOW(),
+            last_seen_at TIMESTAMP
+        )`,
+        // esp32_node_events is an append-only transition log. A board is "currently
+        // offline" when its latest online/offline event is `offline`. Used to drive
+        // the ESP32-specific offline alert threshold without relying on heartbeat
+        // freshness alone.
+        `CREATE TABLE IF NOT EXISTS esp32_node_events (
+            id BIGSERIAL PRIMARY KEY,
+            board_mac VARCHAR(17) NOT NULL,
+            node_id VARCHAR(64),
+            event_type VARCHAR(20) NOT NULL,
+            detail JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_esp32_events_board_time ON esp32_node_events(board_mac, created_at DESC)`,
         `CREATE TABLE IF NOT EXISTS user_notification_settings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) UNIQUE,
@@ -1162,6 +1354,7 @@ async function initDatabase() {
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS temp_warning_max DECIMAL(3,1);
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS enable_offline_alert BOOLEAN DEFAULT true;
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS offline_threshold_minutes INTEGER DEFAULT 2;
+            ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS esp32_offline_threshold_minutes INTEGER DEFAULT 5;
             UPDATE alert_settings SET
                 hr_warning_min=COALESCE(hr_warning_min, CASE WHEN hr_min+10 < hr_max-10 THEN hr_min+10 ELSE ROUND(hr_min+(hr_max-hr_min)/3.0) END),
                 hr_warning_max=COALESCE(hr_warning_max, CASE WHEN hr_min+10 < hr_max-10 THEN hr_max-10 ELSE ROUND(hr_max-(hr_max-hr_min)/3.0) END),
@@ -1179,6 +1372,7 @@ async function initDatabase() {
             ALTER TABLE alert_settings ALTER COLUMN temp_warning_max SET DEFAULT 37.0;
             ALTER TABLE alert_settings ALTER COLUMN enable_offline_alert SET DEFAULT true;
             ALTER TABLE alert_settings ALTER COLUMN offline_threshold_minutes SET DEFAULT 2;
+            ALTER TABLE alert_settings ALTER COLUMN esp32_offline_threshold_minutes SET DEFAULT 5;
         `);
         await pool.query(`
             CREATE UNIQUE INDEX IF NOT EXISTS uq_vital_signs_logs_mac_recorded_at
@@ -1304,6 +1498,43 @@ async function initDatabase() {
             'INSERT INTO users (username, full_name, password, role) VALUES ($1,$2,$3,$4)',
             [process.env.INITIAL_ADMIN_USERNAME || 'admin', 'Administrator', await hashPassword(initialPassword), 'super_admin']
         );
+    }
+}
+
+// One-time idempotent seed: populate esp32_nodes from the topology snapshot and
+// any rows already sitting in esp32_node_status so the registry is not empty on
+// first deploy. A single bad row must never abort the whole backfill — each
+// per-node upsert is wrapped individually because node_id is UNIQUE and two
+// different board_macs claiming the same node_id would raise a unique violation.
+async function backfillEsp32NodeRegistry() {
+    try {
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        if (topology.nodes) {
+            for (const node of topology.nodes) {
+                try {
+                    await pool.query(
+                        `INSERT INTO esp32_nodes (board_mac, node_id, ip_address) VALUES ($1, $2, $3)
+                         ON CONFLICT (board_mac) DO UPDATE
+                             SET node_id = COALESCE(EXCLUDED.node_id, esp32_nodes.node_id),
+                                 ip_address = COALESCE(EXCLUDED.ip_address, esp32_nodes.ip_address)`,
+                        [node.boardMac, node.nodeId, node.ipAddress]
+                    );
+                } catch (e) {
+                    console.error(`[ESP32 Registry] backfill skipped node ${node.boardMac} (${node.nodeId}):`, e.message);
+                }
+            }
+        }
+        // Seed boards present in esp32_node_status but not yet in esp32_nodes.
+        await pool.query(
+            `INSERT INTO esp32_nodes (board_mac, ip_address, last_fw_version, last_seen_at)
+             SELECT board_mac, ip_address, fw_version, last_seen_at
+             FROM esp32_node_status
+             ON CONFLICT (board_mac) DO UPDATE
+                 SET last_seen_at = COALESCE(esp32_nodes.last_seen_at, EXCLUDED.last_seen_at),
+                     last_fw_version = COALESCE(esp32_nodes.last_fw_version, EXCLUDED.last_fw_version)`
+        );
+    } catch (e) {
+        console.error('[ESP32 Registry] backfill failed:', e.message);
     }
 }
 
@@ -5744,6 +5975,9 @@ async function runAlertEngine() {
     if (alertEngineRunning) return;
     alertEngineRunning = true;
     try {
+        // Receiver monitoring is independent of patient-vitals telemetry health.
+        // A stale live-status snapshot must never prevent ESP32 board alerts from running.
+        await runEsp32ReceiverSweep();
         const snapshot = await readLiveStatuses();
         if (snapshot.stale) return;
         const statuses = snapshot.value;
@@ -5792,6 +6026,135 @@ async function runAlertEngine() {
         console.error('[Alert Engine]', error.message);
     } finally {
         alertEngineRunning = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ESP32 receiver-board liveness sweep — runs every ALERT_ENGINE_INTERVAL_MS
+// alongside the clinical alert engine but is completely decoupled from it.
+// Receiver outages are recorded ONLY in esp32_node_events so they never leak
+// into alert_logs and never trigger nurse-facing audible alerts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Append a single transition event to esp32_node_events.
+ * detail is serialised to JSONB; pass null when there is no payload.
+ */
+async function recordEsp32Event(boardMac, nodeId, eventType, detail) {
+    try {
+        const detailJson = detail !== null ? JSON.stringify(detail) : null;
+        await pool.query(
+            `INSERT INTO esp32_node_events (board_mac, node_id, event_type, detail, created_at)
+             VALUES ($1, $2, $3, $4, NOW())`,
+            [String(boardMac), nodeId ?? null, eventType, detailJson]
+        );
+    } catch (err) {
+        console.error('[ESP32 Sweep] recordEsp32Event failed:', err.message);
+    }
+}
+
+/**
+ * Return the most recent liveness event_type for a board, or null when there
+ * is no history. The id DESC tiebreak handles the case where two events share
+ * the same created_at timestamp.
+ */
+async function latestEsp32LivenessEvent(boardMac) {
+    const result = await pool.query(
+        `SELECT event_type FROM esp32_node_events
+         WHERE board_mac=$1 AND event_type IN ('online','offline')
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [String(boardMac)]
+    );
+    return result.rows.length ? result.rows[0].event_type : null;
+}
+
+/**
+ * Return the most recent infrastructure liveness event_type, or null when
+ * there is no history. Infra rows use board_mac='-' as a sentinel.
+ */
+async function latestEsp32InfraEvent() {
+    const result = await pool.query(
+        `SELECT event_type FROM esp32_node_events
+         WHERE board_mac='-' AND event_type IN ('infra_offline','infra_online')
+         ORDER BY created_at DESC, id DESC LIMIT 1`
+    );
+    return result.rows.length ? result.rows[0].event_type : null;
+}
+
+/**
+ * Sweep all registered ESP32 receiver boards and record online/offline
+ * transitions in esp32_node_events. Storm-suppression prevents false
+ * positives when the monitoring pipeline itself is down.
+ */
+async function runEsp32ReceiverSweep() {
+    try {
+        // Read threshold from alert_settings (global defaults use mac='*').
+        const settingsResult = await pool.query(
+            `SELECT esp32_offline_threshold_minutes FROM alert_settings WHERE mac='*' LIMIT 1`
+        );
+        let thresholdMinutes = 5; // hard fallback
+        if (settingsResult.rows.length > 0 && settingsResult.rows[0].esp32_offline_threshold_minutes != null) {
+            const raw = Number(settingsResult.rows[0].esp32_offline_threshold_minutes);
+            thresholdMinutes = Number.isFinite(raw) ? Math.min(60, Math.max(1, Math.round(raw))) : 5;
+        }
+        const thresholdMs = thresholdMinutes * 60 * 1000;
+
+        // Startup grace: boards need time to send their first heartbeat.
+        if (Date.now() - SERVER_STARTED_AT_MS < thresholdMs) return;
+
+        // Storm suppression — check the monitoring pipeline before judging any board.
+        // When our own MQTT link is down every board looks silent, and raising N
+        // false per-board alerts would bury the one real fact.
+        if (!mqttClient || !mqttClient.connected) {
+            const latestInfra = await latestEsp32InfraEvent();
+            if (latestInfra !== 'infra_offline') {
+                await recordEsp32Event('-', null, 'infra_offline', { reason: 'mqtt_disconnected' });
+            }
+            return;
+        }
+
+        // If infra just came back online, start a grace period so boards get a
+        // full threshold window to deliver their first heartbeat.
+        const latestInfra = await latestEsp32InfraEvent();
+        if (latestInfra === 'infra_offline') {
+            await recordEsp32Event('-', null, 'infra_online', null);
+            esp32SweepGraceUntilMs = Date.now() + thresholdMs;
+            return;
+        }
+
+        // Respect the post-recovery grace window.
+        if (Date.now() < esp32SweepGraceUntilMs) return;
+
+        // Per-board sweep: detect online/offline transitions only.
+        const nodesResult = await pool.query(
+            `SELECT board_mac, node_id, last_seen_at FROM esp32_nodes`
+        );
+        for (const row of nodesResult.rows) {
+            // Skip boards that have never sent a heartbeat — no evidence they were ever alive.
+            if (!row.last_seen_at) continue;
+
+            const silent = Date.now() - new Date(row.last_seen_at) > thresholdMs;
+            const latestEvent = await latestEsp32LivenessEvent(row.board_mac);
+
+            if (silent && latestEvent !== 'offline') {
+                await recordEsp32Event(
+                    row.board_mac,
+                    row.node_id,
+                    'offline',
+                    { lastSeenAt: row.last_seen_at, thresholdMinutes }
+                );
+            } else if (!silent && latestEvent === 'offline') {
+                await recordEsp32Event(
+                    row.board_mac,
+                    row.node_id,
+                    'online',
+                    { lastSeenAt: row.last_seen_at }
+                );
+            }
+            // Write nothing when the state has not changed — events are transitions only.
+        }
+    } catch (error) {
+        console.error('[ESP32 Sweep]', error.message);
     }
 }
 
@@ -7231,10 +7594,18 @@ async function esp32NodesForUi(req) {
         'SELECT board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at FROM esp32_node_status'
     );
     const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    const registry = await pool.query(
+        'SELECT board_mac, node_id, ip_address, last_fw_version, last_seen_at FROM esp32_nodes'
+    );
+    const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
 
     // The collector observes established TCP sessions to Mosquitto from host /proc.
-    // This is a stronger online signal than the ble/esp32 inventory message, which
-    // may only be published when topology changes rather than every few seconds.
+    // This is only a diagnostic signal: the firmware publishes ble/esp32 on a fixed
+    // 30-second timer, so the old "only on topology change" premise was wrong. A
+    // self-reported IP can disagree with host-observed TCP peers for reasons
+    // unrelated to board health (NAT, multi-homed, transient). Heartbeat freshness
+    // is authoritative because it comes from the same 30s-published topic that
+    // carries the nodeId<->board_mac mapping.
     const mqttClientIps = readMqttClientIps(ESP32_COMPOSE_STATUS_FILE);
     const mqttSessionSignalAvailable = mqttClientIps.size > 0;
 
@@ -7263,12 +7634,30 @@ async function esp32NodesForUi(req) {
     const nodes = topology.nodes.map(node => {
         const meta = metadataByMac.get(node.boardMac) || {};
         const health = healthByMac.get(node.boardMac) || {};
-        const lastSeenAt = health.last_seen_at || null;
+        const reg = registryByMac.get(node.boardMac) || {};
+        // Heartbeat freshness is the authoritative liveness signal: take the most
+        // recent last_seen_at across both the durable registry and the ephemeral
+        // status table. A board seeded from topology but never seen on MQTT reads
+        // 'unknown' (not 'disconnected') because we have no evidence either way.
         const staleAfterMs = 180000; // 3x the 60s heartbeat interval
+        const regLastSeenAt = reg.last_seen_at || null;
+        const healthLastSeenAt = health.last_seen_at || null;
+        // Compare numerically: a bare .sort() would stringify these Date objects and
+        // order them by weekday name, which silently picks the OLDER timestamp about
+        // half the time (e.g. "Sat 29 Aug" sorts after "Fri 4 Sep").
+        const lastSeenAt = [regLastSeenAt, healthLastSeenAt]
+            .filter(Boolean)
+            .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+            .pop() || null;
         const stale = !lastSeenAt || (Date.now() - new Date(lastSeenAt).getTime() > staleAfterMs);
-        const status = mqttSessionSignalAvailable
-            ? (mqttClientIps.has(node.ipAddress) ? 'connected' : 'disconnected')
-            : node.status;
+        let status;
+        if (!lastSeenAt) {
+            status = 'unknown';
+        } else if (stale) {
+            status = 'disconnected';
+        } else {
+            status = 'connected';
+        }
         const jstyles = (node.jstyleMacs || []).map(mac => ({
             mac,
             patient: patientByMac.get(mac) || null
@@ -7287,21 +7676,79 @@ async function esp32NodesForUi(req) {
             freeHeapBytes: health.free_heap_bytes ?? null,
             bootReason: health.boot_reason || null,
             lastSeenAt,
-            stale
+            stale,
+            mqttSessionSeen: mqttClientIps.has(node.ipAddress)
         };
     });
+
+    // Fetch liveness transition events (online/offline) AND reboot events for
+    // all known boards in a single query. One round-trip instead of N+1 per
+    // board keeps the page fast even with many receivers. We pull `detail` so
+    // the reboot helper can surface the device-reported boot reason.
+    const livenessEvents = await pool.query(
+        `SELECT board_mac, event_type, created_at, detail FROM esp32_node_events
+         WHERE event_type IN ('online','offline','reboot')
+           AND created_at > NOW() - INTERVAL '7 days'
+         ORDER BY board_mac, created_at ASC`
+    );
+    // Group events by board_mac for O(1) lookup per node.
+    const eventsByMac = new Map();
+    for (const row of livenessEvents.rows) {
+        const mac = String(row.board_mac || '').toUpperCase();
+        let arr = eventsByMac.get(mac);
+        if (!arr) { eventsByMac.set(mac, arr = []); }
+        // Preserve the raw detail column so summariseEsp32Reboots can read it.
+        arr.push({ event_type: row.event_type, created_at: row.created_at, detail: row.detail });
+    }
+
+    const nowMs = Date.now();
+    for (const node of nodes) {
+        const boardEvents = eventsByMac.get(node.boardMac) || [];
+        // summariseEsp32Uptime expects ONLY online/offline transitions — reboot
+        // rows would corrupt its outage maths if left in the array. Filter them
+        // out before passing to the uptime helper.
+        const livenessOnly = boardEvents.filter(e => e.event_type !== 'reboot');
+
+        // Determine the board's current liveness state from the LIVENESS events
+        // only. Reading the raw array here would let a reboot row that landed
+        // after an offline row mask the outage — the board would silently drop
+        // out of the offline count while still being down.
+        // If no events exist, fall back to heartbeat-based status as a best guess.
+        const latestEventType = livenessOnly.length
+            ? livenessOnly[livenessOnly.length - 1].event_type
+            : null;
+        const currentlyOnline = latestEventType === 'online'
+            || (latestEventType !== 'offline' && node.status === 'connected');
+        node.currentlyOffline = latestEventType === 'offline';
+        node.uptime24h = summariseEsp32Uptime(livenessOnly, 86400000, nowMs, currentlyOnline);
+        node.uptime7d   = summariseEsp32Uptime(livenessOnly, 604800000, nowMs, currentlyOnline);
+
+        // Reboot history is computed over the SAME full event set (including
+        // reboot rows) so every recorded reboot in the window is counted.
+        node.reboots24h = summariseEsp32Reboots(boardEvents, 86400000, nowMs);
+        node.reboots7d  = summariseEsp32Reboots(boardEvents, 604800000, nowMs);
+    }
+
+    // NodeIds whose heartbeats arrived on MQTT but whose board_mac could not yet be
+    // resolved — held in an in-memory buffer until the authoritative ble/esp32 inventory
+    // message identifies them. Surfaced here because this exact blind spot previously
+    // hid three real receiver boards from the system entirely.
+    const unidentifiedNodes = listUnidentifiedEsp32Nodes();
+
     return {
         ...topology,
         sourceStatus: topology.sourceStatus,
         mqttSessionSignalAvailable,
         nodes,
+        unidentifiedNodes,
         summary: {
             total: nodes.length,
             connected: nodes.filter(node => node.status === 'connected').length,
             disconnected: nodes.filter(node => node.status === 'disconnected').length,
             unknown: nodes.filter(node => node.status === 'unknown').length,
             connectedJstyle: nodes.reduce((sum, node) => sum + node.connectedJstyleCount, 0),
-            patients: nodes.reduce((sum, node) => sum + node.patients.length, 0)
+            patients: nodes.reduce((sum, node) => sum + node.patients.length, 0),
+            offlineCount: nodes.filter(node => node.currentlyOffline === true).length
         }
     };
 }
@@ -7389,6 +7836,17 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             .receiver-toast { position:fixed; right:1.25rem; bottom:1.25rem; z-index:2200; max-width:min(92vw,26rem); padding:.8rem 1rem; border-radius:1rem; border:1px solid var(--border-color); background:var(--bg-card); box-shadow:var(--shadow-lg); font-size:.8rem; font-weight:800; }
             .receiver-toast.success { color:var(--status-success-text); }
             .receiver-toast.error { color:var(--status-critical-text); }
+            .receiver-offline-strip { display:flex; align-items:center; gap:.75rem; padding:.85rem 1.1rem; border-radius:1rem; border:1px solid var(--border-card); background:var(--bg-card); }
+            .receiver-offline-strip.critical { border-color:color-mix(in srgb, var(--status-critical-text) 30%, var(--border-card)); background:color-mix(in srgb, var(--status-critical-text) 6%, var(--bg-card)); }
+            .receiver-offline-count { font-size:1.4rem; line-height:1.1; font-weight:850; color:var(--status-critical-text); }
+            .receiver-offline-label { font-size:.78rem; font-weight:800; color:var(--text-heading); }
+            .receiver-offline-sub { font-size:.68rem; color:var(--text-tertiary); margin-top:.15rem; }
+            .receiver-unidentified { border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
+            .receiver-unidentified-title { font-size:.82rem; font-weight:850; color:var(--text-heading); margin-bottom:.35rem; }
+            .receiver-unidentified-desc { font-size:.72rem; color:var(--text-tertiary); margin-bottom:.75rem; }
+            .receiver-unidentified-item { display:flex; align-items:center; gap:.6rem; padding:.55rem .7rem; border-radius:.8rem; background:var(--bg-input); margin-bottom:.4rem; font-size:.76rem; }
+            .receiver-unidentified-id { font-weight:800; color:var(--text-heading); }
+            .receiver-unidentified-age { color:var(--text-tertiary); font-size:.68rem; }
             @media (max-width: 640px) {
                 .receiver-card-top { padding:1rem; gap:.75rem; }
                 .receiver-device-art { width:3.55rem; height:3.55rem; border-radius:1rem; }
@@ -7430,6 +7888,20 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
 
             <div id="receiverNotice" class="hidden card p-4" role="status"></div>
             <div id="receiverToast" class="receiver-toast hidden" role="status" aria-live="polite"></div>
+            <!-- Offline receivers strip — the only notification channel for receiver outages. -->
+            <div id="receiverOfflineStrip" class="hidden receiver-offline-strip" role="alert" aria-live="assertive">
+                <span class="receiver-offline-count" id="receiverOfflineCount">0</span>
+                <div>
+                    <div class="receiver-offline-label">ตัวรับสัญญาณออฟไลน์</div>
+                    <div class="receiver-offline-sub">กรุณาตรวจสอบตัวรับสัญญาณที่หยุดทำงาน</div>
+                </div>
+            </div>
+            <!-- Unidentified nodes — heartbeats seen on MQTT but board_mac unresolved. -->
+            <div id="receiverUnidentifiedSection" class="hidden receiver-unidentified" role="region" aria-label="ตัวรับที่ยังระบุตัวตนไม่ได้">
+                <div class="receiver-unidentified-title">เห็นบน MQTT แต่ยังระบุตัวไม่ได้</div>
+                <div class="receiver-unidentified-desc">บอร์ดเหล่านี้กำลังส่ง heartbeat มาทาง MQTT แต่ NurseAid ยังไม่สามารถจับคู่ board_mac ได้ — อาจเป็นเพราะเฟิร์มแวร์เก่าหรือการตั้งค่าที่ยังไม่สมบูรณ์</div>
+                <div id="receiverUnidentifiedList"></div>
+            </div>
             <section id="receiverGrid" class="grid xl:grid-cols-2 gap-4" aria-label="รายการตัวรับสัญญาณ"></section>
         </div>
     `, `
@@ -7462,6 +7934,17 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const minutes = Math.floor(value / 60);
             if (minutes < 60) return minutes + ' นาทีที่แล้ว';
             return Math.floor(minutes / 60) + ' ชั่วโมงที่แล้ว';
+        }
+
+        // Format last-seen time from a Date string (node.lastSeenAt).
+        // Falls back to topology-based seconds when the Date is unavailable.
+        function receiverLastSeenText(lastSeenAt, fallbackSeconds) {
+            if (lastSeenAt) {
+                const ms = Date.now() - new Date(lastSeenAt).getTime();
+                if (ms < 0) return 'เมื่อสักครู่นี้';
+                return receiverAgeText(Math.round(ms / 1000));
+            }
+            return receiverAgeText(fallbackSeconds);
         }
 
         function renderReceiverPatients(node) {
@@ -7517,16 +8000,31 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                 '</div>' +
                 '<div class="receiver-metrics">' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">ผู้ป่วย / JStyle</div><div class="receiver-metric-value">' + escapeHTML(String(node.patients?.length || 0)) + ' / ' + escapeHTML(String(jstyleCount)) + ' รายการ</div></div>' +
-                    '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverLastSeenText(node.lastSeenAt, node.lastSeenAgeSeconds)) + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">IP Address</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.ipAddress || '-') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">Board MAC</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.boardMac || '-') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">เวอร์ชันเฟิร์มแวร์</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.fwVersion || 'ไม่ทราบ') + (node.stale ? ' <span style="color:var(--status-warning-text);">⚠️ ไม่มีข้อมูลสถานะล่าสุด</span>' : '') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">หน่วยความจำว่าง</div><div class="receiver-metric-value">' + (typeof node.freeHeapBytes === 'number' ? Math.round(node.freeHeapBytes / 1024) + ' KB' : 'ไม่มีข้อมูล') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">อัปไทม์</div><div class="receiver-metric-value">' + (typeof node.uptimeSec === 'number' ? Math.floor(node.uptimeSec / 3600) + ' ชม ' + Math.floor((node.uptimeSec % 3600) / 60) + ' น' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">ออนไลน์ 24 ชม.</div><div class="receiver-metric-value">' + (node.uptime24h ? node.uptime24h.uptimePercent.toFixed(1) + ' %' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">ออนไลน์ 7 วัน</div><div class="receiver-metric-value">' + (node.uptime7d ? node.uptime7d.uptimePercent.toFixed(1) + ' %' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    // Reboot history: only surface when the board has actually rebooted
+                    // in the window — zero reboots stays quiet so healthy boards do
+                    // not get visual noise. Elevated counts use the warning colour
+                    // (amber) to be noticeable without competing with the red offline
+                    // indicator, which remains the most urgent state on this page.
+                    (node.reboots24h && node.reboots24h.rebootCount > 0 ? '<div class="receiver-metric"><div class="receiver-metric-label">รีบูต 24 ชม.</div><div class="receiver-metric-value" style="color:' + (node.reboots24h.rebootCount >= 3 ? 'var(--status-warning-text)' : 'var(--text-primary)') + ';">' + escapeHTML(String(node.reboots24h.rebootCount)) + ' ครั้ง</div></div>' : '') +
+                    (node.reboots7d && node.reboots7d.rebootCount > 0 ? '<div class="receiver-metric"><div class="receiver-metric-label">รีบูต 7 วัน</div><div class="receiver-metric-value" style="color:' + (node.reboots7d.rebootCount >= 7 ? 'var(--status-warning-text)' : 'var(--text-primary)') + ';">' + escapeHTML(String(node.reboots7d.rebootCount)) + ' ครั้ง</div></div>' : '') +
+                    // Source the reason from the 7-day window so it is shown whenever
+                    // any reboot is known (not just within the last 24 h). Render the
+                    // relative time of that reboot alongside the reason, using the
+                    // same helper as the heartbeat field. The label matches the
+                    // neighbouring "รีบูต 7 วัน" / "ออนไลน์ 7 วัน" voice.
+                    (node.reboots7d && node.reboots7d.lastReason ? '<div class="receiver-metric" style="grid-column:span 2;"><div class="receiver-metric-label">สาเหตุรีบูต 7 วัน</div><div class="receiver-metric-value">' + escapeHTML(receiverLastSeenText(node.reboots7d.lastRebootAt)) + ' — ' + escapeHTML(node.reboots7d.lastReason) + '</div></div>' : '') +
                 '</div>' +
                 renderReceiverPatients(node) +
                 '<details class="receiver-tech"><summary>ข้อมูลเพิ่มเติมของตัวรับสัญญาณ</summary><div class="mt-2 space-y-1 text-xs" style="color:var(--text-tertiary);"><div>Node ID: <span class="font-mono">' + escapeHTML(node.nodeId || '-') + '</span></div><div>จำนวน JStyle ที่เชื่อม: ' + escapeHTML(String(jstyleCount)) + '</div><div>แหล่งข้อมูล: MQTT</div></div></details>' +
-                '<div class="receiver-footer"><span>' + (node.status === 'connected' ? 'พร้อมรับสัญญาณผู้ป่วย' : 'กรุณาตรวจสอบตัวรับสัญญาณ') + '</span><span>' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</span></div>' +
+                '<div class="receiver-footer"><span>' + (node.status === 'connected' ? 'พร้อมรับสัญญาณผู้ป่วย' : 'กรุณาตรวจสอบตัวรับสัญญาณ') + '</span><span>' + escapeHTML(receiverLastSeenText(node.lastSeenAt, node.lastSeenAgeSeconds)) + '</span></div>' +
             '</article>';
         }
 
@@ -7537,6 +8035,34 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             document.getElementById('receiverProblem').textContent = (summary.disconnected ?? 0) + (summary.unknown ?? 0);
             document.getElementById('receiverPatients').textContent = summary.patients ?? 0;
             receiverUpdated.textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+            // Surface offline receivers prominently — this page is the only notification channel.
+            const offlineCount = summary.offlineCount ?? 0;
+            const offlineStrip = document.getElementById('receiverOfflineStrip');
+            if (offlineCount > 0) {
+                document.getElementById('receiverOfflineCount').textContent = offlineCount;
+                offlineStrip.classList.remove('hidden');
+                offlineStrip.classList.add('critical');
+            } else {
+                offlineStrip.classList.add('hidden');
+                offlineStrip.classList.remove('critical');
+            }
+
+            // Show unidentified nodes only when there are some to report.
+            const unidentified = Array.isArray(data.unidentifiedNodes) ? data.unidentifiedNodes : [];
+            const unidentifiedSection = document.getElementById('receiverUnidentifiedSection');
+            if (unidentified.length) {
+                document.getElementById('receiverUnidentifiedList').innerHTML = unidentified.map(item => {
+                    const ageText = receiverAgeText(item.ageSeconds);
+                    return '<div class="receiver-unidentified-item">' +
+                        '<span class="receiver-unidentified-id font-mono">' + escapeHTML(item.nodeId) + '</span>' +
+                        '<span class="receiver-unidentified-age">เห็นเมื่อ ' + escapeHTML(ageText) + '</span>' +
+                    '</div>';
+                }).join('');
+                unidentifiedSection.classList.remove('hidden');
+            } else {
+                unidentifiedSection.classList.add('hidden');
+            }
 
             const nodes = Array.isArray(data.nodes) ? [...data.nodes] : [];
             const rank = { disconnected:0, unknown:1, connected:2 };
@@ -12590,6 +13116,43 @@ function parseOtaStatusPayload(buffer) {
     }
 }
 
+// The ESP32 publishes a RETAINED boot message to ble/node/<NODE_ID>/boot once
+// per power-on. Matching the topic exactly keeps us from mistaking other
+// ble/node/... messages (log, devices, etc.) for a boot event.
+function parseBootTopic(topic) {
+    const match = /^ble\/node\/([^/]+)\/boot$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+// Parse the boot JSON payload defensively. The bootCount field is the anchor of
+// the replay guard, so it must be a trustworthy non-negative integer — booleans,
+// non-finite numbers, negatives and non-integers are all rejected. reason and
+// version are free-form device text; they are trimmed and length-capped so they
+// cannot bloat the JSONB detail column or the VARCHAR(40) last_fw_version column.
+function parseBootPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+        const bootCount = data.boot;
+        if (typeof bootCount !== 'number' || !Number.isFinite(bootCount) || bootCount < 0 || !Number.isInteger(bootCount)) {
+            return null;
+        }
+
+        const reason = typeof data.reason === 'string' ? data.reason.trim() : null;
+        const version = typeof data.version === 'string' ? data.version.trim() : null;
+
+        // Free-form device text must not be stored unbounded.
+        const cappedReason = reason !== null && reason.length > 200 ? reason.slice(0, 200) : reason;
+        // Match the last_fw_version VARCHAR(40) column width.
+        const cappedVersion = version !== null && version.length > 40 ? version.slice(0, 40) : version;
+
+        return { bootCount, reason: cappedReason, version: cappedVersion };
+    } catch (e) {
+        return null;
+    }
+}
+
 // The ESP32 heartbeat publishes to the BARE topic ble/node/<NODE_ID> with NO
 // suffix (unlike the OTA status topic which is ble/node/<id>/ota). Matching the
 // bare topic exactly keeps us from mistaking other ble/node/... messages (log,
@@ -12619,6 +13182,181 @@ function parseHeartbeatPayload(buffer) {
     } catch (e) {
         return null;
     }
+}
+
+// The legacy ble/esp32 topic carries a full inventory snapshot for one board —
+// node_id, board MAC, and IP in a single message. This is the ONLY MQTT topic
+// that carries both nodeId and board_mac together, so it is the authoritative
+// source for identity resolution. Parse it defensively: any missing or invalid
+// field means we drop the message rather than pollute the registry with garbage.
+const ESP32_NODE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+function parseEsp32InventoryPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+        const nodeId = String(data.node_id || '').trim();
+        if (!ESP32_NODE_ID_RE.test(nodeId)) return null;
+
+        // canonicalEsp32Mac returns '' when the MAC is invalid — treat that as failure.
+        const boardMac = canonicalEsp32Mac(data.mac);
+        if (!boardMac) return null;
+
+        const ipAddress = String(data.ip || '').trim();
+        if (!ipAddress || ipAddress.length > 45) return null;
+
+        return { nodeId, boardMac, ipAddress };
+    } catch (e) {
+        return null;
+    }
+}
+
+// Resolve a nodeId to its canonical board_mac using the durable esp32_nodes
+// table. Returns the mac string or null when the nodeId has never been seen.
+async function resolveBoardMacByNodeId(nodeId) {
+    const result = await pool.query(
+        'SELECT board_mac FROM esp32_nodes WHERE node_id = $1',
+        [nodeId]
+    );
+    return result.rows[0] ? result.rows[0].board_mac : null;
+}
+
+// Upsert the durable nodeId<->board_mac registry. node_id is UNIQUE, so if a
+// node_id is reassigned to a different board (board swapped, same node name) we
+// must first clear the old claim before inserting the new one — otherwise the
+// INSERT would raise a unique violation. Both statements run in a transaction
+// so the registry is never left in an inconsistent state.
+async function upsertEsp32NodeIdentity(boardMac, nodeId, ipAddress) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Clear any stale claim: if another board still holds this node_id, release it.
+        await client.query(
+            'UPDATE esp32_nodes SET node_id = NULL WHERE node_id = $1 AND board_mac <> $2',
+            [nodeId, boardMac]
+        );
+        await client.query(
+            `INSERT INTO esp32_nodes (board_mac, node_id, ip_address)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (board_mac) DO UPDATE SET
+                 node_id = EXCLUDED.node_id,
+                 ip_address = COALESCE(EXCLUDED.ip_address, esp32_nodes.ip_address)`,
+            [boardMac, nodeId, ipAddress]
+        );
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+// Return an array of { nodeId, lastSeenAt, ageSeconds } for heartbeats that have
+// arrived on MQTT but whose board_mac has not yet been resolved. Exposed so a
+// later step can surface "seen on MQTT but unidentified" in the UI. Entries are
+// derived from the pending heartbeat buffer; stale entries (past TTL) are pruned
+// on each call.
+function listUnidentifiedEsp32Nodes() {
+    prunePendingHeartbeats();
+    const now = Date.now();
+    const result = [];
+    for (const [nodeId, entry] of esp32PendingHeartbeats) {
+        const ageMs = now - entry.receivedAt;
+        result.push({
+            nodeId,
+            lastSeenAt: entry.receivedAt,
+            ageSeconds: Math.round(ageMs / 1000)
+        });
+    }
+    return result;
+}
+
+// Prune entries older than the TTL from the pending heartbeat buffer. Called
+// whenever the buffer is touched so it never grows without bound.
+function prunePendingHeartbeats() {
+    const now = Date.now();
+    for (const [nodeId, entry] of esp32PendingHeartbeats) {
+        if (now - entry.receivedAt > ESP32_PENDING_HEARTBEAT_TTL_MS) {
+            esp32PendingHeartbeats.delete(nodeId);
+        }
+    }
+}
+
+// Buffer a heartbeat whose nodeId cannot yet be resolved. Overwrites any older
+// pending payload for the same nodeId so we always keep the latest data. When
+// the buffer is full, evict the oldest entry first.
+function bufferPendingHeartbeat(nodeId, parsed) {
+    prunePendingHeartbeats();
+    if (esp32PendingHeartbeats.size >= ESP32_PENDING_HEARTBEAT_MAX) {
+        // Evict the oldest entry.
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of esp32PendingHeartbeats) {
+            if (entry.receivedAt < oldestTime) {
+                oldestTime = entry.receivedAt;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey !== null) esp32PendingHeartbeats.delete(oldestKey);
+    }
+    esp32PendingHeartbeats.set(nodeId, { parsed, receivedAt: Date.now() });
+}
+
+// Flush any pending heartbeat for a nodeId now that its board_mac is known.
+// Called from the ble/esp32 handler after upsertEsp32NodeIdentity succeeds.
+async function flushPendingHeartbeat(nodeId) {
+    const entry = esp32PendingHeartbeats.get(nodeId);
+    if (!entry) return;
+    esp32PendingHeartbeats.delete(nodeId);
+    // Re-run through the normal heartbeat path so esp32_node_status is updated.
+    await handleHeartbeatMessage(nodeId, entry.parsed).catch(err =>
+        console.error('[ESP32 Heartbeat] Failed to flush buffered heartbeat:', err.message));
+}
+
+// Prune entries older than the TTL from the pending boot buffer. Called whenever
+// the buffer is touched so it never grows without bound. Uses the same TTL as
+// the heartbeat buffer since both share the same identity-resolution window.
+function prunePendingBoots() {
+    const now = Date.now();
+    for (const [nodeId, entry] of esp32PendingBoots) {
+        if (now - entry.receivedAt > ESP32_PENDING_HEARTBEAT_TTL_MS) {
+            esp32PendingBoots.delete(nodeId);
+        }
+    }
+}
+
+// Buffer a boot message whose nodeId cannot yet be resolved. Overwrites any
+// older pending payload for the same nodeId so we always keep the latest data.
+// When the buffer is full, evict the oldest entry first. Uses the same max and
+// TTL constants as the heartbeat buffer.
+function bufferPendingBoot(nodeId, parsed) {
+    prunePendingBoots();
+    if (esp32PendingBoots.size >= ESP32_PENDING_HEARTBEAT_MAX) {
+        // Evict the oldest entry.
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of esp32PendingBoots) {
+            if (entry.receivedAt < oldestTime) {
+                oldestTime = entry.receivedAt;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey !== null) esp32PendingBoots.delete(oldestKey);
+    }
+    esp32PendingBoots.set(nodeId, { parsed, receivedAt: Date.now() });
+}
+
+// Flush any pending boot for a nodeId now that its board_mac is known.
+// Called from the ble/esp32 handler after upsertEsp32NodeIdentity succeeds,
+// alongside flushPendingHeartbeat so a board's first boot message is not lost
+// just because its identity arrived seconds later.
+async function flushPendingBoot(nodeId) {
+    const entry = esp32PendingBoots.get(nodeId);
+    if (!entry) return;
+    esp32PendingBoots.delete(nodeId);
+    await handleBootMessage(nodeId, entry.parsed).catch(err =>
+        console.error('[ESP32 Boot] Failed to flush buffered boot:', err.message));
 }
 
 const FIRMWARE_UPLOAD_DIR = process.env.FIRMWARE_UPLOAD_DIR || path.join(__dirname, 'uploads', 'firmware');
@@ -12851,6 +13589,7 @@ app.delete('/api/firmware/versions/:id', requireCapability('devices:firmware:wri
 
 async function startServer() {
     await initDatabase();
+    try { await backfillEsp32NodeRegistry(); } catch (e) { console.error('[ESP32 Registry] backfill failed during startup:', e.message); }
     initMqttClient();
     // Allow MQTT connection to establish before seeding paired list
     setTimeout(() => publishPairedDeviceList(), 2000);
@@ -12904,6 +13643,16 @@ module.exports = {
     isValidOtaUrl,
     parseOtaStatusTopic,
     parseOtaStatusPayload,
+    parseBootTopic,
+    parseBootPayload,
+    handleBootMessage,
     parseHeartbeatTopic,
-    parseHeartbeatPayload
+    parseHeartbeatPayload,
+    parseEsp32InventoryPayload,
+    upsertEsp32NodeIdentity,
+    resolveBoardMacByNodeId,
+    listUnidentifiedEsp32Nodes,
+    runEsp32ReceiverSweep,
+    recordEsp32Event,
+    latestEsp32LivenessEvent
 };
