@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --check server.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test --test-force-exit test_wards_mgmt.js test_monitor_ai_chat.js && (cd mqtt-bridge && ../mqtt-bridge/.venv/bin/python -m unittest test_mqtt_bridge)",
     "test:or-patients": "node --check server.js && node --check or-patients.js && node --test test/test_or_patients.js",
+    "test:ai-chat-logic": "node --check server.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test --test-force-exit test/test_ai_chat_logic.js",
     "ai:eval": "node eval_monitor_ai.js",
     "start": "node server.js",
     "build:css": "tailwindcss -c tailwind.config.js -i src/tailwind-input.css -o public/assets/tailwind.css --minify",

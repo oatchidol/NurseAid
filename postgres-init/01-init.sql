@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS patients (
     ward_id INTEGER REFERENCES wards(id),
     priority VARCHAR(10) CHECK (priority IN ('high','medium','low')),
     sort_order INTEGER,
+    clinical_note TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
