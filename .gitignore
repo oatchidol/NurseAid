@@ -45,3 +45,6 @@ pytest.ini
 # committed; the update pipeline's clean-tree guard treats any untracked
 # file as a local change and refuses to update, so this must stay ignored
 docker-compose.override.yml
+
+.serena/
+nul

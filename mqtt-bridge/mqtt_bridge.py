@@ -13,6 +13,7 @@ import time
 import json
 import threading
 from pathlib import Path
+from esp32_topology import Esp32TopologyRegistry
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -48,6 +49,9 @@ MQTT_TOPICS = [t for t in os.getenv("MQTT_TOPICS", "ble/#").split(",") if t.stri
 SAVE_INTERVAL = max(1, int(os.getenv("SAVE_INTERVAL", "5")))
 VERBOSE_SENSOR_LOGS = os.getenv("VERBOSE_SENSOR_LOGS", "false").strip().lower() in {"1", "true", "yes", "on"}
 HEALTH_FILE = Path(os.getenv("MQTT_BRIDGE_HEALTH_FILE", "/tmp/nurseaid-mqtt-bridge-health.json"))
+MQTT_TOPOLOGY_FILE = Path(os.getenv("NURSEAID_MQTT_TOPOLOGY_FILE", "/run/nurseaid-compose/mqtt-sensors.json"))
+MQTT_ESP32_STALE_SECONDS = max(5, int(os.getenv("NURSEAID_MQTT_ESP32_STALE_SECONDS", "90")))
+MQTT_TOPOLOGY_SETTLE_SECONDS = max(1, int(os.getenv("NURSEAID_MQTT_TOPOLOGY_SETTLE_SECONDS", "30")))
 
 # ============================================================
 # Initialize InfluxDB Client
@@ -66,6 +70,11 @@ last_message_time = 0.0
 last_write_success = time.time()
 mqtt_connected = False
 consecutive_write_failures = 0
+esp32_topology = Esp32TopologyRegistry(
+    MQTT_TOPOLOGY_FILE,
+    stale_seconds=MQTT_ESP32_STALE_SECONDS,
+    settle_seconds=MQTT_TOPOLOGY_SETTLE_SECONDS,
+)
 
 
 def event_metadata(data):
@@ -181,6 +190,18 @@ def _on_message(client, userdata, msg):
             if not isinstance(data_json, dict):
                 print(f"   ⚠️ Ignored non-object payload on {topic}: {payload[:300]}")
                 return
+
+            if topic == "ble/esp32":
+                # Board/JStyle inventory is topology, not a numeric sensor point.
+                # One message is a full snapshot for one ESP32 board.
+                esp32_topology.apply(data_json)
+                if VERBOSE_SENSOR_LOGS:
+                    print(
+                        f"   🧩 ESP32 topology: node={data_json.get('node_id')}, "
+                        f"board={data_json.get('mac')}, devices={data_json.get('count')}"
+                    )
+                return
+
             mac = validate_and_normalize_mac(data_json.get("mac"))
             if mac is None:
                 if VERBOSE_SENSOR_LOGS:
@@ -407,6 +428,10 @@ def main():
         while True:
             save_data()
             write_health()
+            try:
+                esp32_topology.write_snapshot()
+            except OSError as error:
+                print(f"   ⚠️ Failed to write ESP32 topology snapshot: {error}")
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n🛑 Shutting down gracefully...")

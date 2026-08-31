@@ -35,6 +35,11 @@ const {
     getCurrentPatientsByWard,
     validatePatientSearch
 } = require('./or-patients');
+const {
+    canonicalMac: canonicalEsp32Mac,
+    readEsp32Topology,
+    readMqttClientIps
+} = require('./esp32-status');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
 // forwards X-Forwarded-Proto/X-Forwarded-For) so req.protocol reflects the real
@@ -46,6 +51,12 @@ app.set('trust proxy', 1);
 const scryptAsync = promisify(crypto.scrypt);
 
 const PORT = process.env.PORT || 3333;
+const ESP32_TOPOLOGY_FILE = process.env.NURSEAID_ESP32_TOPOLOGY_FILE || '/run/nurseaid-compose/mqtt-sensors.json';
+const ESP32_COMPOSE_STATUS_FILE = process.env.NURSEAID_COMPOSE_STATUS_FILE || '/run/nurseaid-compose/status.json';
+const parsedEsp32SourceStaleSeconds = Number.parseInt(process.env.NURSEAID_ESP32_SOURCE_STALE_SECONDS || '15', 10);
+const ESP32_SOURCE_STALE_SECONDS = Number.isFinite(parsedEsp32SourceStaleSeconds) && parsedEsp32SourceStaleSeconds >= 5
+    ? parsedEsp32SourceStaleSeconds
+    : 15;
 const SERVER_STARTED_AT_MS = Date.now();
 const parsedLiveFreshness = Number.parseInt(process.env.LIVE_VITAL_FRESHNESS_SECONDS || '600', 10);
 const LIVE_VITAL_FRESHNESS_SECONDS = Number.isFinite(parsedLiveFreshness) && parsedLiveFreshness > 0
@@ -266,16 +277,16 @@ const ROLES = Object.freeze(['super_admin', 'ward_admin', 'staff_nurse', 'viewer
 
 const ROLE_CAPABILITIES = {
     super_admin: new Set([
-        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','pairing:write',
+        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:all','wards:manage','settings:global','audit:read:all','export:read'
     ]),
     ward_admin: new Set([
-        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','pairing:write',
+        'patients:read','patients:write','patients:priority:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:ward','audit:read:ward','export:read'
     ]),
-    staff_nurse: new Set(['patients:read','patients:priority:write','devices:read','alerts:read','alerts:ack','export:read']),
+    staff_nurse: new Set(['patients:read','patients:priority:write','devices:read','devices:location:write','alerts:read','alerts:ack','export:read']),
     viewer: new Set(['patients:read','devices:read','alerts:read'])
 };
 
@@ -1084,6 +1095,12 @@ async function initDatabase() {
             setting_value TEXT,
             updated_at TIMESTAMP DEFAULT NOW()
         )`,
+        `CREATE TABLE IF NOT EXISTS esp32_node_metadata (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            description VARCHAR(200) NOT NULL DEFAULT '',
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )`,
         `CREATE TABLE IF NOT EXISTS user_notification_settings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) UNIQUE,
@@ -1688,6 +1705,7 @@ function navIcon(name) {
         report: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>',
         setup: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
         device: '<circle cx="12" cy="12" r="6"/><path d="M12 10v2l1 1"/><path d="m16.13 7.66-.81-4.05a2 2 0 0 0-2-1.61h-2.68a2 2 0 0 0-2 1.61l-.78 4.05"/><path d="m7.88 16.36.8 4a2 2 0 0 0 2 1.61h2.72a2 2 0 0 0 2-1.61l.81-4.05"/>',
+        gateway: '<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M10 7h4a3 3 0 0 1 3 3v4"/><path d="m14 11 3 3 3-3"/><path d="M7 10v4a3 3 0 0 0 3 3h4"/>',
         patient: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
         pairing: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
         ward: '<path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9h.01"/><path d="M9 12h.01"/><path d="M9 15h.01"/>',
@@ -1720,6 +1738,7 @@ function renderNavLinks(user, active) {
     if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="เริ่มต้นใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}">${navIcon('setup')}<span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
 
     if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="อุปกรณ์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}">${navIcon('device')}<span class="sidebar-hide">อุปกรณ์</span></a>\n`;
+    if (roleHasCapability(role, 'devices:read')) main += `<a href="/esp32-mgmt" title="ตัวรับสัญญาณ" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'esp32' ? '' : 'color: var(--text-secondary);'}">${navIcon('gateway')}<span class="sidebar-hide">ตัวรับสัญญาณ</span></a>\n`;
     if (roleHasCapability(role, 'patients:write')) main += `<a href="/patients-mgmt" title="ผู้ป่วย" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'pats' ? '' : 'color: var(--text-secondary);'}">${navIcon('patient')}<span class="sidebar-hide">ผู้ป่วย</span></a>\n`;
     if (roleHasCapability(role, 'pairing:write')) main += `<a href="/matching" title="จับคู่อุปกรณ์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'match' ? '' : 'color: var(--text-secondary);'}">${navIcon('pairing')}<span class="sidebar-hide">จับคู่อุปกรณ์</span></a>\n`;
 
@@ -4205,16 +4224,16 @@ ${ICON_SET}
         function _roleLabel(r) { return _ROLE_LABELS[r] || (r || 'viewer'); }
         const _ROLE_CAPS = {
             super_admin: new Set([
-                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'pairing:write',
+                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:all', 'users:manage:ward', 'wards:manage', 'settings:global', 'audit:read:all', 'audit:read:ward', 'export:read'
             ]),
             ward_admin: new Set([
-                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'pairing:write',
+                'patients:read', 'patients:write', 'patients:priority:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:ward', 'audit:read:ward', 'export:read'
             ]),
-            staff_nurse: new Set(['patients:read', 'patients:priority:write', 'devices:read', 'alerts:read', 'alerts:ack', 'export:read']),
+            staff_nurse: new Set(['patients:read', 'patients:priority:write', 'devices:read', 'devices:location:write', 'alerts:read', 'alerts:ack', 'export:read']),
             viewer: new Set(['patients:read', 'devices:read', 'alerts:read'])
         };
         function _userCapabilities(r) { return _ROLE_CAPS[r] || new Set(); }
@@ -7177,6 +7196,385 @@ app.get('/api/export-data', async (req, res) => {
         console.error("Export Error:", err);
         res.status(500).json({ error: err.message });
     }
+});
+
+async function esp32NodesForUi(req) {
+    const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, {
+        sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS
+    });
+    const metadata = await pool.query(
+        'SELECT board_mac, description, updated_at FROM esp32_node_metadata'
+    );
+    const metadataByMac = new Map(metadata.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+
+    // The collector observes established TCP sessions to Mosquitto from host /proc.
+    // This is a stronger online signal than the ble/esp32 inventory message, which
+    // may only be published when topology changes rather than every few seconds.
+    const mqttClientIps = readMqttClientIps(ESP32_COMPOSE_STATUS_FILE);
+    const mqttSessionSignalAvailable = mqttClientIps.size > 0;
+
+    const watchMacs = [...new Set(topology.nodes.flatMap(node => node.jstyleMacs || []))];
+    const patientByMac = new Map();
+    if (watchMacs.length) {
+        const scope = await wardScopeSql(req, 'ward_id', 2);
+        const result = await pool.query(
+            `SELECT UPPER(mac) AS mac, device_no, hm_number, name, bed_no, ward_id
+             FROM nurseaid
+             WHERE UPPER(mac) = ANY($1::text[])
+               AND NULLIF(BTRIM(hm_number), '') IS NOT NULL
+               ${scope.clause ? `AND ${scope.clause}` : ''}`,
+            [watchMacs, ...scope.params]
+        );
+        for (const row of result.rows) {
+            patientByMac.set(String(row.mac || '').toUpperCase(), {
+                hn: row.hm_number || '',
+                name: row.name || '',
+                bedNo: row.bed_no || '',
+                deviceNo: row.device_no || ''
+            });
+        }
+    }
+
+    const nodes = topology.nodes.map(node => {
+        const meta = metadataByMac.get(node.boardMac) || {};
+        const status = mqttSessionSignalAvailable
+            ? (mqttClientIps.has(node.ipAddress) ? 'connected' : 'disconnected')
+            : node.status;
+        const jstyles = (node.jstyleMacs || []).map(mac => ({
+            mac,
+            patient: patientByMac.get(mac) || null
+        }));
+        return {
+            ...node,
+            status,
+            connectedJstyleCount: status === 'connected' ? jstyles.length : 0,
+            jstyles,
+            patients: jstyles.map(item => item.patient).filter(Boolean),
+            description: String(meta.description || ''),
+            descriptionUpdatedAt: meta.updated_at || null
+        };
+    });
+    return {
+        ...topology,
+        sourceStatus: topology.sourceStatus,
+        mqttSessionSignalAvailable,
+        nodes,
+        summary: {
+            total: nodes.length,
+            connected: nodes.filter(node => node.status === 'connected').length,
+            disconnected: nodes.filter(node => node.status === 'disconnected').length,
+            unknown: nodes.filter(node => node.status === 'unknown').length,
+            connectedJstyle: nodes.reduce((sum, node) => sum + node.connectedJstyleCount, 0),
+            patients: nodes.reduce((sum, node) => sum + node.patients.length, 0)
+        }
+    };
+}
+
+app.get('/api/esp32-nodes', requireCapability('devices:read'), async (req, res) => {
+    try {
+        res.json(await esp32NodesForUi(req));
+    } catch (error) {
+        console.error('[ESP32 Nodes]', error.message);
+        res.status(500).json({ error: 'Unable to read ESP32 status' });
+    }
+});
+
+app.put('/api/esp32-nodes/:mac/description', requireCapability('devices:location:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    const description = String(req.body.description || '').trim();
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+    if (description.length > 200) return res.status(400).json({ error: 'Description must not exceed 200 characters' });
+
+    try {
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, {
+            sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS
+        });
+        const knownLiveNode = topology.nodes.some(node => node.boardMac === boardMac);
+        const existing = await pool.query('SELECT 1 FROM esp32_node_metadata WHERE board_mac=$1', [boardMac]);
+        if (!knownLiveNode && !existing.rows.length) {
+            return res.status(404).json({ error: 'ESP32 node not found' });
+        }
+        const result = await pool.query(
+            `INSERT INTO esp32_node_metadata (board_mac, description, updated_by, updated_at)
+             VALUES ($1,$2,$3,NOW())
+             ON CONFLICT (board_mac) DO UPDATE SET
+                 description=EXCLUDED.description,
+                 updated_by=EXCLUDED.updated_by,
+                 updated_at=NOW()
+             RETURNING board_mac, description, updated_at`,
+            [boardMac, description, req.user.id]
+        );
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { description }).catch(console.error);
+        res.json({ success: true, node: result.rows[0] });
+    } catch (error) {
+        console.error('[ESP32 Description]', error.message);
+        res.status(500).json({ error: 'Unable to save ESP32 description' });
+    }
+});
+
+app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
+    const canEditLocation = roleHasCapability(req.user?.role, 'devices:location:write');
+    res.send(ui(req.user, 'esp32', `
+        <style>
+            .receiver-page { max-width: 1280px; margin: 0 auto; }
+            .receiver-header { padding: 1.25rem; border: 1px solid var(--border-card); border-radius: 1.25rem; background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card-hover) 100%); }
+            .receiver-brand { width: 3.6rem; height: 3.6rem; border-radius: 1.15rem; display:flex; align-items:center; justify-content:center; flex:0 0 auto; color:var(--accent-primary-strong); background:var(--bg-badge); }
+            .receiver-summary { border:1px solid var(--border-card); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
+            .receiver-summary-label { font-size:.72rem; font-weight:800; color:var(--text-tertiary); }
+            .receiver-summary-value { font-size:1.65rem; line-height:1.1; font-weight:850; margin-top:.25rem; color:var(--text-heading); }
+            .receiver-summary-sub { font-size:.72rem; margin-top:.35rem; color:var(--text-tertiary); }
+            .receiver-card { overflow:hidden; border:1px solid var(--border-card); border-radius:1.35rem; background:var(--bg-card); box-shadow:var(--shadow-sm); }
+            .receiver-card.problem { border-color: color-mix(in srgb, var(--status-critical-text) 26%, var(--border-card)); }
+            .receiver-card-top { padding:1.15rem 1.2rem 1rem; display:flex; align-items:flex-start; gap:1rem; }
+            .receiver-device-art { width:4.35rem; height:4.35rem; flex:0 0 auto; border-radius:1.3rem; display:flex; align-items:center; justify-content:center; background:var(--bg-input); color:var(--accent-primary-strong); border:1px solid var(--border-color); }
+            .receiver-device-art.status-ok { color:var(--status-success-text); background:color-mix(in srgb, var(--status-success-text) 8%, var(--bg-card)); }
+            .receiver-device-art.status-bad { color:var(--status-critical-text); background:color-mix(in srgb, var(--status-critical-text) 7%, var(--bg-card)); }
+            .receiver-device-art.status-unknown { color:var(--status-warning-text); background:color-mix(in srgb, var(--status-warning-text) 8%, var(--bg-card)); }
+            .receiver-status-pill { display:inline-flex; align-items:center; gap:.4rem; padding:.34rem .68rem; border-radius:999px; font-size:.72rem; font-weight:850; white-space:nowrap; }
+            .receiver-location-label { margin-top:.65rem; font-size:.68rem; font-weight:850; color:var(--text-tertiary); text-transform:uppercase; letter-spacing:.05em; }
+            .receiver-location { margin-top:.15rem; font-size:1.1rem; line-height:1.3; font-weight:850; color:var(--text-heading); }
+            .receiver-node-meta { margin-top:.35rem; font-size:.74rem; color:var(--text-tertiary); }
+            .receiver-edit-btn { display:inline-flex; align-items:center; gap:.4rem; min-height:2.6rem; padding:.55rem .8rem; border-radius:.8rem; border:1px solid var(--border-color); background:var(--bg-card); color:var(--accent-primary-text); font-size:.75rem; font-weight:850; white-space:nowrap; }
+            .receiver-edit-btn:hover { background:var(--bg-card-hover); }
+            .receiver-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem; padding:0 1.2rem 1rem; }
+            .receiver-metric { padding:.72rem .8rem; border-radius:.9rem; background:var(--bg-input); min-width:0; }
+            .receiver-metric-label { font-size:.67rem; font-weight:800; color:var(--text-tertiary); }
+            .receiver-metric-value { margin-top:.2rem; font-size:.86rem; font-weight:850; color:var(--text-primary); overflow-wrap:anywhere; }
+            .receiver-patients { margin:0 1.2rem 1.2rem; padding:1rem; border-radius:1rem; background:var(--bg-card-hover); border:1px solid var(--border-light); }
+            .receiver-patients-title { display:flex; align-items:center; justify-content:space-between; gap:.75rem; font-size:.8rem; font-weight:850; color:var(--text-heading); }
+            .receiver-patient { display:flex; align-items:center; gap:.75rem; margin-top:.7rem; padding:.72rem .78rem; border:1px solid var(--border-color); border-radius:.9rem; background:var(--bg-card); }
+            .receiver-patient-avatar { width:2.25rem; height:2.25rem; border-radius:.75rem; display:flex; align-items:center; justify-content:center; flex:0 0 auto; font-weight:850; background:var(--bg-badge); color:var(--text-badge); }
+            .receiver-patient-name { font-size:.83rem; font-weight:850; color:var(--text-heading); }
+            .receiver-patient-meta { font-size:.7rem; color:var(--text-tertiary); margin-top:.12rem; }
+            .receiver-empty { display:flex; align-items:center; gap:.65rem; color:var(--text-tertiary); font-size:.76rem; }
+            .receiver-footer { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.8rem 1.2rem; border-top:1px solid var(--border-light); font-size:.7rem; color:var(--text-tertiary); }
+            .receiver-tech { padding:0 1.2rem 1rem; }
+            .receiver-tech summary { cursor:pointer; font-size:.7rem; font-weight:800; color:var(--text-tertiary); }
+            .receiver-toast { position:fixed; right:1.25rem; bottom:1.25rem; z-index:2200; max-width:min(92vw,26rem); padding:.8rem 1rem; border-radius:1rem; border:1px solid var(--border-color); background:var(--bg-card); box-shadow:var(--shadow-lg); font-size:.8rem; font-weight:800; }
+            .receiver-toast.success { color:var(--status-success-text); }
+            .receiver-toast.error { color:var(--status-critical-text); }
+            @media (max-width: 640px) {
+                .receiver-card-top { padding:1rem; gap:.75rem; }
+                .receiver-device-art { width:3.55rem; height:3.55rem; border-radius:1rem; }
+                .receiver-metrics { padding:0 1rem 1rem; }
+                .receiver-patients { margin:0 1rem 1rem; }
+                .receiver-footer { padding:.75rem 1rem; }
+                .receiver-tech { padding:0 1rem 1rem; }
+                .receiver-edit-btn { width:100%; justify-content:center; }
+                .receiver-header .receiver-header-actions { width:100%; }
+            }
+        </style>
+        <div class="receiver-page space-y-5">
+            <section class="receiver-header">
+                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div class="flex items-start gap-4 min-w-0">
+                        <div class="receiver-brand" aria-hidden="true">
+                            <svg viewBox="0 0 48 48" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="14" y="18" width="20" height="18" rx="4"></rect><path d="M20 18v-3a4 4 0 0 1 8 0v3"></path><path d="M24 36v5"></path><path d="M19 41h10"></path><path d="M11 10c3.6 2.2 5.4 4.6 5.4 7.3"></path><path d="M37 10c-3.6 2.2-5.4 4.6-5.4 7.3"></path><path d="M7 6c5.7 3.3 8.6 6.9 8.6 11"></path><path d="M41 6c-5.7 3.3-8.6 6.9-8.6 11"></path>
+                            </svg>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-xs font-bold" style="color:var(--text-tertiary);">NurseAid · ระบบรับสัญญาณ</div>
+                            <h2 class="text-2xl font-bold mt-1" style="color:var(--text-heading);">ตัวรับสัญญาณ</h2>
+                            <p class="text-sm mt-1" style="color:var(--text-secondary);">ตรวจดูว่าตัวรับสัญญาณตัวไหนมีปัญหา และดูว่าผู้ป่วยคนใดกำลังเกาะสัญญาณอยู่</p>
+                        </div>
+                    </div>
+                    <div class="receiver-header-actions flex items-center gap-2 shrink-0">
+                        <div id="receiverUpdated" class="text-xs text-right" style="color:var(--text-tertiary);" aria-live="polite"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid grid-cols-2 xl:grid-cols-4 gap-3" aria-label="สรุปสถานะตัวรับสัญญาณ">
+                <div class="receiver-summary"><div class="receiver-summary-label">ตัวรับทั้งหมด</div><div id="receiverTotal" class="receiver-summary-value">--</div><div class="receiver-summary-sub">ที่ NurseAid รู้จัก</div></div>
+                <div class="receiver-summary"><div class="receiver-summary-label">ทำงานปกติ</div><div id="receiverOnline" class="receiver-summary-value" style="color:var(--status-success-text);">--</div><div class="receiver-summary-sub">พร้อมรับสัญญาณ</div></div>
+                <div class="receiver-summary"><div class="receiver-summary-label">ต้องตรวจสอบ</div><div id="receiverProblem" class="receiver-summary-value" style="color:var(--status-critical-text);">--</div><div class="receiver-summary-sub">พยาบาลควรตรวจ</div></div>
+                <div class="receiver-summary"><div class="receiver-summary-label">ผู้ป่วยที่เชื่อมอยู่</div><div id="receiverPatients" class="receiver-summary-value">--</div><div class="receiver-summary-sub">ผ่านตัวรับทั้งหมด</div></div>
+            </section>
+
+            <div id="receiverNotice" class="hidden card p-4" role="status"></div>
+            <div id="receiverToast" class="receiver-toast hidden" role="status" aria-live="polite"></div>
+            <section id="receiverGrid" class="grid xl:grid-cols-2 gap-4" aria-label="รายการตัวรับสัญญาณ"></section>
+        </div>
+    `, `
+        const receiverGrid = document.getElementById('receiverGrid');
+        const receiverNotice = document.getElementById('receiverNotice');
+        const receiverUpdated = document.getElementById('receiverUpdated');
+        const receiverToast = document.getElementById('receiverToast');
+        const canEditReceiverLocation = ${canEditLocation ? 'true' : 'false'};
+        let receiverTimer = null;
+        let receiverLoading = false;
+        let receiverToastTimer = null;
+
+        function showReceiverToast(message, kind='success') {
+            clearTimeout(receiverToastTimer);
+            receiverToast.textContent = message;
+            receiverToast.className = 'receiver-toast ' + (kind === 'error' ? 'error' : 'success');
+            receiverToastTimer = window.setTimeout(() => receiverToast.classList.add('hidden'), 3200);
+        }
+
+        function receiverStatus(status) {
+            if (status === 'connected') return { label:'ทำงานปกติ', color:'var(--status-success-text)', bg:'color-mix(in srgb, var(--status-success-text) 10%, var(--bg-card))', art:'status-ok' };
+            if (status === 'disconnected') return { label:'มีปัญหา', color:'var(--status-critical-text)', bg:'color-mix(in srgb, var(--status-critical-text) 10%, var(--bg-card))', art:'status-bad' };
+            return { label:'กำลังตรวจสอบ', color:'var(--status-warning-text)', bg:'color-mix(in srgb, var(--status-warning-text) 10%, var(--bg-card))', art:'status-unknown' };
+        }
+
+        function receiverAgeText(seconds) {
+            if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return 'ยังไม่มี heartbeat';
+            const value = Math.max(0, Math.round(Number(seconds)));
+            if (value < 60) return value + ' วินาทีที่แล้ว';
+            const minutes = Math.floor(value / 60);
+            if (minutes < 60) return minutes + ' นาทีที่แล้ว';
+            return Math.floor(minutes / 60) + ' ชั่วโมงที่แล้ว';
+        }
+
+        function renderReceiverPatients(node) {
+            const patients = Array.isArray(node.patients) ? node.patients : [];
+            const jstyles = Array.isArray(node.jstyles) ? node.jstyles : [];
+            if (patients.length) {
+                return '<section class="receiver-patients" aria-label="ผู้ป่วยที่กำลังเชื่อมต่อ">' +
+                    '<div class="receiver-patients-title"><span>ผู้ป่วยที่กำลังเกาะสัญญาณ</span><span style="color:var(--status-success-text);">' + patients.length + ' ราย</span></div>' +
+                    patients.map(patient => {
+                        const initials = String(patient.name || 'ผู้ป่วย').trim().slice(0,1) || 'ผ';
+                        return '<div class="receiver-patient">' +
+                            '<div class="receiver-patient-avatar">' + escapeHTML(initials) + '</div>' +
+                            '<div class="min-w-0 flex-1"><div class="receiver-patient-name truncate">' + escapeHTML(patient.name || 'ไม่ระบุชื่อ') + '</div>' +
+                            '<div class="receiver-patient-meta">HN ' + escapeHTML(patient.hn || '-') + (patient.bedNo ? ' · เตียง ' + escapeHTML(patient.bedNo) : '') + (patient.deviceNo ? ' · ' + escapeHTML(patient.deviceNo) : '') + '</div></div>' +
+                            '<span class="text-xs font-bold shrink-0" style="color:var(--status-success-text);">เชื่อมอยู่</span>' +
+                        '</div>';
+                    }).join('') +
+                '</section>';
+            }
+            if (jstyles.length) {
+                return '<section class="receiver-patients" aria-label="อุปกรณ์ผู้ป่วยที่ยังไม่จับคู่"><div class="receiver-empty"><span class="ic ic-warning" aria-hidden="true"></span><span>พบ JStyle ' + jstyles.length + ' ตัว แต่ยังไม่ได้จับคู่กับผู้ป่วยใน NurseAid</span></div></section>';
+            }
+            return '<section class="receiver-patients" aria-label="ไม่มีผู้ป่วยเชื่อมต่อ"><div class="receiver-empty"><span class="ic ic-info" aria-hidden="true"></span><span>ยังไม่มีผู้ป่วยเชื่อมผ่านตัวรับสัญญาณนี้</span></div></section>';
+        }
+
+        function receiverCard(node) {
+            const status = receiverStatus(node.status);
+            const description = String(node.description || '').trim();
+            const locationText = description || 'ยังไม่ได้ระบุจุดติดตั้ง';
+            const problemClass = node.status === 'disconnected' ? ' problem' : '';
+            const editButton = canEditReceiverLocation
+                ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
+                : '';
+            const jstyleCount = Number.isFinite(Number(node.connectedJstyleCount)) ? Number(node.connectedJstyleCount) : 0;
+            return '<article class="receiver-card' + problemClass + '">' +
+                '<div class="receiver-card-top">' +
+                    '<div class="receiver-device-art ' + status.art + '" aria-hidden="true">' +
+                        '<svg viewBox="0 0 64 64" width="44" height="44" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
+                            '<rect x="20" y="22" width="24" height="28" rx="5"></rect><path d="M27 22v-4a5 5 0 0 1 10 0v4"></path><path d="M32 50v7"></path><path d="M25 57h14"></path><path d="M14 12c4.8 3 7.2 6.1 7.2 9.5"></path><path d="M50 12c-4.8 3-7.2 6.1-7.2 9.5"></path><path d="M8 5c8.2 4.7 12.3 9.8 12.3 16.4"></path><path d="M56 5c-8.2 4.7-12.3 9.8-12.3 16.4"></path><circle cx="32" cy="36" r="2.2" fill="currentColor" stroke="none"></circle>' +
+                        '</svg>' +
+                    '</div>' +
+                    '<div class="min-w-0 flex-1">' +
+                        '<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">' +
+                            '<div class="min-w-0">' +
+                                '<span class="receiver-status-pill" style="color:' + status.color + ';background:' + status.bg + ';">● ' + status.label + '</span>' +
+                                '<div class="receiver-location-label">จุดติดตั้ง</div>' +
+                                '<div class="receiver-location break-words">' + escapeHTML(locationText) + '</div>' +
+                                '<div class="receiver-node-meta">ตัวรับ ' + escapeHTML(node.nodeId) + '</div>' +
+                            '</div>' +
+                            '<div class="shrink-0">' + editButton + '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="receiver-metrics">' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">ผู้ป่วย / JStyle</div><div class="receiver-metric-value">' + escapeHTML(String(node.patients?.length || 0)) + ' / ' + escapeHTML(String(jstyleCount)) + ' รายการ</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">IP Address</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.ipAddress || '-') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">Board MAC</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.boardMac || '-') + '</div></div>' +
+                '</div>' +
+                renderReceiverPatients(node) +
+                '<details class="receiver-tech"><summary>ข้อมูลเพิ่มเติมของตัวรับสัญญาณ</summary><div class="mt-2 space-y-1 text-xs" style="color:var(--text-tertiary);"><div>Node ID: <span class="font-mono">' + escapeHTML(node.nodeId || '-') + '</span></div><div>จำนวน JStyle ที่เชื่อม: ' + escapeHTML(String(jstyleCount)) + '</div><div>แหล่งข้อมูล: MQTT</div></div></details>' +
+                '<div class="receiver-footer"><span>' + (node.status === 'connected' ? 'พร้อมรับสัญญาณผู้ป่วย' : 'กรุณาตรวจสอบตัวรับสัญญาณ') + '</span><span>' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</span></div>' +
+            '</article>';
+        }
+
+        function renderReceivers(data) {
+            const summary = data.summary || {};
+            document.getElementById('receiverTotal').textContent = summary.total ?? 0;
+            document.getElementById('receiverOnline').textContent = summary.connected ?? 0;
+            document.getElementById('receiverProblem').textContent = (summary.disconnected ?? 0) + (summary.unknown ?? 0);
+            document.getElementById('receiverPatients').textContent = summary.patients ?? 0;
+            receiverUpdated.textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+            const nodes = Array.isArray(data.nodes) ? [...data.nodes] : [];
+            const rank = { disconnected:0, unknown:1, connected:2 };
+            nodes.sort((a,b) => (rank[a.status] ?? 1) - (rank[b.status] ?? 1) || String(a.description || a.nodeId).localeCompare(String(b.description || b.nodeId), 'th'));
+            if (!nodes.length) {
+                receiverNotice.textContent = 'ยังไม่พบข้อมูลตัวรับสัญญาณ';
+                receiverNotice.style.color = 'var(--status-warning-text)';
+                receiverNotice.classList.remove('hidden');
+                receiverGrid.innerHTML = '';
+                return;
+            }
+            receiverNotice.classList.add('hidden');
+            receiverGrid.innerHTML = nodes.map(receiverCard).join('');
+            receiverGrid.querySelectorAll('[data-edit-receiver]').forEach(button => {
+                button.addEventListener('click', () => editReceiverLocation(button.dataset.mac, button.dataset.description || ''));
+            });
+        }
+
+        async function loadReceivers() {
+            if (receiverLoading) return;
+            receiverLoading = true;
+            try {
+                const response = await fetch('/api/esp32-nodes', { headers:{'Accept':'application/json'} });
+                if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถอ่านสถานะตัวรับสัญญาณได้'));
+                renderReceivers(await response.json());
+            } catch (error) {
+                receiverNotice.textContent = error.message || 'ไม่สามารถอ่านสถานะตัวรับสัญญาณได้';
+                receiverNotice.style.color = 'var(--status-critical-text)';
+                receiverNotice.classList.remove('hidden');
+            } finally {
+                receiverLoading = false;
+            }
+        }
+
+        window.editReceiverLocation = (mac, currentDescription) => {
+            const safeMac = String(mac || '').trim();
+            openModal('แก้ไขจุดติดตั้งตัวรับสัญญาณ',
+                '<div class="space-y-4">' +
+                    '<div><label for="receiverDescription" class="block text-sm font-bold mb-2">รายละเอียดจุดติดตั้ง</label><textarea id="receiverDescription" maxlength="200" rows="4" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);" placeholder="เช่น หน้าห้อง OR 3, เคาน์เตอร์พยาบาล, โซน B เตียง 12">' + escapeHTML(currentDescription) + '</textarea><div class="flex justify-between mt-2 text-xs" style="color:var(--text-tertiary);"><span>ระบุตำแหน่งให้พยาบาลหาอุปกรณ์ได้ง่าย</span><span id="receiverDescriptionCount">0/200</span></div></div>' +
+                    '<div class="p-3 rounded-xl" style="background:var(--bg-card-hover);"><div class="text-xs font-bold" style="color:var(--text-tertiary);">ตัวรับสัญญาณ</div><div class="font-mono text-sm mt-1">' + escapeHTML(safeMac) + '</div></div>' +
+                '</div>',
+                async () => {
+                    const input = document.getElementById('receiverDescription');
+                    const submit = document.getElementById('modalSubmit');
+                    const description = String(input?.value || '').trim();
+                    if (description.length > 200) {
+                        showReceiverToast('รายละเอียดจุดติดตั้งยาวเกิน 200 ตัวอักษร', 'error');
+                        return;
+                    }
+                    setModalBusy(true);
+                    submit.textContent = 'กำลังบันทึก…';
+                    try {
+                        const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/description', {
+                            method:'PUT',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({description})
+                        });
+                        if (!response.ok) throw new Error(await apiErrorMessage(response, 'บันทึกจุดติดตั้งไม่สำเร็จ'));
+                        closeModal(true, true);
+                        showReceiverToast('บันทึกจุดติดตั้งเรียบร้อยแล้ว', 'success');
+                        await loadReceivers();
+                    } catch (error) {
+                        closeModal(false, true);
+                        showReceiverToast(error.message || 'บันทึกจุดติดตั้งไม่สำเร็จ', 'error');
+                    }
+                });
+            const input = document.getElementById('receiverDescription');
+            const count = document.getElementById('receiverDescriptionCount');
+            const updateCount = () => { if (count) count.textContent = String(input?.value?.length || 0) + '/200'; };
+            input?.addEventListener('input', updateCount);
+            updateCount();
+        };
+
+        loadReceivers();
+        receiverTimer = window.setInterval(loadReceivers, 5000);
+        window.addEventListener('pagehide', () => receiverTimer && window.clearInterval(receiverTimer), {once:true});
+    `));
 });
 
 app.get('/devices-mgmt', requireCapability('devices:write'), async (req, res) => {

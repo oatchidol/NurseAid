@@ -85,6 +85,8 @@ services:
     build: .
     container_name: nurseaid-app
     restart: unless-stopped
+    group_add:
+      - "65532"
     env_file:
       - .env
     environment:
@@ -120,11 +122,14 @@ services:
       - AI_MAX_HISTORY_MESSAGES=${AI_MAX_HISTORY_MESSAGES:-8}
       - AI_RATE_LIMIT_PER_MINUTE=${AI_RATE_LIMIT_PER_MINUTE:-10}
       - AI_CONVERSATION_MAX_TOKENS=${AI_CONVERSATION_MAX_TOKENS:-4096}
+      - NURSEAID_ESP32_TOPOLOGY_FILE=/run/nurseaid-compose/mqtt-sensors.json
+      - NURSEAID_ESP32_SOURCE_STALE_SECONDS=${NURSEAID_ESP32_SOURCE_STALE_SECONDS:-15}
     ports:
       - "3333:3333"
     volumes:
       - notification_sounds_data:/app/uploads/notification-sounds
       - apply_update_spool:/run/nurseaid-apply-update
+      - compose_status:/run/nurseaid-compose:ro
     depends_on:
       - influxdb
       - postgres
@@ -160,6 +165,11 @@ services:
       - SAVE_INTERVAL=${MQTT_BRIDGE_SAVE_INTERVAL:-3}
       - VERBOSE_SENSOR_LOGS=${MQTT_BRIDGE_VERBOSE_LOGS:-false}
       - PYTHONUNBUFFERED=1
+      - NURSEAID_MQTT_TOPOLOGY_FILE=/run/nurseaid-compose/mqtt-sensors.json
+      - NURSEAID_MQTT_ESP32_STALE_SECONDS=${NURSEAID_MQTT_ESP32_STALE_SECONDS:-90}
+      - NURSEAID_MQTT_TOPOLOGY_SETTLE_SECONDS=${NURSEAID_MQTT_TOPOLOGY_SETTLE_SECONDS:-30}
+    volumes:
+      - compose_status:/run/nurseaid-compose
     depends_on:
       - influxdb
       - mosquitto
@@ -171,6 +181,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # === BLE gateway sidecar (many ESP32 / many watches) ===
+  # Owns BlueZ connections and writes one authoritative topology snapshot to
+  # compose_status. It never receives the Central credential and has no IP
+  # network, so compose-collector remains the only Central-facing agent.
+  ble-gateway:
+    logging: *default-logging
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.ble-gateway
+    container_name: nurseaid-ble-gateway
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Bangkok
+      - NURSEAID_BLE_CONFIG=/etc/nurseaid/ble-gateway.json
+      - NURSEAID_BLE_SPOOL=/run/nurseaid-compose
+    volumes:
+      - compose_status:/run/nurseaid-compose
+      - ./ops/ble-gateway-config.json:/etc/nurseaid/ble-gateway.json:ro
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
 
   # === Central device heartbeat agent ===
   compose-collector:
@@ -186,6 +224,9 @@ services:
       - TZ=Asia/Bangkok
       - NURSEAID_PROJECT_NAME=nurseaid
       - NURSEAID_STATUS_FILE=/run/nurseaid-compose/status.json
+      - NURSEAID_SENSOR_STATUS_FILE=/run/nurseaid-compose/sensors.json
+      - NURSEAID_MQTT_SENSOR_STATUS_FILE=/run/nurseaid-compose/mqtt-sensors.json
+      - NURSEAID_SENSOR_STATE_STALE_SECONDS=15
       - NURSEAID_COLLECT_INTERVAL=3
       - NURSEAID_AGENT_UID=65532
       - NURSEAID_INITIAL_LOG_HISTORY_MINUTES=${NURSEAID_INITIAL_LOG_HISTORY_MINUTES:-30}

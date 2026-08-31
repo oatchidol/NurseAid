@@ -46,6 +46,7 @@ COPY --chown=appuser:appgroup package.json package-lock.json ./
 COPY --chown=appuser:appgroup server.js ./
 COPY --chown=appuser:appgroup live-status.js ./
 COPY --chown=appuser:appgroup or-patients.js ./
+COPY --chown=appuser:appgroup esp32-status.js ./
 
 # Locally-served UI assets (Tailwind CSS, vendored JS, fonts) — committed
 # build artifacts, not generated here: the builder stage runs

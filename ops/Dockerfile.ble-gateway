@@ -1,0 +1,18 @@
+FROM python:3.11.15-alpine
+
+ENV TZ=Asia/Bangkok \
+    PYTHONUNBUFFERED=1
+
+RUN apk add --no-cache tzdata && \
+    pip install --no-cache-dir bleak==0.22.3 && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
+
+WORKDIR /opt/nurseaid-ble
+COPY nurseaid-ble-gateway.py ./gateway.py
+RUN chmod 0555 gateway.py
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD python3 -c 'import pathlib,time,sys; p=pathlib.Path("/run/nurseaid-compose/sensors.json"); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 15 else 1)'
+
+CMD ["python3", "/opt/nurseaid-ble/gateway.py"]

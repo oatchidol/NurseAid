@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "reconnectMaxSeconds": 60,
+  "rebootTimeoutSeconds": 45,
+  "sensors": []
+}

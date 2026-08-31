@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Export non-sensitive Docker Compose runtime health for the NurseAid agent."""
+import ipaddress
 import json
 import os
 import subprocess
 import tempfile
 import re
+import threading
 import time
 import ssl
 import urllib.request
@@ -18,6 +20,9 @@ HOST_PROC_PATH = Path(os.getenv("NURSEAID_HOST_PROC_PATH", "/host/proc"))
 HOST_THERMAL_PATH = Path(os.getenv("NURSEAID_HOST_THERMAL_PATH", "/host/sys/class/thermal/thermal_zone0/temp"))
 OUTPUT_FILE = Path(os.getenv("NURSEAID_STATUS_FILE", "/run/nurseaid-compose-status/status.json"))
 SPOOL_DIR = OUTPUT_FILE.parent
+SENSOR_STATUS_FILE = Path(os.getenv("NURSEAID_SENSOR_STATUS_FILE", str(SPOOL_DIR / "sensors.json")))
+MQTT_SENSOR_STATUS_FILE = Path(os.getenv("NURSEAID_MQTT_SENSOR_STATUS_FILE", str(SPOOL_DIR / "mqtt-sensors.json")))
+SENSOR_STATE_STALE_SECONDS = max(6, int(os.getenv("NURSEAID_SENSOR_STATE_STALE_SECONDS", "15")))
 AGENT_UID = int(os.getenv("NURSEAID_AGENT_UID", "65532"))
 COLLECT_INTERVAL = max(2, int(os.getenv("NURSEAID_COLLECT_INTERVAL", "3")))
 INITIAL_LOG_HISTORY_MINUTES = min(
@@ -201,6 +206,38 @@ def host_metrics():
     return result
 
 
+def _decode_proc_ipv4(hex_address):
+    raw = bytes.fromhex(hex_address)
+    if len(raw) != 4:
+        raise ValueError("invalid proc IPv4 address")
+    return ".".join(str(part) for part in raw[::-1])
+
+
+def mqtt_connected_client_ips(proc_text=None):
+    """Return peer IPv4 addresses with an ESTABLISHED connection to local MQTT :1883."""
+    if proc_text is None:
+        try:
+            proc_text = (HOST_PROC_PATH / "net/tcp").read_text(encoding="ascii", errors="ignore")
+        except OSError:
+            return []
+    peers = set()
+    for line in str(proc_text or "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 4 or parts[3] != "01":
+            continue
+        try:
+            local_address, local_port = parts[1].rsplit(":", 1)
+            remote_address, _remote_port = parts[2].rsplit(":", 1)
+            if int(local_port, 16) != 1883:
+                continue
+            peer = _decode_proc_ipv4(remote_address)
+        except (ValueError, IndexError):
+            continue
+        if peer not in {"0.0.0.0", "127.0.0.1"}:
+            peers.add(peer)
+    return sorted(peers)
+
+
 def snapshot():
     services = {}
     for service in expected_services():
@@ -215,7 +252,115 @@ def snapshot():
         metrics["uptimeSeconds"] = round(float((HOST_PROC_PATH / "uptime").read_text().split()[0]))
     except Exception: pass
 
-    return {"schemaVersion": 2, "collectedAt": datetime.now(timezone.utc).isoformat(), "metrics": metrics, "services": services}
+    return {
+        "schemaVersion": 2,
+        "collectedAt": datetime.now(timezone.utc).isoformat(),
+        "metrics": metrics,
+        "services": services,
+        "mqttClientIps": mqtt_connected_client_ips(),
+    }
+
+
+def _sensor_snapshot_from_file(path, now_timestamp):
+    try:
+        age = max(0, now_timestamp - path.stat().st_mtime)
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("topologyReady") is not True:
+        return None
+    sensors = value.get("sensors")
+    if not isinstance(sensors, dict):
+        return None
+
+    stale = age > SENSOR_STATE_STALE_SECONDS
+    result = {}
+    for raw_sensor_id, raw_sensor in sensors.items():
+        sensor_id = str(raw_sensor_id).strip()
+        if not re.fullmatch(r"[A-Za-z0-9:_-]{1,40}", sensor_id) or not isinstance(raw_sensor, dict):
+            return None
+        raw_watches = raw_sensor.get("watches")
+        if not isinstance(raw_watches, list):
+            return None
+        sensor_status = raw_sensor.get("status")
+        if sensor_status not in ("connected", "disconnected", "unknown"):
+            sensor_status = "unknown"
+        sensor = {"status": "unknown" if stale else sensor_status, "watches": []}
+
+        node_id = str(raw_sensor.get("nodeId") or "").strip()
+        if node_id:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", node_id):
+                return None
+            sensor["nodeId"] = node_id
+
+        ip_address = str(raw_sensor.get("ipAddress") or "").strip()
+        if ip_address:
+            try:
+                sensor["ipAddress"] = str(ipaddress.ip_address(ip_address))
+            except ValueError:
+                return None
+
+        board_mac = str(raw_sensor.get("boardMac") or "").strip().upper()
+        if board_mac:
+            if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", board_mac):
+                return None
+            sensor["boardMac"] = board_mac
+
+        reported_count = raw_sensor.get("connectedJstyleCount")
+        if reported_count is not None:
+            if isinstance(reported_count, bool) or not isinstance(reported_count, int) or not 0 <= reported_count <= 32:
+                return None
+            sensor["connectedJstyleCount"] = reported_count
+
+        firmware = str(raw_sensor.get("firmwareVersion") or "").strip()[:40]
+        if firmware:
+            sensor["firmwareVersion"] = firmware
+        for raw_watch in raw_watches:
+            if not isinstance(raw_watch, dict):
+                return None
+            watch_id = str(raw_watch.get("watchId") or "").strip()[:64]
+            if not watch_id:
+                continue
+            watch_status = raw_watch.get("status")
+            if watch_status not in ("connected", "disconnected", "unknown"):
+                watch_status = "unknown"
+            watch = {"watchId": watch_id, "status": "unknown" if stale else watch_status}
+            for field in ("batteryPercent", "rssiDbm", "packetLossPercent"):
+                field_value = raw_watch.get(field)
+                if isinstance(field_value, (int, float)) and not isinstance(field_value, bool):
+                    watch[field] = field_value
+            packet_age = raw_watch.get("lastPacketAgeSeconds")
+            if isinstance(packet_age, (int, float)) and not isinstance(packet_age, bool):
+                adjusted_age = round(packet_age + age)
+                if 0 <= adjusted_age <= 86400:
+                    watch["lastPacketAgeSeconds"] = adjusted_age
+            sensor["watches"].append(watch)
+
+        if "connectedJstyleCount" in sensor:
+            actual_connected = sum(
+                isinstance(item, dict) and item.get("status") == "connected"
+                for item in raw_watches
+            )
+            if sensor["connectedJstyleCount"] != actual_connected:
+                return None
+
+        result[sensor_id] = sensor
+    return result
+
+
+def sensor_snapshot(now_timestamp=None):
+    """Prefer fresh MQTT board inventory, then fall back to BLE topology.
+
+    Both sources obey the same authoritative semantics: a source that has not
+    completed its initial reconciliation returns ``None`` so Central receives no
+    ``sensors`` field instead of an accidental empty topology.
+    """
+    now_timestamp = time.time() if now_timestamp is None else float(now_timestamp)
+    for path in (MQTT_SENSOR_STATUS_FILE, SENSOR_STATUS_FILE):
+        result = _sensor_snapshot_from_file(path, now_timestamp)
+        if result is not None:
+            return result
+    return None
 
 
 def atomic_write(value):
@@ -335,8 +480,30 @@ def process_action_requests(now=None):
         try:
             value = json.loads(request_path.read_text(encoding="utf-8")); action = str(value.get("action") or ""); service = str(value.get("service") or "")
             expires = datetime.fromisoformat(str(value.get("expiresAt") or "").replace("Z", "+00:00"))
-            if not SESSION_RE.fullmatch(action_id) or expires <= now or action not in ("diagnostics", "restart_service"):
+            if not SESSION_RE.fullmatch(action_id) or expires <= now or action not in ("diagnostics", "restart_service", "reboot_esp32"):
                 request_path.unlink(missing_ok=True); continue
+            if action == "reboot_esp32":
+                if not re.fullmatch(r"[A-Za-z0-9:_-]{1,40}", service):
+                    raise ValueError("invalid ESP32 target")
+                ble_request = SPOOL_DIR / f"{action_id}.ble-request.json"
+                ble_response = SPOOL_DIR / f"{action_id}.ble-response.json"
+                if not ble_request.exists():
+                    atomic_response(ble_request, {
+                        "actionId": action_id, "action": action,
+                        "sensorId": service, "expiresAt": value.get("expiresAt"),
+                    })
+                if not ble_response.exists():
+                    continue
+                response = json.loads(ble_response.read_text(encoding="utf-8"))
+                atomic_response(response_path, {
+                    "actionId": action_id,
+                    "status": response.get("status", "failed"),
+                    "result": response.get("result", {}),
+                    "error": response.get("error"),
+                })
+                ble_request.unlink(missing_ok=True)
+                ble_response.unlink(missing_ok=True)
+                continue
             if action == "diagnostics": result = diagnostics()
             elif service in allowed:
                 ids = container_ids(service)
@@ -699,7 +866,7 @@ def get_central_credential():
                 json.dump({"deviceId": DEVICE_ID, "credential": cred}, handle)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(name, 0o644)
+            os.chmod(name, 0o600)
             os.replace(name, CREDENTIAL_FILE)
         except Exception as e:
             print(f"[Central] Error saving credential: {e}", flush=True)
@@ -758,8 +925,10 @@ def central_cycle(snap):
         "status": "unhealthy" if unhealthy else "healthy",
         "services": services,
         "metrics": metrics,
-        "sensors": {}
     }
+    sensors = sensor_snapshot()
+    if sensors is not None:
+        hb_payload["sensors"] = sensors
 
     # 1. Heartbeat
     status, res = http_json_request(f"{CENTRAL_URL}/api/v1/devices/heartbeat", payload=hb_payload, headers=headers)
@@ -800,7 +969,7 @@ def central_cycle(snap):
                     upload_status, upload_res = http_json_request(
                         f"{CENTRAL_URL}/api/v1/devices/log-batches",
                         payload=batch_payload, headers=headers)
-                    if upload_status == 200:
+                    if upload_status in (200, 202):
                         req_file.unlink(missing_ok=True)
                         resp_file.unlink(missing_ok=True)
                         (SPOOL_DIR / f"{session_id}.cursor").unlink(missing_ok=True)
@@ -840,7 +1009,7 @@ def central_cycle(snap):
                     upload_status, upload_res = http_json_request(
                         f"{CENTRAL_URL}/api/v1/devices/action-results",
                         payload=result_payload, headers=headers)
-                    if upload_status == 200:
+                    if upload_status in (200, 202):
                         req_file.unlink(missing_ok=True)
                         resp_file.unlink(missing_ok=True)
                     else:
@@ -855,22 +1024,50 @@ def collect_once():
     process_action_requests()
     process_apply_update_requests()
 
+
+def status_writer_loop(stop_event=None):
+    """Keep local Pi/service health fresh even when Central I/O is slow or down."""
+    stop_event = stop_event or threading.Event()
+    while not stop_event.is_set():
+        started = time.monotonic()
+        try:
+            atomic_write(snapshot())
+        except Exception as error:
+            print(json.dumps({"event": "status_writer_error", "error": type(error).__name__}), flush=True)
+        remaining = max(0.2, COLLECT_INTERVAL - (time.monotonic() - started))
+        stop_event.wait(remaining)
+
+
+def latest_status_snapshot():
+    try:
+        value = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
+        if isinstance(value, dict):
+            return value
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    return snapshot()
+
+
 def main():
+    # Local health collection must never be starved by Central HTTP timeouts.
+    # A dedicated daemon thread owns status.json; the main thread handles
+    # action/log spools and the Central network cycle.
+    status_thread = threading.Thread(
+        target=status_writer_loop,
+        name="nurseaid-status-writer",
+        daemon=True,
+    )
+    status_thread.start()
+
     last_central_beat = 0
     while True:
         started = time.monotonic()
-        current_snap = None
         try:
-            current_snap = snapshot()
-            atomic_write(current_snap)
             process_log_requests()
             process_action_requests()
-            # NOTE: run_apply_update() blocks synchronously for the whole
-            # build/restart/health-check cycle (up to ~15 min worst case) —
-            # heartbeats to Central and diagnostics/restart_service pause for
-            # that window. Acceptable for an admin-initiated, rare action;
-            # not fire-and-forget/background by design (keeps the apply
-            # pipeline's own error handling linear and simple).
+            # apply_update may intentionally block the command loop while it
+            # performs a release operation; status_writer_loop still keeps
+            # local health fresh throughout that operation.
             process_apply_update_requests()
         except Exception as error:
             print(json.dumps({"event": "collector_error", "error": type(error).__name__}), flush=True)
@@ -879,10 +1076,11 @@ def main():
         if CENTRAL_URL and (now_mono - last_central_beat >= HEARTBEAT_INTERVAL):
             last_central_beat = now_mono
             try:
-                central_cycle(current_snap or snapshot())
+                central_cycle(latest_status_snapshot())
             except Exception as error:
                 print(json.dumps({"event": "central_error", "error": str(error)}), flush=True)
 
         time.sleep(max(0.2, COLLECT_INTERVAL - (time.monotonic() - started)))
+
 
 if __name__ == "__main__": main()

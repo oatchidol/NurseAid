@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
 
 # Copy application
 COPY mqtt_bridge.py .
+COPY esp32_topology.py .
 COPY bridge_healthcheck.py .
 
 # Non-secret runtime knobs only. Credentials (INFLUX_TOKEN, MQTT_PASSWORD,

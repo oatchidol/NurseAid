@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ESP32 slave descriptions / placement metadata. Live connection state comes
+-- from MQTT; only operator-entered metadata is persisted here.
+CREATE TABLE IF NOT EXISTS esp32_node_metadata (
+    board_mac VARCHAR(17) PRIMARY KEY,
+    description VARCHAR(200) NOT NULL DEFAULT '',
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 -- User Wards Table
 CREATE TABLE IF NOT EXISTS user_wards (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
