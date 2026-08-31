@@ -11047,6 +11047,8 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 กดปุ่ม “ตรวจสอบอัปเดต” เพื่อดูว่ามีเวอร์ชันใหม่หรือไม่
             </p>
 
+            <div id="update-release-notes" class="hidden mt-3 rounded-xl border p-4 text-sm" style="background: var(--bg-input); border-color: var(--border-color); max-height: 20rem; overflow-y: auto;"></div>
+
             <div id="update-apply" class="hidden mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
                 <p class="text-sm font-bold mb-2" style="color: #92400e;">การติดตั้งอัตโนมัติ</p>
                 <p class="text-xs mb-3" style="color: #a16207;">กดปุ่มด้านล่างเพื่อติดตั้งอัตโนมัติ ระบบจะดึงโค้ด บิลดocker และ recreate container พร้อม auto-rollback หากเวอร์ชันใหม่ไม่ผ่าน health-check</p>
@@ -11081,6 +11083,7 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
             btn.disabled = true;
             btn.replaceChildren(statusIcon('ic-refresh ic--spin'), ' กำลังตรวจสอบ…');
             applyEl.classList.add('hidden');
+            document.getElementById('update-release-notes').classList.add('hidden');
             statusEl.className = 'rounded-xl border p-3 text-sm font-semibold';
             statusEl.style.color = 'var(--text-secondary)';
             statusEl.style.background = 'var(--bg-input)';
@@ -11106,6 +11109,28 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                         : '';
                     statusEl.innerHTML = '<span class="ic ic-sparkle" aria-hidden="true"></span> มีอัปเดตใหม่: v' + escapeHTML(data.latestVersion) + ' (คุณกำลังใช้ v' + escapeHTML(data.currentVersion) + ')' + link;
                     applyEl.classList.remove('hidden');
+                    const notesEl = document.getElementById('update-release-notes');
+                    if (Array.isArray(data.releaseNotes) && data.releaseNotes.length) {
+                        notesEl.replaceChildren();
+                        data.releaseNotes.forEach(entry => {
+                            const block = document.createElement('div');
+                            block.className = 'mb-3';
+                            const heading = document.createElement('p');
+                            heading.className = 'font-bold mb-1';
+                            heading.style.color = 'var(--text-heading)';
+                            heading.textContent = 'v' + entry.version + ' — ' + entry.date;
+                            const body = document.createElement('pre');
+                            body.style.whiteSpace = 'pre-wrap';
+                            body.style.fontFamily = 'inherit';
+                            body.style.margin = '0';
+                            body.style.color = 'var(--text-secondary)';
+                            body.textContent = entry.body;
+                            block.appendChild(heading);
+                            block.appendChild(body);
+                            notesEl.appendChild(block);
+                        });
+                        notesEl.classList.remove('hidden');
+                    }
                 } else {
                     statusEl.className = 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800';
                     statusEl.replaceChildren(statusIcon('ic-check'), ' เป็นเวอร์ชันล่าสุดแล้ว (v' + data.currentVersion + ')');
@@ -11709,6 +11734,62 @@ function highestVersion(tags) {
     return best;
 }
 
+// Fetch CHANGELOG.md at the target release tag and return every version
+// section newer than `currentVersion` — so an admin who skipped several
+// releases sees everything that changed, not just the newest entry.
+// Returns null on any failure; the update-check UI degrades gracefully to
+// just the bare version number when this can't be fetched.
+async function fetchReleaseNotesSince(currentVersion, latestVersion) {
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        let text;
+        try {
+            const r = await fetch(`https://raw.githubusercontent.com/oatchidol/NurseAid/v${latestVersion}/CHANGELOG.md`, {
+                headers: { 'User-Agent': 'NurseAid-UpdateCheck' },
+                signal: controller.signal
+            });
+            if (!r.ok) return null;
+            text = await r.text();
+        } finally {
+            clearTimeout(timer);
+        }
+
+        // Split into per-heading ("## ...") sections, keeping only the ones
+        // whose heading is a real "[X.Y.Z] - date" release (this naturally
+        // skips "## [Unreleased]").
+        const lines = text.split('\n');
+        const sections = [];
+        let current = null;
+        const headerRe = /^##\s*\[(\d+\.\d+\.\d+)\]\s*-\s*(\d{4}-\d{2}-\d{2})/;
+        for (const line of lines) {
+            const m = line.match(headerRe);
+            if (m) {
+                if (current) sections.push(current);
+                current = { version: m[1], date: m[2], lines: [] };
+            } else if (line.startsWith('## ')) {
+                if (current) sections.push(current);
+                current = null;
+            } else if (current) {
+                current.lines.push(line);
+            }
+        }
+        if (current) sections.push(current);
+
+        const relevant = sections
+            .filter(s => compareSemver(s.version, currentVersion) > 0)
+            .sort((a, b) => compareSemver(b.version, a.version))
+            .slice(0, 10)
+            .map(s => ({ version: s.version, date: s.date, body: s.lines.join('\n').trim() }))
+            .filter(s => s.body.length > 0 && s.body.length <= 8000);
+
+        return relevant.length ? relevant : null;
+    } catch (e) {
+        console.error('[Update Check] release notes fetch failed:', e?.message || e);
+        return null;
+    }
+}
+
 app.get('/api/system/update-check', adminOnly, async (req, res) => {
     const now = Date.now();
     const cached = updateCheckCache;
@@ -11735,12 +11816,16 @@ app.get('/api/system/update-check', adminOnly, async (req, res) => {
         }
 
         const latest = highestVersion(tags);
+        const updateAvailable = latest ? compareSemver(latest, APP_VERSION) > 0 : false;
         const result = {
             currentVersion: APP_VERSION,
             latestVersion: latest,
-            updateAvailable: latest ? compareSemver(latest, APP_VERSION) > 0 : false,
+            updateAvailable,
             // Link to the tag page (guaranteed to exist even when there's no formal release).
-            releaseUrl: latest ? `https://github.com/oatchidol/NurseAid/tree/${latest}` : null,
+            // Tag names on GitHub carry the "v" prefix (v2.21.0); `latest` here is the bare
+            // numeric form (see highestVersion above), so it must be re-added or this 404s.
+            releaseUrl: latest ? `https://github.com/oatchidol/NurseAid/tree/v${latest}` : null,
+            releaseNotes: updateAvailable ? await fetchReleaseNotesSince(APP_VERSION, latest) : null,
             checkedAt: new Date().toISOString()
         };
 
