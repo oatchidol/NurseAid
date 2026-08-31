@@ -1575,21 +1575,14 @@ function navIcon(name) {
 }
 
 function renderNavLinks(user, active) {
-    if (!user) return { main: '', alerts: '' };
+    if (!user) return { main: '', setup: '', alerts: '' };
     const role = user.role;
     let main = '';
+    let setup = '';
     let alerts = '';
-    
+
     if (roleHasCapability(role, 'patients:read')) main += `<a href="/" title="มอนิเตอร์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'dash' ? '' : 'color: var(--text-secondary);'}">${navIcon('monitor')}<span class="sidebar-hide">มอนิเตอร์</span></a>\n`;
     if (roleHasCapability(role, 'export:read')) main += `<a href="/export" title="รายงาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'export' ? '' : 'color: var(--text-secondary);'}">${navIcon('report')}<span class="sidebar-hide">รายงาน</span></a>\n`;
-    // Quick Setup Wizard (Device -> Patient -> Pair) — placed right after Report,
-    // ahead of the individual Devices/Patients/Pairing pages, since it's the
-    // faster/guided path most admins reach for first. The three write
-    // capabilities this wizard needs (devices:write, patients:write,
-    // pairing:write) are always co-granted to the same roles in
-    // ROLE_CAPABILITIES, so gating on any one of them is equivalent to
-    // requiring all three.
-    if (roleHasCapability(role, 'devices:write')) main += `<a href="/quick-setup" title="เริ่มต้นใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}">${navIcon('setup')}<span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
 
     if (roleHasCapability(role, 'devices:write')) main += `<a href="/devices-mgmt" title="อุปกรณ์" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'devs' ? '' : 'color: var(--text-secondary);'}">${navIcon('device')}<span class="sidebar-hide">อุปกรณ์</span></a>\n`;
     if (roleHasCapability(role, 'devices:read')) main += `<a href="/esp32-mgmt" title="ตัวรับสัญญาณ" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'esp32' ? '' : 'color: var(--text-secondary);'}">${navIcon('gateway')}<span class="sidebar-hide">ตัวรับสัญญาณ</span></a>\n`;
@@ -1598,6 +1591,15 @@ function renderNavLinks(user, active) {
 
     if (roleHasCapability(role, 'wards:manage')) main += `<a href="/wards-mgmt" title="หอผู้ป่วย" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'wards' ? '' : 'color: var(--text-secondary);'}">${navIcon('ward')}<span class="sidebar-hide">หอผู้ป่วย</span></a>\n`;
     if (roleHasCapability(role, 'users:manage:ward') || roleHasCapability(role, 'users:manage:all')) main += `<a href="/users-mgmt" title="ผู้ใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'users' ? '' : 'color: var(--text-secondary);'}">${navIcon('users')}<span class="sidebar-hide">ผู้ใช้งาน</span></a>\n`;
+
+    // Quick Setup Wizard (Device -> Patient -> Pair) is intentionally its own
+    // top-level sidebar section, separate from the main activities menu, since
+    // it's a guided flow rather than a standalone activity page. The three
+    // write capabilities this wizard needs (devices:write, patients:write,
+    // pairing:write) are always co-granted to the same roles in
+    // ROLE_CAPABILITIES, so gating on any one of them is equivalent to
+    // requiring all three.
+    if (roleHasCapability(role, 'devices:write')) setup += `<a href="/quick-setup" title="เริ่มต้นใช้งาน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'quicksetup' ? '' : 'color: var(--text-secondary);'}">${navIcon('setup')}<span class="sidebar-hide">เริ่มต้นใช้งาน</span></a>\n`;
 
     alerts += `<a href="/notification-settings" title="การแจ้งเตือน" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'notif' ? '' : 'color: var(--text-secondary);'}">${navIcon('notify')}<span class="sidebar-hide">การแจ้งเตือน</span></a>\n`;
     
@@ -1608,7 +1610,7 @@ function renderNavLinks(user, active) {
 
     if (roleHasCapability(role, 'settings:global')) alerts += `<a href="/system-mgmt" title="ระบบ" class="nav-link p-2.5 flex items-center gap-2.5 font-semibold transition-all text-xs rounded-lg" style="${active === 'system' ? '' : 'color: var(--text-secondary);'}">${navIcon('system')}<span class="sidebar-hide">ระบบ</span></a>\n`;
 
-    return { main, alerts };
+    return { main, setup, alerts };
 }
 
 // The design tokens, defined once. Both full documents in this file - the app shell
@@ -3953,6 +3955,13 @@ ${ICON_SET}
             <p id="display-role" class="text-2xs font-bold uppercase" style="color: var(--text-tertiary);"></p>
             <p id="display-ward" class="text-2xs font-bold mt-1" style="color: var(--text-secondary);"></p>
         </div>
+
+        ${navs.setup ? `
+        <div class="sidebar-hide mb-4">
+            <p class="text-2xs font-bold tracking-wide mb-2 px-2" style="color: var(--text-tertiary);">เริ่มต้นใช้งาน</p>
+            ${navs.setup}
+        </div>
+        ` : ''}
 
         <nav class="flex flex-col gap-1 flex-1" aria-label="เมนูหลัก">
             ${navs.main}
@@ -8205,14 +8214,6 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 <h3 class="font-bold mb-6">เพิ่มผู้ป่วย</h3>
                 <div class="space-y-4">
                     <div>
-                        <label for="p_hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">HN</label>
-                        <input id="p_hn" name="hn" type="text" required placeholder="HN" class="w-full border p-3 rounded-xl bg-slate-50">
-                    </div>
-                    <div>
-                        <label for="p_nm" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
-                        <input id="p_nm" name="name" type="text" required placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50">
-                    </div>
-                    <div>
                         <label for="p_ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หอผู้ป่วย</label>
                     <select id="p_ward" class="w-full border p-3 rounded-xl bg-slate-50" ${wardSelectAttrs}>
                         <option value="">เลือกหอผู้ป่วย</option>
@@ -8220,33 +8221,38 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                     </select>
                     ${lockedWardId ? '<p class="text-2xs text-slate-500">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                     </div>
-                    <button onclick="addP()" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold">บันทึก</button>
+                    <div>
+                        <h4 id="his-patient-heading" class="font-bold text-sm mb-1">ค้นหาผู้ป่วยจาก HIS</h4>
+                        <p class="text-xs mb-3" style="color:var(--text-secondary);">เลือก Ward ปลายทางด้านบนก่อน แล้วค้นหาผู้ป่วยด้วย HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
+                        <label for="his_search" class="block text-xs font-bold mb-1" style="color:var(--text-secondary);">ค้นหาผู้ป่วย HIS</label>
+                        <input id="his_search" type="search" maxlength="100" placeholder="HN, ชื่อ-นามสกุล หรือเลขบัตรประชาชน" autocomplete="off" spellcheck="false" class="w-full border p-3 rounded-xl bg-slate-50 mb-2">
+                        <button id="his_load_btn" type="button" onclick="loadHISPatients()" class="w-full p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ค้นหาผู้ป่วย</button>
+                        <p id="his_status" class="text-xs mt-3" style="color: var(--text-secondary);" role="status" aria-live="polite"></p>
+                        <div id="his_table_wrap" class="mt-2 overflow-x-auto" style="max-height:16rem;overflow-y:auto;" hidden>
+                            <table class="w-full">
+                                <thead><tr><th scope="col">HN</th><th scope="col">ชื่อ-สกุล</th><th scope="col" class="text-right">เลือก</th></tr></thead>
+                                <tbody id="his_rows"></tbody>
+                            </table>
+                        </div>
+                        <button id="his_manual_fallback_btn" type="button" onclick="showManualFields()" class="text-xs font-bold underline mt-3" style="color:var(--accent-primary-strong);" hidden>ไม่พบข้อมูลที่ต้องการ? กรอกข้อมูลเอง</button>
+                    </div>
+                    <div id="manual_fields_block" hidden>
+                        <div class="mb-4">
+                            <label for="p_hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">HN</label>
+                            <input id="p_hn" name="hn" type="text" required placeholder="HN" class="w-full border p-3 rounded-xl bg-slate-50">
+                        </div>
+                        <div class="mb-4">
+                            <label for="p_nm" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
+                            <input id="p_nm" name="name" type="text" required placeholder="ชื่อ-สกุล" class="w-full border p-3 rounded-xl bg-slate-50">
+                        </div>
+                        <button onclick="addP()" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold">บันทึก</button>
+                    </div>
                 </div>
             </div>
             <div class="md:col-span-2 card overflow-hidden">
                 <table><thead><tr><th>HN</th><th>ชื่อ-สกุล</th><th>หอผู้ป่วย</th><th class="admin-only"></th></tr></thead><tbody>${rows}</tbody></table>
             </div>
         </div>
-        <section class="card p-6 mt-7" aria-labelledby="his-patient-heading">
-            <div class="mb-4">
-                <h3 id="his-patient-heading" class="font-bold mb-1">ดึงรายชื่อผู้ป่วยจาก HIS</h3>
-                <p class="text-xs" style="color:var(--text-secondary);">เลือก Ward ปลายทางด้านบนก่อน แล้วค้นหาผู้ป่วยด้วย HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
-            </div>
-            <div class="grid md:grid-cols-3 gap-3 items-end">
-                <div class="md:col-span-2">
-                    <label for="his_search" class="block text-xs font-bold mb-1" style="color:var(--text-secondary);">ค้นหาผู้ป่วย HIS</label>
-                    <input id="his_search" type="search" maxlength="100" placeholder="HN, ชื่อ-นามสกุล หรือเลขบัตรประชาชน" autocomplete="off" spellcheck="false" class="w-full border p-3 rounded-xl bg-slate-50">
-                </div>
-                <button id="his_load_btn" type="button" onclick="loadHISPatients()" class="w-full p-3 rounded-xl font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);">ค้นหาผู้ป่วย</button>
-            </div>
-            <p id="his_status" class="text-xs mt-3" style="color:var(--text-secondary);" role="status" aria-live="polite"></p>
-            <div id="his_table_wrap" class="mt-4 overflow-x-auto" style="max-height:24rem;overflow-y:auto;" hidden>
-                <table class="w-full">
-                    <thead><tr><th scope="col">HN</th><th scope="col">ชื่อ-สกุล</th><th scope="col" class="text-right">เลือก</th></tr></thead>
-                    <tbody id="his_rows"></tbody>
-                </table>
-            </div>
-        </section>
     `, `
         const wardOptsForPatients = \`${wardOpts}\`;
         const wardSelectLocked = ${lockedWardId ? 'true' : 'false'};
@@ -8282,11 +8288,19 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
             tableWrap.hidden = patients.length === 0;
         }
 
+        function showManualFields() {
+            const block = document.getElementById('manual_fields_block');
+            block.hidden = false;
+            const hn = document.getElementById('p_hn');
+            if (hn && !hn.value) hn.focus();
+        }
+
         window.selectHISPatient = index => {
             const patient = hisWardPatients[index];
             if (!patient) return;
             document.getElementById('p_hn').value = patient.hn;
             document.getElementById('p_nm').value = patient.fullname;
+            showManualFields();
             const statusEl = document.getElementById('his_status');
             statusEl.textContent = 'เลือกข้อมูลแล้ว กรุณาตรวจสอบ Ward ปลายทางและกดบันทึก';
             statusEl.style.color = 'var(--status-success-text)';
@@ -8304,18 +8318,21 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 statusEl.textContent = 'กรุณาเลือก Ward ปลายทางใน NurseAid ก่อน';
                 statusEl.style.color = 'var(--status-critical-text)';
                 document.getElementById('p_ward').focus();
+                document.getElementById('his_manual_fallback_btn').hidden = true;
                 return;
             }
             if (!patientSearch || patientSearch.length > 100 || /[\\u0000-\\u001f\\u007f]/.test(patientSearch)) {
                 statusEl.textContent = 'กรุณากรอก HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน';
                 statusEl.style.color = 'var(--status-critical-text)';
                 document.getElementById('his_search').focus();
+                document.getElementById('his_manual_fallback_btn').hidden = true;
                 return;
             }
 
             hisWardPatients = [];
             document.getElementById('his_rows').replaceChildren();
             tableWrap.hidden = true;
+            document.getElementById('his_manual_fallback_btn').hidden = true;
             statusEl.textContent = 'กำลังโหลดรายชื่อผู้ป่วย…';
             statusEl.style.color = 'var(--text-secondary)';
             loadButton.disabled = true;
@@ -8361,9 +8378,11 @@ app.get('/patients-mgmt', requireCapability('patients:write'), async (req, res) 
                 statusEl.style.color = hisWardPatients.length
                     ? 'var(--status-success-text)'
                     : 'var(--text-secondary)';
+                document.getElementById('his_manual_fallback_btn').hidden = hisWardPatients.length > 0;
             } catch (error) {
                 hisWardPatients = [];
                 renderHISPatients([]);
+                document.getElementById('his_manual_fallback_btn').hidden = false;
                 statusEl.textContent = error && error.message
                     ? error.message
                     : 'ไม่สามารถโหลดข้อมูลจาก HIS ได้';
