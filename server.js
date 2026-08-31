@@ -10347,14 +10347,6 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                     <div id="qs-p-create-new">
                         <div class="space-y-3">
                             <div>
-                                <label for="qs-p-hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขผู้ป่วย (HN)</label>
-                                <input id="qs-p-hn" class="qs-field" placeholder="เช่น 63-00001" autocomplete="off" spellcheck="false">
-                            </div>
-                            <div>
-                                <label for="qs-p-name" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
-                                <input id="qs-p-name" class="qs-field" placeholder="เช่น สมชาย ใจดี" autocomplete="off" spellcheck="false">
-                            </div>
-                            <div>
                                 <label for="qs-p-ward" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">Ward (แผนก) *</label>
                                 <select id="qs-p-ward" class="qs-field" ${wardSelectAttrs}>
                                     <option value="">เลือก Ward *</option>
@@ -10362,7 +10354,31 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
                                 </select>
                                 ${lockedWardId ? '<p class="text-2xs" style="color: var(--text-tertiary);">คนไข้จะถูกเพิ่มเข้า ward ของคุณโดยอัตโนมัติ</p>' : ''}
                             </div>
-                            <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
+                            <div>
+                                <h4 class="font-bold text-sm mb-1" style="color: var(--text-heading);">ค้นหาผู้ป่วยจาก HIS</h4>
+                                <p class="text-2xs mb-3" style="color: var(--text-tertiary);">เลือก Ward ด้านบนก่อน แล้วค้นหาผู้ป่วยด้วย HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน จากนั้นเลือกผู้ป่วยที่ต้องการเพิ่ม</p>
+                                <label for="qs-p-his-search" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ค้นหาผู้ป่วย HIS</label>
+                                <input id="qs-p-his-search" class="qs-field mb-2" type="search" maxlength="100" placeholder="HN, ชื่อ-นามสกุล หรือเลขบัตรประชาชน" autocomplete="off" spellcheck="false">
+                                <button type="button" id="qs-p-his-load-btn" class="qs-primary w-full">ค้นหาผู้ป่วย</button>
+                                <p id="qs-p-his-status" class="text-xs mt-3" style="color: var(--text-tertiary);" role="status" aria-live="polite"></p>
+                                <div id="qs-p-his-table-wrap" class="mt-2" style="max-height:12rem;overflow-y:auto;" hidden>
+                                    <div id="qs-p-his-list" role="list" aria-label="ผลการค้นหาผู้ป่วยจาก HIS"></div>
+                                </div>
+                                <button type="button" id="qs-p-his-fallback-btn" class="text-xs font-bold underline mt-3" style="color: var(--accent-primary-strong);" hidden>ไม่พบข้อมูลที่ต้องการ? กรอกข้อมูลเอง</button>
+                            </div>
+                            <div id="qs-p-manual-fields" hidden>
+                                <div class="space-y-3">
+                                    <div>
+                                        <label for="qs-p-hn" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">หมายเลขผู้ป่วย (HN)</label>
+                                        <input id="qs-p-hn" class="qs-field" placeholder="เช่น 63-00001" autocomplete="off" spellcheck="false">
+                                    </div>
+                                    <div>
+                                        <label for="qs-p-name" class="block text-xs font-bold mb-1" style="color: var(--text-secondary);">ชื่อ-สกุล</label>
+                                        <input id="qs-p-name" class="qs-field" placeholder="เช่น สมชาย ใจดี" autocomplete="off" spellcheck="false">
+                                    </div>
+                                    <button type="button" id="qs-p-submit-new" class="qs-primary w-full">เพิ่มผู้ป่วยนี้<span class="ic ic-arrow-r" aria-hidden="true"></span></button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -10590,6 +10606,127 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             document.getElementById('qs-p-submit-existing').disabled = false;
         }
 
+        const QS_HIS_SEARCH_INVALID_CHARS = /[\\u0000-\\u001f\\u007f]/;
+
+        let qsHisPatients = [];
+
+        function qsShowManualFields() {
+            const block = document.getElementById('qs-p-manual-fields');
+            if (block) block.hidden = false;
+            const hnField = document.getElementById('qs-p-hn');
+            if (hnField && !hnField.value) hnField.focus();
+        }
+
+        function qsRenderHisPatients(patients) {
+            const listEl = document.getElementById('qs-p-his-list');
+            const wrapEl = document.getElementById('qs-p-his-table-wrap');
+            if (!listEl || !wrapEl) return;
+            listEl.innerHTML = '';
+            patients.forEach((patient, index) => {
+                const item = document.createElement('div');
+                item.className = 'qs-list-item';
+                item.setAttribute('role', 'button');
+                item.tabIndex = 0;
+                item.innerHTML = '<div><div class="qs-list-item-name">' + escapeHTML(patient.fullname) + '</div><div class="qs-list-item-sub">' + escapeHTML(patient.hn) + '</div></div>';
+                item.addEventListener('click', () => qsSelectHisPatient(index));
+                listEl.appendChild(item);
+            });
+            wrapEl.hidden = patients.length === 0;
+        }
+
+        function qsSelectHisPatient(index) {
+            const patient = qsHisPatients[index];
+            if (!patient) return;
+            document.getElementById('qs-p-hn').value = patient.hn;
+            document.getElementById('qs-p-name').value = patient.fullname;
+            qsShowManualFields();
+            const statusEl = document.getElementById('qs-p-his-status');
+            if (statusEl) {
+                statusEl.textContent = 'เลือกข้อมูลแล้ว กรุณาตรวจสอบและกดเพิ่มผู้ป่วยนี้';
+                statusEl.style.color = 'var(--status-success-text)';
+            }
+        }
+
+        async function qsLoadHisPatients() {
+            const wardId = document.getElementById('qs-p-ward').value;
+            const search = document.getElementById('qs-p-his-search').value.trim();
+            const statusEl = document.getElementById('qs-p-his-status');
+            const loadBtn = document.getElementById('qs-p-his-load-btn');
+            const fallbackBtn = document.getElementById('qs-p-his-fallback-btn');
+            const wrapEl = document.getElementById('qs-p-his-table-wrap');
+
+            qsHisPatients = [];
+            document.getElementById('qs-p-his-list').innerHTML = '';
+            wrapEl.hidden = true;
+            if (fallbackBtn) fallbackBtn.hidden = true;
+
+            if (!wardId) {
+                statusEl.textContent = 'กรุณาเลือก Ward ก่อน';
+                statusEl.style.color = 'var(--status-critical-text)';
+                document.getElementById('qs-p-ward').focus();
+                return;
+            }
+            if (!search || search.length > 100 || QS_HIS_SEARCH_INVALID_CHARS.test(search)) {
+                statusEl.textContent = 'กรุณากรอก HN ชื่อ-นามสกุล หรือเลขบัตรประชาชน';
+                statusEl.style.color = 'var(--status-critical-text)';
+                document.getElementById('qs-p-his-search').focus();
+                return;
+            }
+
+            statusEl.textContent = 'กำลังโหลดรายชื่อผู้ป่วย…';
+            statusEl.style.color = 'var(--text-tertiary)';
+            loadBtn.disabled = true;
+            loadBtn.setAttribute('aria-busy', 'true');
+
+            try {
+                const params = new URLSearchParams({ search, ward_id: wardId });
+                const response = await fetch('/api/or-patients?' + params.toString(), {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                    cache: 'no-store'
+                });
+                const payload = await response.json().catch(() => null);
+                if (!response.ok) {
+                    throw new Error(payload && typeof payload.error === 'string' ? payload.error : 'ไม่สามารถโหลดข้อมูลจาก HIS ได้');
+                }
+                if (!payload || payload.status !== 'success' || !Array.isArray(payload.data)
+                    || !Number.isInteger(payload.count) || payload.count !== payload.data.length) {
+                    throw new Error('รูปแบบข้อมูลที่ได้รับจาก HIS ไม่ถูกต้อง');
+                }
+
+                const seenHns = new Set();
+                qsHisPatients = payload.data.map(patient => {
+                    if (!patient || typeof patient.hn !== 'string' || typeof patient.fullname !== 'string') {
+                        throw new Error('รูปแบบข้อมูลผู้ป่วยจาก HIS ไม่ถูกต้อง');
+                    }
+                    const hn = patient.hn.trim();
+                    const fullname = patient.fullname.trim();
+                    const hnKey = hn.toLowerCase();
+                    if (!hn || !fullname || hn.length > 50 || fullname.length > 200 || seenHns.has(hnKey)) {
+                        throw new Error('รูปแบบข้อมูลผู้ป่วยจาก HIS ไม่ถูกต้อง');
+                    }
+                    seenHns.add(hnKey);
+                    return { hn, fullname };
+                });
+
+                qsRenderHisPatients(qsHisPatients);
+                statusEl.textContent = qsHisPatients.length
+                    ? 'พบผู้ป่วย ' + qsHisPatients.length + ' คน กรุณาเลือกหนึ่งราย'
+                    : 'ไม่พบผู้ป่วยจากคำค้นหานี้';
+                statusEl.style.color = qsHisPatients.length ? 'var(--status-success-text)' : 'var(--text-tertiary)';
+                if (fallbackBtn) fallbackBtn.hidden = qsHisPatients.length > 0;
+            } catch (error) {
+                qsHisPatients = [];
+                qsRenderHisPatients([]);
+                if (fallbackBtn) fallbackBtn.hidden = false;
+                statusEl.textContent = (error && error.message) ? error.message : 'ไม่สามารถโหลดข้อมูลจาก HIS ได้';
+                statusEl.style.color = 'var(--status-critical-text)';
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.removeAttribute('aria-busy');
+            }
+        }
+
         // Populate Step 3's read-only summary off qsState (device + patient).
         // Called both when advancing into step 3 and when resuming from sessionStorage.
         function renderPairSummary() {
@@ -10642,6 +10779,20 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             if (nm) nm.value = '';
             const ward = document.getElementById('qs-p-ward');
             if (ward) ward.value = '';
+
+            const hisSearch = document.getElementById('qs-p-his-search');
+            if (hisSearch) hisSearch.value = '';
+            const hisStatus = document.getElementById('qs-p-his-status');
+            if (hisStatus) hisStatus.textContent = '';
+            const hisList = document.getElementById('qs-p-his-list');
+            if (hisList) hisList.innerHTML = '';
+            const hisWrap = document.getElementById('qs-p-his-table-wrap');
+            if (hisWrap) hisWrap.hidden = true;
+            const hisFallback = document.getElementById('qs-p-his-fallback-btn');
+            if (hisFallback) hisFallback.hidden = true;
+            const manualFields = document.getElementById('qs-p-manual-fields');
+            if (manualFields) manualFields.hidden = true;
+            qsHisPatients = [];
 
             const bed = document.getElementById('qs-pair-bed');
             if (bed) bed.value = '';
@@ -10752,6 +10903,11 @@ app.get('/quick-setup', requireCapability('devices:write'), async (req, res) => 
             const pModeExisting = document.getElementById('qs-p-mode-existing');
             if (pModeNew) pModeNew.addEventListener('click', () => setPatientMode(false));
             if (pModeExisting) pModeExisting.addEventListener('click', () => setPatientMode(true));
+
+            const pHisLoadBtn = document.getElementById('qs-p-his-load-btn');
+            if (pHisLoadBtn) pHisLoadBtn.addEventListener('click', qsLoadHisPatients);
+            const pHisFallbackBtn = document.getElementById('qs-p-his-fallback-btn');
+            if (pHisFallbackBtn) pHisFallbackBtn.addEventListener('click', qsShowManualFields);
 
             const pSubmitNew = document.getElementById('qs-p-submit-new');
             if (pSubmitNew) {
