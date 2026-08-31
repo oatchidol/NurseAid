@@ -1,6 +1,6 @@
 {
   "name": "nurseaid",
-  "version": "2.20.2",
+  "version": "2.21.0",
   "main": "server.js",
   "scripts": {
     "test": "node --check server.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test --test-force-exit test_wards_mgmt.js test_monitor_ai_chat.js && (cd mqtt-bridge && ../mqtt-bridge/.venv/bin/python -m unittest test_mqtt_bridge)",
