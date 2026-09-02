@@ -175,13 +175,18 @@ function initMqttClient() {
 async function publishPairedDeviceList() {
     if (!mqttClient || !mqttClient.connected) return;
     try {
+        // LEFT JOIN patients so a device whose patient has no priority row/value
+        // still publishes (defaults to 'high' below) — a device must never be
+        // silently dropped from ble/mac just because priority is unset.
         const result = await pool.query(
-            `SELECT mac, device_no, hm_number, name, bed_no,
-                    COALESCE(device_type, 'jstyle') AS device_type
-             FROM nurseaid
-             WHERE mac IS NOT NULL AND mac <> ''
-               AND NULLIF(BTRIM(hm_number), '') IS NOT NULL
-             ORDER BY device_no`
+            `SELECT n.mac, n.device_no, n.hm_number, n.name, n.bed_no,
+                    COALESCE(n.device_type, 'jstyle') AS device_type,
+                    COALESCE(p.priority, 'high') AS priority
+             FROM nurseaid n
+             LEFT JOIN patients p ON LOWER(p.hn_number) = LOWER(n.hm_number)
+             WHERE n.mac IS NOT NULL AND n.mac <> ''
+               AND NULLIF(BTRIM(n.hm_number), '') IS NOT NULL
+             ORDER BY n.device_no`
         );
         const payload = JSON.stringify({
             devices: result.rows,
@@ -195,6 +200,18 @@ async function publishPairedDeviceList() {
         // Publish a simple MAC array specifically for ESP32 memory-constrained parsing
         const macArray = result.rows.map(row => row.mac);
         mqttClient.publish('ble/mac', JSON.stringify(macArray), { qos: 1, retain: true });
+
+        // Publish priority per MAC for the ESP32 firmware's measurement-frequency
+        // scheduling (high = always-on, medium/low = periodic connect to save
+        // watch battery). Format matches the firmware's permissive parser exactly:
+        // "MAC:priority" pairs, comma-separated. Every paired device is listed
+        // explicitly (defaulting to 'high') so an unset priority never leaves a
+        // stale medium/low scheduling in effect on the board.
+        const priorityPayload = result.rows.map(row => `${row.mac}:${row.priority}`).join(',');
+        mqttClient.publish('ble/priority', priorityPayload, { qos: 1, retain: true }, (err) => {
+            if (err) console.error('[MQTT] Publish priority list failed:', err.message);
+            else console.log(`[MQTT] Published priority for ${result.rows.length} device(s) to ble/priority`);
+        });
     } catch (e) {
         console.error('[MQTT] Error querying paired devices:', e.message);
     }
@@ -8515,6 +8532,9 @@ app.post('/api/patients/priority', requireCapability('patients:priority:write'),
         );
         if (!result.rows.length) return res.status(404).json({ error: 'Patient not found or access denied' });
         logAudit(req, 'UPDATE', 'patient_priority', hn, { priority, ward_id: result.rows[0].ward_id }).catch(console.error);
+        // Push the new priority to the ESP32 firmware immediately — without this,
+        // the dropdown only updates the DB and the board never learns about it.
+        publishPairedDeviceList().catch(console.error);
         res.json({ success: true, priority });
     } catch (error) {
         console.error('[Patient Priority]', error.message);
