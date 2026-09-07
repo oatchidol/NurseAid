@@ -11156,6 +11156,25 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: var(--bg-input); color: var(--text-primary);">git pull&#10;docker compose up -d --build</pre>
             </div>
         </div>
+
+        <div class="rounded-2xl border p-5 md:p-6 mt-6" style="background: var(--bg-card); border-color: var(--border-color);">
+            <h3 class="text-lg font-black mb-1" style="color: var(--text-heading);">อัปเดตเฟิร์มแวร์ ESP32</h3>
+            <p class="text-sm mb-4" style="color: var(--text-secondary);">อัปโหลดไฟล์ .bin แล้วทดสอบกับเครื่อง canary 1 เครื่องก่อน จึงจะเลือกส่งไปหลายเครื่องได้</p>
+
+            <form id="firmware-upload-form" class="flex flex-col sm:flex-row gap-3 mb-5" onsubmit="return false;">
+                <input type="file" id="firmware-file-input" accept=".bin" required class="text-sm">
+                <input type="text" id="firmware-version-input" placeholder="เวอร์ชัน เช่น 1.3.0" required maxlength="40"
+                       class="rounded-xl border px-3 py-2 text-sm" style="background: var(--bg-input); border-color: var(--border-color);">
+                <input type="text" id="firmware-notes-input" placeholder="เปลี่ยนแปลงอะไรบ้าง (ไม่บังคับ)"
+                       class="flex-1 rounded-xl border px-3 py-2 text-sm" style="background: var(--bg-input); border-color: var(--border-color);">
+                <button type="button" onclick="uploadFirmware()" id="firmware-upload-btn"
+                        class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg"
+                        style="background: var(--accent-primary-strong); color: var(--text-inverse);">อัปโหลด</button>
+            </form>
+            <p id="firmware-upload-status" class="text-sm mb-4" style="color: var(--text-secondary);"></p>
+
+            <div id="firmware-version-list"></div>
+        </div>
     `, `
         let updateCheckController = null;
         let lastUpdateCheckData = null;
@@ -11387,6 +11406,105 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 await new Promise(res => setTimeout(res, 5000));
             }
         }
+
+let firmwareDeployPollTimer = null;
+
+async function loadFirmwareVersions() {
+    const r = await fetch('/api/firmware/versions');
+    const data = await r.json().catch(() => ({}));
+    const list = document.getElementById('firmware-version-list');
+    list.replaceChildren();
+    (data.versions || []).forEach(v => {
+        const row = document.createElement('div');
+        row.className = 'rounded-xl border p-3 mb-2 flex items-center justify-between gap-3';
+        row.style.background = 'var(--bg-input)';
+        const label = document.createElement('div');
+        label.innerHTML = '<span class="font-bold">v' + escapeHTML(v.version) + '</span>' +
+            (v.canary_passed ? ' <span class="text-xs text-green-700">canary ผ่านแล้ว</span>' : ' <span class="text-xs text-amber-700">ยังไม่ผ่าน canary</span>') +
+            (v.notes ? '<div class="text-xs" style="color:var(--text-secondary);">' + escapeHTML(v.notes) + '</div>' : '');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        btn.style.background = 'var(--accent-primary-strong)';
+        btn.style.color = 'var(--text-inverse)';
+        btn.textContent = 'ส่งไปเครื่อง...';
+        btn.onclick = () => openFirmwareDeployPicker(v.id, Boolean(v.canary_passed));
+        row.appendChild(label);
+        row.appendChild(btn);
+        list.appendChild(row);
+    });
+}
+
+async function uploadFirmware() {
+    const fileInput = document.getElementById('firmware-file-input');
+    const versionInput = document.getElementById('firmware-version-input');
+    const notesInput = document.getElementById('firmware-notes-input');
+    const statusEl = document.getElementById('firmware-upload-status');
+    if (!fileInput.files[0] || !versionInput.value.trim()) {
+        statusEl.textContent = 'กรุณาเลือกไฟล์ .bin และกรอกเวอร์ชัน';
+        return;
+    }
+    const fd = new FormData();
+    fd.append('firmware', fileInput.files[0]);
+    fd.append('version', versionInput.value.trim());
+    fd.append('notes', notesInput.value.trim());
+    statusEl.textContent = 'กำลังอัปโหลด...';
+    try {
+        const r = await fetch('/api/firmware/upload', { method: 'POST', body: fd });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'UPLOAD_FAILED');
+        statusEl.textContent = 'อัปโหลดสำเร็จ: v' + escapeHTML(data.version);
+        fileInput.value = ''; versionInput.value = ''; notesInput.value = '';
+        loadFirmwareVersions();
+    } catch (e) {
+        statusEl.textContent = 'อัปโหลดล้มเหลว: ' + escapeHTML(e.message);
+    }
+}
+
+async function openFirmwareDeployPicker(versionId, canaryPassed) {
+    const r = await fetch('/api/esp32-nodes');
+    const data = await r.json().catch(() => ({}));
+    const nodes = data.nodes || [];
+    if (!nodes.length) { alert('ไม่พบเครื่อง ESP32'); return; }
+    const options = nodes.map(n => n.boardMac + (n.description ? ' - ' + n.description : '')).join('\\n');
+    const chosen = prompt(
+        (canaryPassed ? 'พิมพ์ MAC เครื่องที่จะส่ง (คั่นด้วย , ได้หลายเครื่อง)' : 'พิมพ์ MAC เครื่อง canary 1 เครื่อง') +
+        '\\n\\nเครื่องที่มี:\\n' + options
+    );
+    if (!chosen) return;
+    const targets = chosen.split(',').map(s => s.trim()).filter(Boolean);
+    const confirmed = await confirmAction({
+        title: 'ยืนยันการ deploy เฟิร์มแวร์',
+        kind: 'danger',
+        body: '<p>จะส่งเฟิร์มแวร์ไปยัง ' + targets.length + ' เครื่อง</p>',
+        confirmText: 'Deploy'
+    });
+    if (!confirmed) return;
+    const r2 = await fetch('/api/firmware/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionId, targets })
+    });
+    const result = await r2.json();
+    if (!r2.ok) { alert('Deploy ล้มเหลว: ' + (result.message || result.error)); return; }
+    pollFirmwareDeployments(versionId);
+}
+
+async function pollFirmwareDeployments(versionId) {
+    if (firmwareDeployPollTimer) clearInterval(firmwareDeployPollTimer);
+    const poll = async () => {
+        const r = await fetch('/api/firmware/deployments?versionId=' + versionId);
+        const data = await r.json().catch(() => ({}));
+        const rows = data.deployments || [];
+        const allTerminal = rows.length > 0 && rows.every(d => ['success', 'no_update', 'failed', 'timeout'].includes(d.status));
+        console.log('[Firmware] deployment status', rows);
+        if (allTerminal) { clearInterval(firmwareDeployPollTimer); loadFirmwareVersions(); }
+    };
+    poll();
+    firmwareDeployPollTimer = window.setInterval(poll, 3000);
+}
+
+loadFirmwareVersions();
     `));
 });
 
