@@ -128,6 +128,7 @@ services:
       - "3333:3333"
     volumes:
       - notification_sounds_data:/app/uploads/notification-sounds
+      - firmware_uploads_data:/app/uploads/firmware
       - apply_update_spool:/run/nurseaid-apply-update
       - compose_status:/run/nurseaid-compose:ro
     depends_on:
@@ -307,6 +308,8 @@ volumes:
   mosquitto_data:
     driver: local
   notification_sounds_data:
+    driver: local
+  firmware_uploads_data:
     driver: local
 
 networks:
