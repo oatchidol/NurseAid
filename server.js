@@ -874,7 +874,11 @@ async function logAudit(req, action, entityType, entityId, details) {
 
 const publicPaths = new Set(['/login', '/api/login', '/health', '/health/live', '/health/ready']);
 app.use(async (req, res, next) => {
-    if (publicPaths.has(req.path)) return next();
+    // /fw/<token>/firmware.bin is deliberately unauthenticated (see the route
+    // itself) — the ESP32's HTTPUpdate client can't do cookie/session auth,
+    // so it can't be an exact entry in publicPaths (the token varies per
+    // download) and needs a prefix check instead.
+    if (publicPaths.has(req.path) || req.path.startsWith('/fw/')) return next();
 
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
     let claims;
