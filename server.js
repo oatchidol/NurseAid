@@ -12263,6 +12263,19 @@ try { fs.mkdirSync(FIRMWARE_UPLOAD_DIR, { recursive: true }); } catch (e) { cons
 
 const FIRMWARE_MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB — ESP32 app partitions are typically ~1.3-1.9MB
 
+// The ESP32 firmware's doHttpOta() connects with a plain WiFiClient (no TLS —
+// see firmware/nurseaid_esp32.ino), so the OTA download URL must always be
+// plain http:// on this app's own port, regardless of what scheme the admin's
+// own browser used. 'trust proxy' (line ~49) makes req.protocol correctly
+// report "https" for the admin's session through the edge reverse proxy —
+// exactly the value that must NOT be reused here, or a real device gets an
+// https:// URL it cannot open (confirmed live: HTTPUpdate error -104 "Wrong
+// HTTP Code", the plain client's connection being reset by the TLS port).
+// Set this explicitly per site if the device-reachable LAN address/port
+// differs from req.hostname (e.g. the public hostname isn't reachable from
+// the hospital LAN on this app's port) — e.g. "http://172.16.251.45:3333".
+const FIRMWARE_OTA_BASE_URL = process.env.FIRMWARE_OTA_BASE_URL || '';
+
 const firmwareUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: FIRMWARE_MAX_UPLOAD_BYTES },
@@ -12344,7 +12357,7 @@ app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), as
         const gate = canDeployToTargets(existingDeployments.rows, targets.length);
         if (!gate.allowed) return res.status(400).json({ error: 'CANARY_REQUIRED', message: gate.reason });
 
-        const origin = APP_ORIGIN || `${req.protocol}://${req.get('host')}`;
+        const origin = FIRMWARE_OTA_BASE_URL || `http://${req.hostname}:${PORT}`;
         const url = `${origin}/fw/${download_token}/firmware.bin`;
         if (!isValidOtaUrl(url)) return res.status(500).json({ error: 'INVALID_URL' });
 
