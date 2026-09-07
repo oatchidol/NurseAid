@@ -12330,8 +12330,15 @@ app.get('/fw/:token/firmware.bin', async (req, res) => {
         );
         if (!result.rows.length) return res.status(404).end();
         const filePath = path.join(FIRMWARE_UPLOAD_DIR, result.rows[0].filename);
-        if (!fs.existsSync(filePath)) return res.status(404).end();
+        let stat;
+        try { stat = fs.statSync(filePath); } catch (e) { return res.status(404).end(); }
+        // The ESP32's HTTPUpdate client requires Content-Length up front to
+        // size the OTA partition write — without it (the default when a
+        // stream is piped with no explicit header, which sends chunked
+        // transfer-encoding instead) it fails with "Server Did Not Report
+        // Size" before ever reading a byte of the body. Confirmed live.
         res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', stat.size);
         fs.createReadStream(filePath).pipe(res);
     } catch (e) {
         console.error('[Firmware Serve]', e.message);
