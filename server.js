@@ -11412,6 +11412,22 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
         }
 
 let firmwareDeployPollTimer = null;
+let firmwareOpenVersionId = null;
+
+const FIRMWARE_STATUS_META = {
+    pending:   { label: 'รอส่งคำสั่ง',                        color: 'var(--text-tertiary)' },
+    start:     { label: 'กำลังอัปเดต...',                     color: 'var(--status-warning-text)' },
+    success:   { label: 'สำเร็จ',                             color: 'var(--status-success-text)' },
+    no_update: { label: 'เครื่องปฏิเสธ (ไม่มีอัปเดตใหม่)',      color: 'var(--text-tertiary)' },
+    failed:    { label: 'ล้มเหลว',                             color: 'var(--status-critical-text)' },
+    timeout:   { label: 'หมดเวลารอ',                          color: 'var(--status-critical-text)' }
+};
+
+function firmwareBadgeHtml(canaryPassed) {
+    return canaryPassed
+        ? '<span class="text-xs" style="color:var(--status-success-text);">canary ผ่านแล้ว</span>'
+        : '<span class="text-xs" style="color:var(--status-warning-text);">ยังไม่ผ่าน canary</span>';
+}
 
 async function loadFirmwareVersions() {
     const r = await fetch('/api/firmware/versions');
@@ -11419,24 +11435,192 @@ async function loadFirmwareVersions() {
     const list = document.getElementById('firmware-version-list');
     list.replaceChildren();
     (data.versions || []).forEach(v => {
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-xl border mb-2';
+        wrap.style.background = 'var(--bg-input)';
+        wrap.style.borderColor = 'var(--border-color)';
+
         const row = document.createElement('div');
-        row.className = 'rounded-xl border p-3 mb-2 flex items-center justify-between gap-3';
-        row.style.background = 'var(--bg-input)';
+        row.className = 'p-3 flex items-center justify-between gap-3';
         const label = document.createElement('div');
-        label.innerHTML = '<span class="font-bold">v' + escapeHTML(v.version) + '</span>' +
-            (v.canary_passed ? ' <span class="text-xs text-green-700">canary ผ่านแล้ว</span>' : ' <span class="text-xs text-amber-700">ยังไม่ผ่าน canary</span>') +
+        label.innerHTML = '<span class="font-bold">v' + escapeHTML(v.version) + '</span> ' +
+            '<span id="firmware-badge-' + v.id + '">' + firmwareBadgeHtml(Boolean(v.canary_passed)) + '</span>' +
             (v.notes ? '<div class="text-xs" style="color:var(--text-secondary);">' + escapeHTML(v.notes) + '</div>' : '');
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
         btn.style.background = 'var(--accent-primary-strong)';
         btn.style.color = 'var(--text-inverse)';
-        btn.textContent = 'ส่งไปเครื่อง...';
-        btn.onclick = () => openFirmwareDeployPicker(v.id, Boolean(v.canary_passed));
+        btn.textContent = firmwareOpenVersionId === v.id ? 'ปิด' : 'ส่งไปเครื่อง...';
+        btn.onclick = () => toggleFirmwareDeployPanel(v.id);
         row.appendChild(label);
         row.appendChild(btn);
-        list.appendChild(row);
+        wrap.appendChild(row);
+
+        const panel = document.createElement('div');
+        panel.id = 'firmware-panel-' + v.id;
+        panel.className = firmwareOpenVersionId === v.id ? 'px-3 pb-3' : 'hidden px-3 pb-3';
+        wrap.appendChild(panel);
+
+        list.appendChild(wrap);
     });
+    if (firmwareOpenVersionId) renderFirmwareDeployPanel(firmwareOpenVersionId);
+}
+
+async function toggleFirmwareDeployPanel(versionId) {
+    if (firmwareDeployPollTimer) { clearInterval(firmwareDeployPollTimer); firmwareDeployPollTimer = null; }
+    firmwareOpenVersionId = (firmwareOpenVersionId === versionId) ? null : versionId;
+    loadFirmwareVersions();
+}
+
+async function renderFirmwareDeployPanel(versionId) {
+    const panel = document.getElementById('firmware-panel-' + versionId);
+    if (!panel) return;
+    panel.replaceChildren();
+
+    const msgEl = document.createElement('p');
+    msgEl.id = 'firmware-panel-msg-' + versionId;
+    msgEl.className = 'text-xs mb-2';
+    msgEl.style.color = 'var(--text-secondary)';
+    msgEl.textContent = 'กำลังโหลดรายชื่อเครื่อง...';
+    panel.appendChild(msgEl);
+
+    const [nodesRes, vRes] = await Promise.all([
+        fetch('/api/esp32-nodes'),
+        fetch('/api/firmware/versions')
+    ]);
+    const nodesData = await nodesRes.json().catch(() => ({}));
+    const vData = await vRes.json().catch(() => ({}));
+    const nodes = nodesData.nodes || [];
+    const versionRow = (vData.versions || []).find(x => x.id === versionId);
+    const canaryPassed = Boolean(versionRow && versionRow.canary_passed);
+
+    if (!nodes.length) {
+        msgEl.textContent = 'ไม่พบเครื่อง ESP32 ที่จับคู่ไว้';
+        return;
+    }
+
+    msgEl.textContent = canaryPassed
+        ? 'canary ผ่านแล้ว — เลือกได้หลายเครื่อง'
+        : 'ยังไม่ผ่าน canary — เลือกทดสอบได้แค่ 1 เครื่องก่อน';
+
+    const pickList = document.createElement('div');
+    pickList.className = 'flex flex-col gap-1 mb-3';
+    nodes.forEach(n => {
+        const item = document.createElement('label');
+        item.className = 'flex items-center gap-2 text-xs';
+        const input = document.createElement('input');
+        input.type = canaryPassed ? 'checkbox' : 'radio';
+        input.name = 'firmware-target-' + versionId;
+        input.className = 'firmware-target-input-' + versionId;
+        input.value = n.boardMac;
+        const span = document.createElement('span');
+        span.textContent = (n.status === 'connected' ? '🟢 ' : '⚪ ') + n.boardMac +
+            (n.description ? ' - ' + n.description : '') +
+            (n.status === 'connected' ? ' (ออนไลน์)' : ' (ออฟไลน์)');
+        item.appendChild(input);
+        item.appendChild(span);
+        pickList.appendChild(item);
+    });
+    panel.appendChild(pickList);
+
+    const deployBtn = document.createElement('button');
+    deployBtn.type = 'button';
+    deployBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold mb-3';
+    deployBtn.style.background = 'var(--status-warning-text)';
+    deployBtn.style.color = 'var(--text-inverse)';
+    deployBtn.textContent = 'Deploy';
+    deployBtn.onclick = () => submitFirmwareDeploy(versionId);
+    panel.appendChild(deployBtn);
+
+    const statusList = document.createElement('div');
+    statusList.id = 'firmware-status-list-' + versionId;
+    statusList.className = 'flex flex-col gap-1';
+    panel.appendChild(statusList);
+
+    pollFirmwareDeployments(versionId);
+}
+
+async function submitFirmwareDeploy(versionId) {
+    const inputs = document.querySelectorAll('.firmware-target-input-' + versionId + ':checked');
+    const targets = Array.from(inputs).map(el => el.value);
+    const msgEl = document.getElementById('firmware-panel-msg-' + versionId);
+    if (!targets.length) { if (msgEl) msgEl.textContent = 'กรุณาเลือกเครื่องอย่างน้อย 1 เครื่อง'; return; }
+
+    const confirmed = await confirmAction({
+        title: 'ยืนยันการ deploy เฟิร์มแวร์',
+        kind: 'danger',
+        body: '<p>จะส่งเฟิร์มแวร์ไปยัง ' + targets.length + ' เครื่อง</p>',
+        confirmText: 'Deploy'
+    });
+    if (!confirmed) return;
+
+    if (msgEl) msgEl.textContent = 'กำลังส่งคำสั่ง...';
+    try {
+        const r = await fetch('/api/firmware/deploy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ versionId, targets })
+        });
+        const result = await r.json();
+        if (!r.ok) {
+            if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + (result.message || result.error);
+            return;
+        }
+        if (msgEl) msgEl.textContent = 'ส่งคำสั่งแล้ว กำลังรอผลตอบกลับจากเครื่อง...';
+        pollFirmwareDeployments(versionId);
+    } catch (e) {
+        if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + escapeHTML(e.message);
+    }
+}
+
+async function pollFirmwareDeployments(versionId) {
+    if (firmwareDeployPollTimer) clearInterval(firmwareDeployPollTimer);
+    const poll = async () => {
+        const r = await fetch('/api/firmware/deployments?versionId=' + versionId);
+        const data = await r.json().catch(() => ({}));
+        const rows = data.deployments || [];
+        const statusList = document.getElementById('firmware-status-list-' + versionId);
+        if (statusList) {
+            statusList.replaceChildren();
+            if (!rows.length) {
+                const p = document.createElement('p');
+                p.className = 'text-xs';
+                p.style.color = 'var(--text-tertiary)';
+                p.textContent = 'ยังไม่เคยส่งไปเครื่องไหนเลย';
+                statusList.appendChild(p);
+            }
+            rows.forEach(d => {
+                const meta = FIRMWARE_STATUS_META[d.status] || { label: d.status, color: 'var(--text-tertiary)' };
+                const item = document.createElement('div');
+                item.className = 'text-xs rounded-lg p-2';
+                item.style.background = 'var(--bg-card)';
+                item.innerHTML =
+                    '<span class="font-bold">' + escapeHTML(d.board_mac) + '</span> — ' +
+                    '<span style="color:' + meta.color + '; font-weight:700;">' + escapeHTML(meta.label) + '</span>' +
+                    (d.detail ? '<div style="color:var(--text-secondary);">' + escapeHTML(d.detail) + '</div>' : '') +
+                    (d.reported_version ? '<div style="color:var(--text-tertiary);">รายงานเวอร์ชัน: ' + escapeHTML(d.reported_version) + '</div>' : '');
+                statusList.appendChild(item);
+            });
+        }
+        const allTerminal = rows.length > 0 && rows.every(d => ['success', 'no_update', 'failed', 'timeout'].includes(d.status));
+        if (allTerminal) {
+            clearInterval(firmwareDeployPollTimer);
+            firmwareDeployPollTimer = null;
+            const hasSuccess = rows.some(d => d.status === 'success');
+            const badgeEl = document.getElementById('firmware-badge-' + versionId);
+            const wasPassedAlready = Boolean(badgeEl && badgeEl.textContent.indexOf('ผ่านแล้ว') >= 0);
+            if (badgeEl) badgeEl.innerHTML = firmwareBadgeHtml(hasSuccess);
+            if (hasSuccess && !wasPassedAlready) {
+                // Canary just passed for the first time — re-render the panel
+                // so the picker switches from single-select (radio) to
+                // multi-select (checkbox) without a manual close/reopen.
+                renderFirmwareDeployPanel(versionId);
+            }
+        }
+    };
+    poll();
+    firmwareDeployPollTimer = window.setInterval(poll, 3000);
 }
 
 async function uploadFirmware() {
@@ -11463,49 +11647,6 @@ async function uploadFirmware() {
     } catch (e) {
         statusEl.textContent = 'อัปโหลดล้มเหลว: ' + escapeHTML(e.message);
     }
-}
-
-async function openFirmwareDeployPicker(versionId, canaryPassed) {
-    const r = await fetch('/api/esp32-nodes');
-    const data = await r.json().catch(() => ({}));
-    const nodes = data.nodes || [];
-    if (!nodes.length) { alert('ไม่พบเครื่อง ESP32'); return; }
-    const options = nodes.map(n => n.boardMac + (n.description ? ' - ' + n.description : '')).join('\\n');
-    const chosen = prompt(
-        (canaryPassed ? 'พิมพ์ MAC เครื่องที่จะส่ง (คั่นด้วย , ได้หลายเครื่อง)' : 'พิมพ์ MAC เครื่อง canary 1 เครื่อง') +
-        '\\n\\nเครื่องที่มี:\\n' + options
-    );
-    if (!chosen) return;
-    const targets = chosen.split(',').map(s => s.trim()).filter(Boolean);
-    const confirmed = await confirmAction({
-        title: 'ยืนยันการ deploy เฟิร์มแวร์',
-        kind: 'danger',
-        body: '<p>จะส่งเฟิร์มแวร์ไปยัง ' + targets.length + ' เครื่อง</p>',
-        confirmText: 'Deploy'
-    });
-    if (!confirmed) return;
-    const r2 = await fetch('/api/firmware/deploy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ versionId, targets })
-    });
-    const result = await r2.json();
-    if (!r2.ok) { alert('Deploy ล้มเหลว: ' + (result.message || result.error)); return; }
-    pollFirmwareDeployments(versionId);
-}
-
-async function pollFirmwareDeployments(versionId) {
-    if (firmwareDeployPollTimer) clearInterval(firmwareDeployPollTimer);
-    const poll = async () => {
-        const r = await fetch('/api/firmware/deployments?versionId=' + versionId);
-        const data = await r.json().catch(() => ({}));
-        const rows = data.deployments || [];
-        const allTerminal = rows.length > 0 && rows.every(d => ['success', 'no_update', 'failed', 'timeout'].includes(d.status));
-        console.log('[Firmware] deployment status', rows);
-        if (allTerminal) { clearInterval(firmwareDeployPollTimer); loadFirmwareVersions(); }
-    };
-    poll();
-    firmwareDeployPollTimer = window.setInterval(poll, 3000);
 }
 
 loadFirmwareVersions();
