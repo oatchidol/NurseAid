@@ -56,7 +56,7 @@ COPY --chown=appuser:appgroup public ./public
 # Per-user uploaded alert sounds live here (volume-mounted so they survive
 # container recreation) — owned by appuser upfront since the app runs as
 # appuser and writes into it at runtime.
-RUN mkdir -p /app/uploads/notification-sounds && chown -R appuser:appgroup /app/uploads
+RUN mkdir -p /app/uploads/notification-sounds /app/uploads/firmware && chown -R appuser:appgroup /app/uploads
 
 # Expose port
 EXPOSE 3333
