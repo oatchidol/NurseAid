@@ -124,6 +124,14 @@ services:
       - AI_CONVERSATION_MAX_TOKENS=${AI_CONVERSATION_MAX_TOKENS:-4096}
       - NURSEAID_ESP32_TOPOLOGY_FILE=/run/nurseaid-compose/mqtt-sensors.json
       - NURSEAID_ESP32_SOURCE_STALE_SECONDS=${NURSEAID_ESP32_SOURCE_STALE_SECONDS:-15}
+      # ESP32 firmware OTA download URL (see server.js FIRMWARE_OTA_BASE_URL).
+      # Left blank here on purpose — ops/nurseaid-compose-collector.py
+      # re-detects this host's current LAN IP and injects it into its own
+      # process env fresh on every apply-update deploy (DHCP can reassign
+      # it between deploys), which Compose picks up ahead of any stale
+      # value that might otherwise sit in .env. A manually-exported value
+      # in the invoking shell still overrides the auto-detected one.
+      - FIRMWARE_OTA_BASE_URL=${FIRMWARE_OTA_BASE_URL:-}
     ports:
       - "3333:3333"
     volumes:
