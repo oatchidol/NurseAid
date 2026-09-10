@@ -2152,7 +2152,7 @@ const DESIGN_TOKENS = `
             --accent-red: #ef4444;
             --accent-amber: #f59e0b;
             --priority-high: #a855f7;
-            --priority-medium: #64748b;
+            --priority-medium: #3b82f6;
             --priority-low: #94a3b8;
             --accent-secondary: #8b5cf6;
             --accent-red-light: #fecaca;
@@ -2174,7 +2174,7 @@ const DESIGN_TOKENS = `
             --status-warning-text: #946005;    /* worst 4.83 · white-on-it 5.34 */
             --status-temp-text: #c2410c;       /* worst 4.69 · Body Temperature readings */
             --priority-high-text: #9333ea;     /* worst 4.87 · priority marker AS TEXT */
-            --priority-medium-text: #475569;   /* worst 6.92 */
+            --priority-medium-text: #1d4ed8;   /* 6.70 on --bg-card #ffffff */
             --priority-low-text: #5b6777;      /* worst 5.25 */
 
             /* --accent-primary (#3b82f6) is correct for borders, focus rings, icons and chart
@@ -2350,7 +2350,7 @@ const DESIGN_TOKENS = `
             --accent-red: #f85149;
             --accent-amber: #d29922;
             --priority-high: #c084fc;
-            --priority-medium: #94a3b8;
+            --priority-medium: #60a5fa;
             --priority-low: #64748b;
             --accent-secondary: #bc8cff;
             --accent-red-light: rgba(248, 81, 73, 0.15);
@@ -2363,7 +2363,7 @@ const DESIGN_TOKENS = `
             --status-warning-text: #d29922;    /* worst 6.41 */
             --status-temp-text: #ffa657;       /* worst 8.36 */
             --priority-high-text: #c084fc;     /* worst 6.12 */
-            --priority-medium-text: #b6bec9;   /* worst 7.4 on dark surfaces */
+            --priority-medium-text: #60a5fa;   /* 6.80 on --bg-card #161b22 */
             --priority-low-text: #9aa4b0;      /* worst 5.6 */
 
             /* Dark accents are LIGHT, so text on them must be --text-inverse (#0d1117),
@@ -2840,7 +2840,16 @@ ${ICON_SET}
            readable in greyscale or to a colour-blind reader. The Thai label inside the control
            is the non-colour signal WCAG 2.2 AA requires. Every pairing below was measured
            against --bg-card in BOTH themes: worst text 4.66 (light high), worst non-text
-           border 3.03 (light low). */
+           border 3.03 (light low).
+           'medium' is BLUE, not the slate it used to be. Slate against the grey of 'low' read
+           as one colour at arm's length, which defeated the point of a three-step scale -
+           the two settings that actually change how often the watch is measured were the two
+           nobody could tell apart. Blue is the only strong hue left once green/amber/red are
+           reserved for vitals and purple is taken by 'high'. Measured on --bg-card: #1d4ed8
+           6.70 on white, #60a5fa 6.80 on #161b22.
+           The measurement cadence each step buys is spelled out in the <optgroup> labels of
+           the select, so the trade-off is visible at the moment of choosing rather than
+           buried in a manual - picking 'low' means accepting a ten minute blind spot. */
         .priority-select, .priority-readonly {
             font-family: inherit;
             font-size: var(--fs-label);
@@ -7688,9 +7697,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
                             <option value="">ไม่ระบุ</option>
-                            <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
-                            <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
-                            <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
+                            <optgroup label="วัดต่อเนื่อง ไม่พัก">
+                                <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
+                            </optgroup>
+                            <optgroup label="วัดทุก 5 นาที · ประหยัดแบตนาฬิกา">
+                                <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
+                            </optgroup>
+                            <optgroup label="วัดทุก 10 นาที · ประหยัดแบตมากสุด">
+                                <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
+                            </optgroup>
                         </select>
                         <button type="button" data-action="open-config" class="admin-only shrink-0 p-1 transition-colors \${settingsColor}" aria-label="ตั้งค่าขีดจำกัดรายบุคคล">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
