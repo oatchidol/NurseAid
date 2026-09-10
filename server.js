@@ -8240,7 +8240,7 @@ async function esp32NodesForUi(req) {
     const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const registry = await pool.query(
         `SELECT board_mac, node_id, ip_address, last_fw_version, last_seen_at,
-                broker_state, broker_state_addr, broker_state_at
+                broker_state, broker_state_addr, broker_state_at, revoked_at
            FROM esp32_nodes`
     );
     const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
