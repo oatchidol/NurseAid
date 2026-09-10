@@ -1280,6 +1280,13 @@ async function initDatabase() {
             revoked_at TIMESTAMP,
             revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL
         )`,
+        // Keep deleted boards hidden even when the collector still publishes them.
+        `CREATE TABLE IF NOT EXISTS esp32_node_decommissioned (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            node_id VARCHAR(64),
+            decommissioned_at TIMESTAMP DEFAULT NOW(),
+            decommissioned_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        )`,
         // esp32_node_events is an append-only transition log. A board is "currently
         // offline" when its latest online/offline event is `offline`. Used to drive
         // the ESP32-specific offline alert threshold without relying on heartbeat
@@ -6357,11 +6364,10 @@ async function recordEsp32Event(boardMac, nodeId, eventType, detail) {
 }
 
 /**
- * Clear the revoke markers on a board that has just proven it is alive, and log
- * a `restored` event. Safe to call unconditionally: the guarded UPDATE is a
- * no-op on a board that is not revoked, so callers need no pre-check. Doing it
- * as one guarded UPDATE rather than SELECT-then-UPDATE also closes the race
- * where two messages arriving together each logged their own restore event.
+ * Clear the revoke markers and tombstone on a board that has just proven it is
+ * alive, and log a `restored` event. Safe to call unconditionally: the guarded
+ * UPDATE and DELETE are no-ops when there is nothing to restore, so callers
+ * need no pre-check.
  *
  * Call this ONLY from non-retained MQTT paths — the bare heartbeat topic
  * (ble/node/<id>) and the inventory topic (ble/esp32). The retained /boot topic
@@ -6378,7 +6384,12 @@ async function restoreEsp32NodeIfRevoked(boardMac, nodeId, reason) {
              WHERE board_mac = $1 AND revoked_at IS NOT NULL`,
             [String(boardMac)]
         );
-        if (result.rowCount > 0) {
+        // Live MQTT traffic must also restore boards with no registry row left.
+        const decommissioned = await pool.query(
+            'DELETE FROM esp32_node_decommissioned WHERE board_mac = $1',
+            [String(boardMac)]
+        );
+        if (result.rowCount > 0 || decommissioned.rowCount > 0) {
             await recordEsp32Event(boardMac, nodeId, 'restored', { reason });
             return true;
         }
@@ -8244,6 +8255,8 @@ async function esp32NodesForUi(req) {
            FROM esp32_nodes`
     );
     const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    const decommissioned = await pool.query('SELECT board_mac FROM esp32_node_decommissioned');
+    const decommissionedMacs = new Set(decommissioned.rows.map(row => String(row.board_mac || '').toUpperCase()));
     // Revoked (hidden) boards are excluded from the main nodes array and from
     // every summary count below, including offlineCount — a hidden board must
     // never contribute to the offline alarm. They are returned as their own list
@@ -8259,7 +8272,7 @@ async function esp32NodesForUi(req) {
           ORDER BY n.revoked_at DESC`
     );
     const revokedNowMs = Date.now();
-    const revokedNodes = revokedResult.rows.map(row => {
+    const revokedNodes = revokedResult.rows.filter(row => !decommissionedMacs.has(String(row.board_mac || '').toUpperCase())).map(row => {
         const lastSeenAt = row.last_seen_at || null;
         const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
         return {
@@ -8316,8 +8329,10 @@ async function esp32NodesForUi(req) {
 
     // Exclude revoked boards from the dashboard. A revoked board is hidden but
     // still in the registry so it auto-restores when it proves it is alive again.
+    // Tombstones also hide snapshot-only boards across collector rewrites.
     const activeTopologyNodes = topology.nodes.filter(
         node => !registryByMac.get(String(node.boardMac || '').toUpperCase())?.revoked_at
+            && !decommissionedMacs.has(String(node.boardMac || '').toUpperCase())
     );
     const nodes = activeTopologyNodes.map(node => {
         const meta = metadataByMac.get(node.boardMac) || {};
@@ -8454,7 +8469,8 @@ async function esp32NodesForUi(req) {
             connectedJstyle: nodes.reduce((sum, node) => sum + node.connectedJstyleCount, 0),
             patients: nodes.reduce((sum, node) => sum + node.patients.length, 0),
             offlineCount: nodes.filter(node => node.currentlyOffline === true).length,
-            revokedCount
+            revokedCount,
+            decommissionedCount: decommissioned.rows.length
         }
     };
 }
@@ -8512,8 +8528,19 @@ app.post('/api/esp32-nodes/:mac/revoke', requireCapability('devices:write'), asy
 
     try {
         const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
-        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
-        const nodeId = existing.rows[0].node_id;
+        let nodeId = existing.rows[0]?.node_id;
+        if (!existing.rows.length) {
+            const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+            const topologyNode = topology.nodes.find(node => node.boardMac === boardMac);
+            if (!topologyNode) return res.status(404).json({ error: 'ESP32 node not found' });
+            nodeId = topologyNode.nodeId || null;
+            // Snapshot-only boards need a durable row to hold the revoke markers.
+            await pool.query(
+                `INSERT INTO esp32_nodes (board_mac, node_id, ip_address) VALUES ($1,$2,$3)
+                 ON CONFLICT (board_mac) DO NOTHING`,
+                [boardMac, nodeId, topologyNode.ipAddress || null]
+            );
+        }
         await pool.query(
             `UPDATE esp32_nodes SET revoked_at = NOW(), revoked_by = $1 WHERE board_mac = $2`,
             [req.user.id, boardMac]
@@ -8527,7 +8554,7 @@ app.post('/api/esp32-nodes/:mac/revoke', requireCapability('devices:write'), asy
     }
 });
 
-// Restore a previously revoked board. Clears the revoke markers and records a
+// Restore a previously hidden board. Clears revoke markers and tombstones and records a
 // restored event. The UI will not expose this yet, but the endpoint exists so an
 // operator can un-hide a board without direct DB access (e.g. after a mistaken
 // revoke).
@@ -8537,8 +8564,17 @@ app.post('/api/esp32-nodes/:mac/restore', requireCapability('devices:write'), as
 
     try {
         const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
-        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
-        const nodeId = existing.rows[0].node_id;
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        const topologyNode = topology.nodes.find(node => node.boardMac === boardMac);
+        // A tombstone alone is enough to restore a board after registry deletion.
+        const decommissioned = await pool.query(
+            'DELETE FROM esp32_node_decommissioned WHERE board_mac = $1 RETURNING node_id',
+            [boardMac]
+        );
+        if (!existing.rows.length && !decommissioned.rowCount && !topologyNode) {
+            return res.status(404).json({ error: 'ESP32 node not found' });
+        }
+        const nodeId = existing.rows[0]?.node_id ?? topologyNode?.nodeId ?? decommissioned.rows[0]?.node_id ?? null;
         await pool.query(
             `UPDATE esp32_nodes SET revoked_at = NULL, revoked_by = NULL WHERE board_mac = $1`,
             [boardMac]
@@ -8562,12 +8598,18 @@ app.delete('/api/esp32-nodes/:mac', requireCapability('devices:write'), async (r
 
     try {
         const existing = await pool.query('SELECT node_id, last_seen_at FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
-        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
-        const nodeId = existing.rows[0].node_id;
-        const lastSeenAt = existing.rows[0].last_seen_at;
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        const topologyNode = topology.nodes.find(node => node.boardMac === boardMac);
+        if (!existing.rows.length && !topologyNode) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0]?.node_id ?? topologyNode?.nodeId ?? null;
+        const lastSeenAt = existing.rows[0]?.last_seen_at;
 
         // Safety guard: refuse to delete a board that is currently alive.
-        if (esp32DeleteBlockedByRecentActivity(lastSeenAt)) {
+        // Snapshot liveness also protects boards whose registry row is missing.
+        if (esp32DeleteBlockedByRecentActivity(lastSeenAt)
+            || topologyNode?.status === 'connected'
+            || (typeof topologyNode?.lastSeenAgeSeconds === 'number'
+                && topologyNode.lastSeenAgeSeconds < ESP32_DELETE_MIN_SILENCE_MS / 1000)) {
             return res.status(409).json({ error: 'ตัวรับสัญญาณนี้ยังส่งสัญญาณอยู่ ไม่สามารถลบถาวรได้ กรุณาซ่อนแทน' });
         }
 
@@ -8578,9 +8620,16 @@ app.delete('/api/esp32-nodes/:mac', requireCapability('devices:write'), async (r
             const statusResult = await client.query('DELETE FROM esp32_node_status WHERE board_mac = $1', [boardMac]);
             const metadataResult = await client.query('DELETE FROM esp32_node_metadata WHERE board_mac = $1', [boardMac]);
             await client.query('DELETE FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+            // Commit the tombstone with deletion so the snapshot cannot revive it.
+            await client.query(
+                `INSERT INTO esp32_node_decommissioned (board_mac, node_id, decommissioned_by) VALUES ($1,$2,$3)
+                 ON CONFLICT (board_mac) DO UPDATE SET decommissioned_at = NOW(), decommissioned_by = EXCLUDED.decommissioned_by, node_id = COALESCE(EXCLUDED.node_id, esp32_node_decommissioned.node_id)`,
+                [boardMac, nodeId, req.user.id]
+            );
             await client.query('COMMIT');
             logAudit(req, 'DELETE', 'esp32_node', boardMac, {
                 nodeId,
+                decommissioned: true,
                 rowsRemoved: {
                     events: eventsResult.rowCount,
                     status: statusResult.rowCount,
