@@ -117,7 +117,7 @@ class Esp32TopologyRegistry:
             except (ValueError, TypeError):
                 continue
             age = raw_sensor.get("lastSeenAgeSeconds")
-            if isinstance(age, bool) or not isinstance(age, (int, float)) or age != age:
+            if isinstance(age, bool) or not isinstance(age, (int, float)) or age != age or age < 0:
                 age = float("inf")
             candidates[board_mac] = (BoardState(node_id, board_mac, ip_address, devices), age)
 

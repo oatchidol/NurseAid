@@ -194,6 +194,24 @@ class CrossNodeDedupeTests(unittest.TestCase):
             self.assertEqual(watch_ids(first, BOARD_A), watch_ids(second, BOARD_A))
             self.assertEqual(watch_ids(first, BOARD_B), watch_ids(second, BOARD_B))
 
+    def test_cache_load_treats_a_negative_age_as_corrupt_not_freshest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mqtt-sensors.json"
+            self._write_conflicting_cache(path, age_a=-5, age_b=600)
+            registry = Esp32TopologyRegistry(path, stale_seconds=90, settle_seconds=1)
+            snapshot = registry.snapshot(now_monotonic=10)
+            self.assertEqual(watch_ids(snapshot, BOARD_A), [], "a negative age is corrupt, not fresher than fresh")
+            self.assertEqual(watch_ids(snapshot, BOARD_B), [WATCH_W])
+
+    def test_cache_load_with_every_age_negative_still_yields_one_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mqtt-sensors.json"
+            self._write_conflicting_cache(path, age_a=-5, age_b=-600)
+            registry = Esp32TopologyRegistry(path, stale_seconds=90, settle_seconds=1)
+            snapshot = registry.snapshot(now_monotonic=10)
+            owners = [mac for mac in (BOARD_A, BOARD_B) if WATCH_W in watch_ids(snapshot, mac)]
+            self.assertEqual(len(owners), 1, "a watch must belong to exactly one board")
+
 
 if __name__ == "__main__":
     unittest.main()
