@@ -55,3 +55,32 @@ skills-lock.json
 # Machine-local MCP server config for agent tooling (host paths + local
 # credentials) — not part of the deployable app, never committed.
 .mcp.json
+
+# Third-party agent skill tooling (github.com/wedsamuel1230/arduino-skills),
+# unpacked in place for firmware work. Machine-local dev tooling, not part of
+# the deployable app — same rule as skills-lock.json above. These MUST stay
+# ignored: the Apply Update pipeline's clean-tree guard treats any untracked
+# file as a local change and refuses to update.
+/skills-main/
+/firmware/.claude-plugin/
+/firmware/.codex-plugin/
+/firmware/.cursor-plugin/
+/firmware/.cursor/
+/firmware/.github/
+/firmware/.gitignore
+/firmware/docs/
+/firmware/evals/
+/firmware/references/
+/firmware/scripts/
+/firmware/skills/
+/firmware/tests/
+/firmware/AGENTS.md
+/firmware/CHANGELOG.md
+/firmware/CLAUDE.md
+/firmware/CONTRIBUTING.md
+/firmware/DEVELOPMENT.md
+/firmware/GEMINI.md
+/firmware/LICENSE
+/firmware/README.md
+/firmware/arduino-skills.md
+/firmware/plugin.json
