@@ -94,7 +94,9 @@ The function uses keyword heuristics; there is a deliberate trade-off documented
 
 - Upload `.bin` files via `POST /api/firmware/upload` → stored on disk, token generated.
 - Serve via `GET /fw/:token/firmware.bin` (requires `Content-Length` header).
-- Deploy to ESP32 nodes via MQTT (`ble/node/<id>/ota`) with status callbacks handled in `handleOtaStatusMessage`.
+- Deploy to ESP32 nodes by publishing the payload `ota <url>` to `ble/node/<id>/cmd` — always per-node, never the
+  `ble/node/all/cmd` broadcast. Nodes report progress back on `ble/node/<id>/ota`, which the app subscribes to as
+  `ble/node/+/ota` and processes in `handleOtaStatusMessage`.
 - Version metadata is persisted in PostgreSQL; edit/delete endpoints exist.
 
 ### Version tracking

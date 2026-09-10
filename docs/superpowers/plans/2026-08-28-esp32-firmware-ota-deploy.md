@@ -24,6 +24,7 @@
 ---
 
 ### Task 1: Database tables + capability string
+**Status:** ✅ Done — commit `9dabb76`
 
 **Files:**
 - Modify: `server.js:1019` (end of the `tables` array in `initDatabase()`, right after the `esp32_node_metadata` entry)
@@ -35,7 +36,7 @@
 - Produces: `roleHasCapability(role, cap)` now exported from `server.js` for tests (already existed internally at `server.js:308`; only the export is new).
 - Produces (schema): `firmware_versions(id, version, notes, filename, file_size, download_token, uploaded_by, uploaded_at)` and `firmware_deployments(id, version_id, board_mac, status, reported_version, detail, requested_by, requested_at, updated_at)`.
 
-- [ ] **Step 1: Add the two tables to the `initDatabase()` array**
+- [x] **Step 1: Add the two tables to the `initDatabase()` array**
 
 Find the `esp32_node_metadata` entry inside the `tables` array (`server.js`, inside `initDatabase()`) and add two entries directly after it:
 
@@ -64,15 +65,15 @@ Find the `esp32_node_metadata` entry inside the `tables` array (`server.js`, ins
     `CREATE INDEX IF NOT EXISTS idx_firmware_deployments_version ON firmware_deployments(version_id)`,
 ```
 
-- [ ] **Step 2: Add the capability string**
+- [x] **Step 2: Add the capability string**
 
 In `ROLE_CAPABILITIES.super_admin`'s `Set`, append `'devices:firmware:write'` to the last line of its array (the one ending `...,'audit:read:all','export:read'`), making it `...,'audit:read:all','export:read','devices:firmware:write'`. Do **not** add it to `ward_admin`, `staff_nurse`, or `viewer`.
 
-- [ ] **Step 3: Export `roleHasCapability` for tests**
+- [x] **Step 3: Export `roleHasCapability` for tests**
 
 In the `module.exports` block at the bottom of `server.js`, add `roleHasCapability` to the list (alongside `parseSemver`, `compareSemver`, etc.).
 
-- [ ] **Step 4: Write the failing test**
+- [x] **Step 4: Write the failing test**
 
 Create `test/test_firmware_ota.js`:
 
@@ -91,21 +92,21 @@ test('devices:firmware:write is granted only to super_admin', () => {
 });
 ```
 
-- [ ] **Step 5: Run test to verify it fails**
+- [x] **Step 5: Run test to verify it fails**
 
 Run: `SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: FAIL (`roleHasCapability` is `undefined` because it isn't exported yet, or the capability string isn't in the Set yet) — confirm this is the actual failure reason before moving on.
 
-- [ ] **Step 6: Implement (apply Steps 1-3 above), then run `node --check server.js`**
+- [x] **Step 6: Implement (apply Steps 1-3 above), then run `node --check server.js`**
 
 Expected: no output (syntax OK).
 
-- [ ] **Step 7: Run test to verify it passes**
+- [x] **Step 7: Run test to verify it passes**
 
 Run: `SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: PASS (1 test).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add server.js test/test_firmware_ota.js
@@ -115,6 +116,7 @@ git commit -m "feat: add firmware_versions/deployments tables and devices:firmwa
 ---
 
 ### Task 2: Upload-side pure helpers (token + filename generation)
+**Status:** ✅ Done — commit `d784811`
 
 **Files:**
 - Modify: `server.js` — insert a new section immediately before `async function startServer() {` (currently the line right after the `/api/system/apply-update/status` route block ends)
@@ -125,7 +127,7 @@ git commit -m "feat: add firmware_versions/deployments tables and devices:firmwa
 - Consumes: `crypto` (already imported, `server.js:6`).
 - Produces: `generateFirmwareDownloadToken()` → `string` (64 lowercase-hex chars). `buildFirmwareFilename(versionId, originalName)` → `string` (e.g. `fw_7.bin` — always `.bin`, ignores the original extension so a mislabeled upload can't smuggle a different extension onto disk).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/test_firmware_ota.js`:
 
@@ -146,12 +148,12 @@ test('buildFirmwareFilename always produces a .bin filename regardless of origin
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: FAIL — both new functions are `undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Insert this new section (banner comment + functions) immediately before `async function startServer() {`:
 
@@ -175,12 +177,12 @@ function buildFirmwareFilename(versionId, _originalName) {
 }
 ```
 
-- [ ] **Step 4: Run `node --check server.js`, then run test to verify it passes**
+- [x] **Step 4: Run `node --check server.js`, then run test to verify it passes**
 
 Run: `node --check server.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: PASS (3 tests total).
 
-- [ ] **Step 5: Add exports and commit**
+- [x] **Step 5: Add exports and commit**
 
 Add `generateFirmwareDownloadToken, buildFirmwareFilename` to `module.exports`.
 
@@ -192,6 +194,7 @@ git commit -m "feat: add firmware upload token/filename helpers"
 ---
 
 ### Task 3: Deploy-side pure helpers (node resolution, canary gate, URL validation, status parsing)
+**Status:** ✅ Done — commit `fd61d8e`
 
 **Files:**
 - Modify: `server.js` (same new "ESP32 Firmware OTA" section from Task 2)
@@ -206,7 +209,7 @@ git commit -m "feat: add firmware upload token/filename helpers"
   - `parseOtaStatusTopic(topic)` → `string | null` (extracts `<nodeId>` from `ble/node/<nodeId>/ota`, else `null`).
   - `parseOtaStatusPayload(buffer)` → `{ state, detail, version } | null` (safe JSON parse; `null` on malformed input).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/test_firmware_ota.js`:
 
@@ -258,12 +261,12 @@ test('parseOtaStatusPayload safely parses, returns null on malformed JSON', () =
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: FAIL — all five functions are `undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to the "ESP32 Firmware OTA" section:
 
@@ -304,12 +307,12 @@ function parseOtaStatusPayload(buffer) {
 }
 ```
 
-- [ ] **Step 4: Run `node --check server.js`, then run test to verify it passes**
+- [x] **Step 4: Run `node --check server.js`, then run test to verify it passes**
 
 Run: `node --check server.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test test/test_firmware_ota.js`
 Expected: PASS (8 tests total).
 
-- [ ] **Step 5: Add exports and commit**
+- [x] **Step 5: Add exports and commit**
 
 Add `resolveNodeIdForMac, canDeployToTargets, isValidOtaUrl, parseOtaStatusTopic, parseOtaStatusPayload` to `module.exports`.
 
@@ -321,6 +324,7 @@ git commit -m "feat: add firmware deploy helpers (node resolution, canary gate, 
 ---
 
 ### Task 4: Upload route (`POST /api/firmware/upload`)
+**Status:** ✅ Done — commit `f24f72f`
 
 **Files:**
 - Modify: `server.js` (append to the "ESP32 Firmware OTA" section, after Task 3's helpers)
@@ -329,7 +333,7 @@ git commit -m "feat: add firmware deploy helpers (node resolution, canary gate, 
 - Consumes: `buildFirmwareFilename` (Task 2), `generateFirmwareDownloadToken` (Task 2), `requireCapability` (`server.js:321`), `pool` (existing pg pool), `multer`, `fs`, `path` (all already imported).
 - Produces: on disk, `uploads/firmware/fw_<id>.bin`; in DB, a `firmware_versions` row.
 
-- [ ] **Step 1: Implement the route**
+- [x] **Step 1: Implement the route**
 
 ```js
 const FIRMWARE_UPLOAD_DIR = process.env.FIRMWARE_UPLOAD_DIR || path.join(__dirname, 'uploads', 'firmware');
@@ -383,12 +387,12 @@ app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (r
 
 Note: the row is inserted first (to get the auto-increment `id` for the filename), then updated with the real filename — this mirrors the "need the id before the filename" ordering; there is no window where a broken row is servable, since `GET /fw/:token/...` (Task 5) 404s on any row whose file doesn't exist on disk.
 
-- [ ] **Step 2: Run `node --check server.js`**
+- [x] **Step 2: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 3: Manual verification (no live DB/MQTT test harness exists in this repo — verify against a running instance)**
+- [x] **Step 3: Manual verification (no live DB/MQTT test harness exists in this repo — verify against a running instance)**
 
 Start the app against a real Postgres (however this project normally runs locally, e.g. `docker compose up` per its own README), log in as a `super_admin` user, then:
 
@@ -399,7 +403,7 @@ curl -s -b <session-cookie> -F "firmware=@/path/to/test.bin" -F "version=0.0.1-t
 
 Expected: `{"success":true,"id":<n>,"version":"0.0.1-test"}`, and `uploads/firmware/fw_<n>.bin` exists on disk with the uploaded content.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server.js
@@ -409,6 +413,7 @@ git commit -m "feat: add ESP32 firmware upload endpoint"
 ---
 
 ### Task 5: Serve route (`GET /fw/:token/firmware.bin`)
+**Status:** ✅ Done — commit `75697c0`
 
 **Files:**
 - Modify: `server.js` (append to the "ESP32 Firmware OTA" section)
@@ -417,7 +422,7 @@ git commit -m "feat: add ESP32 firmware upload endpoint"
 - Consumes: `pool`, `fs`, `path`, `FIRMWARE_UPLOAD_DIR` (Task 4).
 - Produces: the URL the deploy endpoint (Task 7) will publish to devices.
 
-- [ ] **Step 1: Implement the route**
+- [x] **Step 1: Implement the route**
 
 ```js
 // No capability/session gate here on purpose — the ESP32's HTTPUpdate
@@ -441,12 +446,12 @@ app.get('/fw/:token/firmware.bin', async (req, res) => {
 });
 ```
 
-- [ ] **Step 2: Run `node --check server.js`**
+- [x] **Step 2: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 3: Manual verification**
+- [x] **Step 3: Manual verification**
 
 After Task 4's manual upload, fetch the returned token's URL directly:
 
@@ -457,7 +462,7 @@ diff /tmp/downloaded.bin /path/to/test.bin
 
 Expected: `diff` reports no difference. Also verify `curl -i http://localhost:<port>/fw/not-a-real-token/firmware.bin` returns `404` and requires **no** cookie/auth header to succeed on a valid token (confirms the ESP32 can fetch it unauthenticated).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server.js
@@ -467,6 +472,7 @@ git commit -m "feat: add unauthenticated token-based firmware .bin serving route
 ---
 
 ### Task 6: MQTT status subscription (`ble/node/+/ota`)
+**Status:** ✅ Done — commit `748edf4`
 
 **Files:**
 - Modify: `server.js:165-173` (`initMqttClient()` — this is the **first** incoming-message handler added to this file; today the client only publishes)
@@ -475,7 +481,7 @@ git commit -m "feat: add unauthenticated token-based firmware .bin serving route
 - Consumes: `parseOtaStatusTopic`, `parseOtaStatusPayload` (Task 3), `pool`.
 - Produces: keeps `firmware_deployments.status`/`reported_version`/`detail`/`updated_at` current as devices report OTA progress — this is what Task 8's status endpoint reads.
 
-- [ ] **Step 1: Implement the subscription + handler**
+- [x] **Step 1: Implement the subscription + handler**
 
 Modify `initMqttClient()`:
 
@@ -535,12 +541,12 @@ async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
 }
 ```
 
-- [ ] **Step 2: Run `node --check server.js`**
+- [x] **Step 2: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 3: Manual verification**
+- [x] **Step 3: Manual verification**
 
 With the app running and connected to a real MQTT broker, manually publish a status message and confirm it lands in the DB (requires a pending `firmware_deployments` row to exist first — created in Task 7's verification, so this step can be re-run after Task 7 too):
 
@@ -550,7 +556,7 @@ mosquitto_pub -h <broker-host> -t 'ble/node/na1c58c/ota' -m '{"state":"success",
 
 Then: `SELECT status, detail, reported_version FROM firmware_deployments ORDER BY id DESC LIMIT 1;` should show `status='success'`, `reported_version='2.1.0'`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server.js
@@ -560,6 +566,7 @@ git commit -m "feat: subscribe to ble/node/+/ota and record firmware deployment 
 ---
 
 ### Task 7: Deploy route (`POST /api/firmware/deploy`)
+**Status:** ✅ Done — commit `839a90d`
 
 **Files:**
 - Modify: `server.js` (append to the "ESP32 Firmware OTA" section)
@@ -568,7 +575,7 @@ git commit -m "feat: subscribe to ble/node/+/ota and record firmware deployment 
 - Consumes: `resolveNodeIdForMac`, `canDeployToTargets`, `isValidOtaUrl` (Task 3), `esp32NodesForUi` (existing, `server.js:7093`), `mqttClient` (existing), `pool`.
 - Produces: `firmware_deployments` rows with `status='pending'`; an MQTT publish per target.
 
-- [ ] **Step 1: Implement the route**
+- [x] **Step 1: Implement the route**
 
 ```js
 app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), async (req, res) => {
@@ -619,12 +626,12 @@ app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), as
 });
 ```
 
-- [ ] **Step 2: Run `node --check server.js`**
+- [x] **Step 2: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 3: Manual verification**
+- [x] **Step 3: Manual verification**
 
 ```bash
 # First attempt with 2 targets on a brand-new version — must be rejected (canary gate)
@@ -642,7 +649,7 @@ curl -s -X POST -b <session-cookie> -H 'Content-Type: application/json' \
 
 Then manually mark that deployment `success` (Task 6's manual verification, or `UPDATE firmware_deployments SET status='success' WHERE id=<id>;` directly), and re-run the 2-target request — it should now succeed.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server.js
@@ -652,6 +659,7 @@ git commit -m "feat: add canary-gated firmware deploy endpoint"
 ---
 
 ### Task 8: Status list route (`GET /api/firmware/deployments`)
+**Status:** ✅ Done — commit `62ff70d`
 
 **Files:**
 - Modify: `server.js` (append to the "ESP32 Firmware OTA" section)
@@ -660,7 +668,7 @@ git commit -m "feat: add canary-gated firmware deploy endpoint"
 - Consumes: `pool`.
 - Produces: the JSON the UI (Task 9) polls.
 
-- [ ] **Step 1: Implement the route**
+- [x] **Step 1: Implement the route**
 
 ```js
 app.get('/api/firmware/deployments', requireCapability('devices:firmware:write'), async (req, res) => {
@@ -696,12 +704,12 @@ app.get('/api/firmware/versions', requireCapability('devices:firmware:write'), a
 
 (`/api/firmware/versions` was implied by the spec's "version list" UI section but not spelled out as its own endpoint — adding it here since Task 9's UI needs a list to render, and it belongs with this task's other read-only query route.)
 
-- [ ] **Step 2: Run `node --check server.js`**
+- [x] **Step 2: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 3: Manual verification**
+- [x] **Step 3: Manual verification**
 
 ```bash
 curl -s -b <session-cookie> 'http://localhost:<port>/api/firmware/versions'
@@ -710,7 +718,7 @@ curl -s -b <session-cookie> "http://localhost:<port>/api/firmware/deployments?ve
 
 Expected: JSON arrays reflecting the rows created in earlier tasks' manual verification steps.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server.js
@@ -720,6 +728,7 @@ git commit -m "feat: add firmware versions/deployments read endpoints"
 ---
 
 ### Task 9: UI card on `/system-mgmt`
+**Status:** ✅ Done — commit `3d49e7d`
 
 **Files:**
 - Modify: `server.js:11086-11227` (the `/system-mgmt` route — add a new card to its `content`, and new functions to its `script` argument)
@@ -727,7 +736,7 @@ git commit -m "feat: add firmware versions/deployments read endpoints"
 **Interfaces:**
 - Consumes: `/api/firmware/versions`, `/api/firmware/upload`, `/api/firmware/deploy`, `/api/firmware/deployments` (Tasks 4/7/8), `/api/esp32-nodes` (existing, `server.js:7165`), `confirmAction()` (existing, `server.js:4291`), `escapeHTML()`/`statusIcon()` (existing, used by the neighboring Check-for-Updates UI).
 
-- [ ] **Step 1: Add the HTML card**
+- [x] **Step 1: Add the HTML card**
 
 Insert this new `<div>` inside the `/system-mgmt` route's `content` template literal, directly after the closing `</div>` of the existing "เวอร์ชันปัจจุบัน" card (i.e. right before the closing backtick of the 3rd argument to `ui(...)`):
 
@@ -752,7 +761,7 @@ Insert this new `<div>` inside the `/system-mgmt` route's `content` template lit
 </div>
 ```
 
-- [ ] **Step 2: Add the client-side JS**
+- [x] **Step 2: Add the client-side JS**
 
 Append this to the `/system-mgmt` route's `script` argument (the 4th argument to `ui(...)`, after `applyUpdate()`'s closing brace):
 
@@ -859,16 +868,16 @@ loadFirmwareVersions();
 
 Note for whoever implements this task: the device picker above uses a plain `prompt()`/`alert()` rather than a full custom modal — that's a deliberate v1 simplification to keep this task's scope to "wire the endpoints into a usable UI", consistent with YAGNI; swapping it for a richer checkbox-list modal is a natural, isolated follow-up that doesn't change any endpoint contract.
 
-- [ ] **Step 3: Run `node --check server.js`**
+- [x] **Step 3: Run `node --check server.js`**
 
 Run: `node --check server.js`
 Expected: no output.
 
-- [ ] **Step 4: Manual verification (browser)**
+- [x] **Step 4: Manual verification (browser)**
 
 Log in as `super_admin`, open `/system-mgmt`, confirm the new "อัปเดตเฟิร์มแวร์ ESP32" card renders below "เวอร์ชันปัจจุบัน". Upload a small test `.bin`, confirm it appears in the version list marked "ยังไม่ผ่าน canary". Click "ส่งไปเครื่อง...", enter one MAC, confirm the `confirmAction` modal appears, confirm, and watch the browser's Network tab show `/api/firmware/deployments` being polled every 3s.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server.js
@@ -878,10 +887,26 @@ git commit -m "feat: add ESP32 firmware OTA card to /system-mgmt page"
 ---
 
 ### Task 10: End-to-end smoke test with a real device (or simulated MQTT)
+**Status:** 🟡 Mostly verified (2026-09-10).
+- Step 1 **done**: `npm run test:offline` → 83/83 pass, 0 fail (incl. the 8 `test/test_firmware_ota.js` tests).
+  `npm test` integration step prints the three documented `SKIP integration:` lines and exits 0 — files are
+  gitignored/absent, so that is an honest skip, not a pass. `node --check` clean on server.js, live-status.js,
+  esp32-status.js, or-patients.js.
+- Step 2 **partly evidenced by real hardware**, not by a fresh scripted walkthrough. `firmware_deployments`
+  already holds real round-trips against live node `48:27:E2:B7:7F:18` (`nb77f18`): ids 5, 6 (version 3) and
+  id 7 (version 5) reached `success`; ids 2, 3 reached `failed`; ids 10, 11 (version 3, two boards) are
+  `cancelled`. So upload → per-node publish → status callback → DB persistence is proven end to end.
+  Still **not** directly observed: the UI polling flip to "canary ผ่านแล้ว" (item 4) and the `CANARY_REQUIRED`
+  rejection on a never-deployed version (item 5). The canary-gate helper itself is unit-tested in Task 3.
+- Step 3: no fixups were needed, so no walkthrough commit.
+
+⚠️ Re-running item 5 against this machine means publishing a real `ota` command to `nb77f18`, which currently
+has a patient watch (`EC:35:0D:31:14:F6`) connected. Do that only during a maintenance window, or point the
+deploy at the disconnected board `48:27:E2:B7:89:C4` instead.
 
 **Files:** none (verification-only task)
 
-- [ ] **Step 1: Run the full automated test suite**
+- [x] **Step 1: Run the full automated test suite**
 
 Run: `npm test`
 Expected: all existing tests plus every `test/test_firmware_ota.js` test pass (8 tests from Tasks 1-3).
