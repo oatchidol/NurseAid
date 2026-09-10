@@ -84,3 +84,6 @@ skills-lock.json
 /firmware/README.md
 /firmware/arduino-skills.md
 /firmware/plugin.json
+
+# Locally built ESP32 firmware images - build artefacts, not source.
+nurseaid_esp32_*.bin

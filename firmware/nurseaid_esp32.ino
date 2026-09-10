@@ -128,7 +128,7 @@ struct WifiCred {
 };
 
 // --- MQTT (ค่าเดียวกับ iStyle28.py) ---
-#define MQTT_BROKER      "172.16.251.38"
+#define MQTT_BROKER      "172.16.251.45"
 #define MQTT_PORT        1883
 #define MQTT_USER        "nursemon"
 #define MQTT_PASS        "softTech^2"              // ← ใส่รหัสเดียวกับที่ตั้งใน env MQTT_PASS ของ Pi
@@ -149,7 +149,7 @@ struct WifiCred {
 static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
-#define FW_VERSION       "2.1.0"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+#define FW_VERSION       "2.2.0"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
 
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
@@ -225,8 +225,9 @@ static char TOPIC_PRIORITY_NODE[64] = "";   // เติมตอนบูตห
 
 // ── ค่าจริงของ metadata ที่ฝังลงใน .bin ──
 //    ต้องอยู่หลัง #define ทั้งหมดที่ใช้เป็นค่าเริ่มต้น
-//    attribute(used) กัน linker ตัดทิ้ง (ไม่มีโค้ดอ้างถึงโดยตรง)
-static const FirmwareMetadata __attribute__((used, section(".rodata")))
+//    attribute(used) กันคอมไพเลอร์ตัดทิ้ง (ไม่มีโค้ดอ้างถึงโดยตรง)
+// retain จำเป็น — Arduino ESP32 ลิงก์ด้วย --gc-sections ลำพัง used กันได้แค่คอมไพเลอร์
+static const FirmwareMetadata __attribute__((used, retain, section(".rodata")))
 FIRMWARE_META = {
     {'N','A','i','d','M','E','T','A'},  // magic — ห้ามเปลี่ยน
     1,                                   // metaVersion
