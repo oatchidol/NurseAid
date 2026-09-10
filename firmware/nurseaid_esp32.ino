@@ -149,7 +149,7 @@ struct WifiCred {
 static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
-#define FW_VERSION       "2.2.0"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+#define FW_VERSION       "2.2.1"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
 
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
