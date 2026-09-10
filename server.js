@@ -3337,6 +3337,17 @@ ${ICON_SET}
             align-items: start !important;
         }
 
+        /* Scoped to the monitor dashboard only (not #pairing-grid on /matching, which shares
+           this class but isn't built as a flex-column card and would gain empty space under its
+           shorter "unpaired" cards otherwise). A ward wall is scanned by row, so every card in a
+           row must be the same height regardless of which patient's name happens to wrap or
+           which vitals happen to be unavailable — align-items:start let that vary with content;
+           stretch (paired with #monitor-grid .card's flex-column + margin-top:auto footer pin,
+           already in place above) makes every card in a row match. */
+        #monitor-grid.monitor-grid-layout {
+            align-items: stretch !important;
+        }
+
         @media (min-width: 1800px) {
             .monitor-grid-layout {
                 grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)) !important;
@@ -3360,7 +3371,7 @@ ${ICON_SET}
             padding: 0.75rem !important;
             border-top-width: 0 !important;
             border-left-width: 4px !important;
-            border-radius: var(--r-lg) !important;
+            border-radius: var(--r-xl) !important;
         }
         #monitor-grid > .card.dragging {
             position: relative; z-index: 20;
@@ -7203,7 +7214,11 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                       + '" title="ความสำคัญ: ' + PRIORITY_LABELS[priorityKey] + '">'
                       + PRIORITY_LABELS[priorityKey] + '</span>'
                     : '';
-                const vitalBg = isDark ? 'style="background: var(--bg-vital);"' : 'class="bg-slate-50"';
+                // A resting-state border (previously only warning/critical tiles had one) so
+                // all three read as distinct instruments rather than a flat colour patch.
+                // --bg-vital already equals Tailwind's slate-50 in light theme, so this is a
+                // token swap, not a colour change.
+                const vitalBg = 'style="background: var(--bg-vital); border: 1px solid var(--border-color);"';
                 const vitalTextColor = 'var(--text-vital-muted)';
                 const grayBg = 'style="background: var(--bg-input); border: 1px solid var(--border-color);"';
                 const grayTextColor = 'var(--text-tertiary)';
@@ -7297,15 +7312,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
                     <div class="grid grid-cols-3 gap-2">
                         <div class="p-2 rounded-xl text-center transition-all" \${hrBg}>
-                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">HR</p>
+                            <p class="text-2xs font-bold uppercase flex items-center justify-center gap-1" style="color: \${vitalTextColor};"><span class="ic ic-heart" style="width:.7rem;height:.7rem;color:\${hrNumColor};" aria-hidden="true"></span>HR</p>
                             <p class="\${p.hr === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${hrNumColor};">\${safe.hr}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${spo2Bg}>
-                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">SpO2</p>
+                            <p class="text-2xs font-bold uppercase flex items-center justify-center gap-1" style="color: \${vitalTextColor};"><span class="ic ic-droplet" style="width:.7rem;height:.7rem;color:\${spo2NumColor};" aria-hidden="true"></span>SpO2</p>
                             <p class="\${p.spo2 === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${spo2NumColor};" title="SpO2 quality: \${safe.spo2Quality}">\${safe.spo2}</p>
                         </div>
                         <div class="p-2 rounded-xl text-center transition-all" \${tempBg}>
-                            <p class="text-2xs font-bold uppercase" style="color: \${vitalTextColor};">Temp</p>
+                            <p class="text-2xs font-bold uppercase flex items-center justify-center gap-1" style="color: \${vitalTextColor};"><span class="ic ic-thermo" style="width:.7rem;height:.7rem;color:\${tempNumColor};" aria-hidden="true"></span>Temp</p>
                             <p class="\${p.temp === '--' ? 'text-xs mt-2' : 'text-3xl'} font-black tracking-tighter" style="color: \${tempNumColor};">\${safe.temp}</p>
                         </div>
                     </div>
@@ -12717,25 +12732,79 @@ async function renderFirmwareDeployPanel(versionId) {
         : 'ยังไม่ผ่าน canary — เลือกทดสอบได้แค่ 1 เครื่องก่อน';
 
     const pickList = document.createElement('div');
-    pickList.className = 'flex flex-col gap-1 mb-3';
+    pickList.className = 'flex flex-col gap-1 mb-4 overflow-x-auto';
+    
+    let tableHtml = '<table class="w-full text-left text-xs border-collapse whitespace-nowrap">' +
+        '<thead><tr style="border-bottom: 1px solid var(--border-color); color: var(--text-secondary);">' +
+        '<th class="py-2 px-2 font-semibold">เลือก</th>' +
+        '<th class="py-2 px-2 font-semibold">MAC / ชื่อเครื่อง</th>' +
+        '<th class="py-2 px-2 font-semibold">สถานะ</th>' +
+        '<th class="py-2 px-2 font-semibold">เวอร์ชัน (เก่า → ใหม่)</th>' +
+        '<th class="py-2 px-2 font-semibold">MQTT Broker</th>' +
+        '<th class="py-2 px-2 font-semibold">Max Devices</th>' +
+        '</tr></thead><tbody>';
+    
+    const newConfig = versionRow.embedded_config || {};
+    let brokerWarningShown = false;
+
     nodes.forEach(n => {
-        const item = document.createElement('label');
-        item.className = 'flex items-center gap-2 text-xs';
-        const input = document.createElement('input');
-        input.type = canaryPassed ? 'checkbox' : 'radio';
-        input.name = 'firmware-target-' + versionId;
-        input.className = 'firmware-target-input-' + versionId;
-        input.value = n.boardMac;
-        const span = document.createElement('span');
-        span.textContent = (n.status === 'connected' ? '🟢 ' : '⚪ ') + n.boardMac +
-            (n.description ? ' - ' + n.description : '') +
-            (n.status === 'connected' ? ' (ออนไลน์)' : ' (ออฟไลน์)') +
-            (n.fwVersion ? ' — ปัจจุบัน: ' + n.fwVersion : ' — ยังไม่ทราบเวอร์ชัน');
-        item.appendChild(input);
-        item.appendChild(span);
-        pickList.appendChild(item);
+        const isOnline = n.status === 'connected';
+        const oldVersion = n.fwVersion || 'Unknown';
+        const newVersion = newConfig.fwVersion || versionRow.version;
+        
+        // Config comparison logic
+        const oldBroker = n.mqttBroker ? (n.mqttBroker + ':' + n.mqttPort) : 'Unknown';
+        const newBroker = newConfig.mqttBroker ? (newConfig.mqttBroker + ':' + newConfig.mqttPort) : 'Unknown';
+        const brokerMatch = oldBroker === 'Unknown' || newBroker === 'Unknown' || oldBroker === newBroker;
+        
+        const oldMax = n.maxDevices || 'Unknown';
+        const newMax = newConfig.maxDevices || 'Unknown';
+        const maxMatch = oldMax === 'Unknown' || newMax === 'Unknown' || oldMax == newMax;
+
+        if (!brokerMatch) brokerWarningShown = true;
+
+        const brokerHtml = brokerMatch 
+            ? (oldBroker + ' <span class="text-green-500">→ ' + newBroker + '</span>')
+            : ('<span style="color:var(--status-danger-text); font-weight:bold;">' + oldBroker + ' → ' + newBroker + ' ⚠️</span>');
+            
+        const maxHtml = maxMatch
+            ? (oldMax + ' <span class="text-green-500">→ ' + newMax + '</span>')
+            : ('<span style="color:var(--status-warning-text); font-weight:bold;">' + oldMax + ' → ' + newMax + '</span>');
+
+        tableHtml += '<tr style="border-bottom: 1px solid var(--border-color);">' +
+            '<td class="py-2 px-2"><input type="' + (canaryPassed ? 'checkbox' : 'radio') + '" ' +
+            'name="firmware-target-' + versionId + '" ' +
+            'class="firmware-target-input-' + versionId + '" value="' + n.boardMac + '"></td>' +
+            '<td class="py-2 px-2 font-mono">' + n.boardMac + (n.description ? ' - ' + escapeHTML(n.description) : '') + '</td>' +
+            '<td class="py-2 px-2">' + (isOnline ? '🟢 ออนไลน์' : '⚪ ออฟไลน์') + '</td>' +
+            '<td class="py-2 px-2">' + oldVersion + ' → <strong>' + newVersion + '</strong></td>' +
+            '<td class="py-2 px-2">' + (newConfig.mqttBroker ? brokerHtml : '-') + '</td>' +
+            '<td class="py-2 px-2">' + (newConfig.maxDevices ? maxHtml : '-') + '</td>' +
+            '</tr>';
     });
+    
+    tableHtml += '</tbody></table>';
+    pickList.innerHTML = tableHtml;
+
+    if (brokerWarningShown) {
+        const warningBox = document.createElement('div');
+        warningBox.className = 'mb-4 p-3 rounded-xl text-xs font-bold';
+        warningBox.style.background = 'color-mix(in srgb, var(--status-danger-text) 15%, transparent)';
+        warningBox.style.color = 'var(--status-danger-text)';
+        warningBox.style.border = '1px solid var(--status-danger-text)';
+        warningBox.innerHTML = '<span class="ic ic-alert"></span> คำเตือน: เฟิร์มแวร์ใหม่ตั้งค่า MQTT Broker ไม่ตรงกับเครื่องเดิม หากอัปเดตแล้วเครื่องอาจเชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
+        panel.appendChild(warningBox);
+    }
+
     panel.appendChild(pickList);
+
+    const configDiv = document.createElement('div');
+    configDiv.className = 'flex items-center gap-2 mb-4 text-xs';
+    configDiv.innerHTML = '<label for="firmware-broker-' + versionId + '" class="font-semibold text-[var(--text-secondary)]">MQTT Broker สำหรับเครื่องอัปเดต:</label>' +
+        '<input type="text" id="firmware-broker-' + versionId + '" ' +
+        'class="px-2 py-1 rounded border border-[var(--border-color)] bg-[var(--bg-layer2)] text-xs w-48" ' +
+        'placeholder="172.16.251.45" value="' + window.location.hostname + '">';
+    panel.appendChild(configDiv);
 
     const deployBtn = document.createElement('button');
     deployBtn.type = 'button';
@@ -12768,12 +12837,15 @@ async function submitFirmwareDeploy(versionId) {
     });
     if (!confirmed) return;
 
+    const brokerInput = document.getElementById('firmware-broker-' + versionId);
+    const mqttBroker = brokerInput ? brokerInput.value.trim() : '';
+
     if (msgEl) msgEl.textContent = 'กำลังส่งคำสั่ง...';
     try {
         const r = await fetch('/api/firmware/deploy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ versionId, targets })
+            body: JSON.stringify({ versionId, targets, mqttBroker })
         });
         const result = await r.json();
         if (!r.ok) {
@@ -13895,6 +13967,51 @@ const firmwareUpload = multer({
     }
 }).single('firmware');
 
+// ── Extract embedded metadata from a compiled ESP32 .bin file ──
+// The firmware embeds a packed struct with magic "NAidMETA" (see nurseaid_esp32.ino
+// FirmwareMetadata). This function finds that marker in the raw binary and reads
+// the fields at known offsets. Returns null if the marker is not found (older
+// firmware without metadata support).
+//
+// Struct layout (packed, total ~190 bytes):
+//   offset 0:   char[8]  magic "NAidMETA"
+//   offset 8:   uint8    metaVersion
+//   offset 9:   char[24] fwVersion
+//   offset 33:  char[48] mqttBroker
+//   offset 81:  uint16LE mqttPort
+//   offset 83:  char[16] mqttBaseTopic
+//   offset 99:  uint8    maxDevices
+//   offset 100: char[33] defaultSsid
+//   offset 133: char[24] buildDate
+//   offset 157: char[32] reserved
+function extractFirmwareMetadata(buffer) {
+    const MAGIC = Buffer.from('NAidMETA', 'ascii');
+    const idx = buffer.indexOf(MAGIC);
+    if (idx < 0) return null;
+    // Need at least 157 bytes from magic start for all fields
+    if (idx + 157 > buffer.length) return null;
+    try {
+        const readStr = (off, len) => {
+            const slice = buffer.slice(idx + off, idx + off + len);
+            const end = slice.indexOf(0);
+            return (end >= 0 ? slice.slice(0, end) : slice).toString('ascii').trim();
+        };
+        return {
+            metaVersion: buffer.readUInt8(idx + 8),
+            fwVersion: readStr(9, 24),
+            mqttBroker: readStr(33, 48),
+            mqttPort: buffer.readUInt16LE(idx + 81),
+            mqttBaseTopic: readStr(83, 16),
+            maxDevices: buffer.readUInt8(idx + 99),
+            defaultSsid: readStr(100, 33),
+            buildDate: readStr(133, 24)
+        };
+    } catch (e) {
+        console.error('[Firmware Metadata] Parse error:', e.message);
+        return null;
+    }
+}
+
 app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (req, res) => {
     firmwareUpload(req, res, async (err) => {
         if (err) {
@@ -13909,18 +14026,24 @@ app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (r
         if (!version) return res.status(400).json({ error: 'VERSION_REQUIRED' });
 
         try {
+            const embeddedConfig = extractFirmwareMetadata(file.buffer);
             const token = generateFirmwareDownloadToken();
             const inserted = await pool.query(
-                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by)
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-                [version, notes, '', file.size, token, req.user.id]
+                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by, embedded_config)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+                [version, notes, '', file.size, token, req.user.id, embeddedConfig ? JSON.stringify(embeddedConfig) : null]
             );
             const versionId = inserted.rows[0].id;
             const filename = buildFirmwareFilename(versionId, file.originalname);
             fs.writeFileSync(path.join(FIRMWARE_UPLOAD_DIR, filename), file.buffer);
             await pool.query(`UPDATE firmware_versions SET filename=$1 WHERE id=$2`, [filename, versionId]);
             logAudit(req, 'CREATE', 'firmware_version', String(versionId), { version, file_size: file.size }).catch(console.error);
-            res.json({ success: true, id: versionId, version });
+            if (embeddedConfig) {
+                console.log(`[Firmware Upload] Extracted metadata: v${embeddedConfig.fwVersion} broker=${embeddedConfig.mqttBroker}:${embeddedConfig.mqttPort} maxDevices=${embeddedConfig.maxDevices}`);
+            } else {
+                console.log('[Firmware Upload] No NAidMETA marker found — older firmware without embedded metadata');
+            }
+            res.json({ success: true, id: versionId, version, embedded_config: embeddedConfig });
         } catch (error) {
             console.error('[Firmware Upload]', error.message);
             res.status(500).json({ error: 'UPLOAD_FAILED' });
@@ -13991,10 +14114,14 @@ app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), as
                 [versionId, boardMac, req.user.id]
             );
             const cmdTopic = `ble/node/${nodeId}/cmd`; // per-node only — never ble/node/all/cmd
-            mqttClient.publish(cmdTopic, `ota ${url}`, { qos: 1 });
+            let otaCmd = `ota ${url}`;
+            if (mqttBroker) {
+                otaCmd += ` ${mqttBroker}`;
+            }
+            mqttClient.publish(cmdTopic, otaCmd, { qos: 1 });
             results.push({ boardMac, ok: true, nodeId });
         }
-        logAudit(req, 'system:firmware_deploy:start', 'firmware_version', String(versionId), { targets }).catch(console.error);
+        logAudit(req, 'system:firmware_deploy:start', 'firmware_version', String(versionId), { targets, mqttBroker }).catch(console.error);
         res.json({ success: true, results });
     } catch (error) {
         console.error('[Firmware Deploy]', error.message);
@@ -14021,7 +14148,7 @@ app.get('/api/firmware/deployments', requireCapability('devices:firmware:write')
 app.get('/api/firmware/versions', requireCapability('devices:firmware:write'), async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT fv.id, fv.version, fv.notes, fv.uploaded_at,
+            `SELECT fv.id, fv.version, fv.notes, fv.uploaded_at, fv.embedded_config,
                     EXISTS(SELECT 1 FROM firmware_deployments fd WHERE fd.version_id=fv.id AND fd.status='success') AS canary_passed
              FROM firmware_versions fv ORDER BY fv.uploaded_at DESC`
         );
