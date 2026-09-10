@@ -13081,6 +13081,31 @@ async function toggleFirmwareDeployPanel(versionId) {
     loadFirmwareVersions();
 }
 
+// Returns a Thai explanation of what is wrong with a broker address, or null when
+// it is acceptable (an empty value is acceptable and means "do not change the
+// broker"). Mirrors isUsableBrokerAddr() in the Node process and
+// isUsableBrokerAddr() in the firmware — the three are kept deliberately
+// comparable so a rule can be checked by eye across all layers. Declared at this
+// scope, not inside the render function, because submitFirmwareDeploy() re-checks
+// the value before showing the confirm dialog.
+function brokerAddrProblem(value) {
+    const v = String(value || '').trim();
+    if (!v) return null;                        // ว่าง = ไม่เปลี่ยน broker
+    if (v.indexOf(':') >= 0) return 'ต้องเป็น IPv4 (ไม่รองรับ IPv6)';
+    const parts = v.split('.');
+    if (parts.length !== 4) return 'ต้องเป็นเลข 4 ชุดคั่นด้วยจุด เช่น 172.16.251.50';
+    for (const part of parts) {
+        if (!/^\d{1,3}$/.test(part)) return 'ใช้ได้เฉพาะตัวเลขกับจุด';
+        if (part.length > 1 && part.charAt(0) === '0') return 'ห้ามมีเลข 0 นำหน้า เช่น 01';
+        if (Number(part) > 255) return 'แต่ละชุดต้องไม่เกิน 255';
+    }
+    const o = parts.map(Number);
+    if (o[0] === 0) return 'ใช้ 0.x.x.x ไม่ได้';
+    if (o[0] === 127) return 'ใช้ loopback (127.x) ไม่ได้ — เครื่องจะวนต่อหาตัวเอง';
+    if (o[0] === 255 || o[3] === 255) return 'ใช้ broadcast address ไม่ได้';
+    return null;
+}
+
 async function renderFirmwareDeployPanel(versionId) {
     const panel = document.getElementById('firmware-panel-' + versionId);
     if (!panel) return;
@@ -13122,6 +13147,7 @@ async function renderFirmwareDeployPanel(versionId) {
         '<th class="py-2 px-2 font-semibold">สถานะ</th>' +
         '<th class="py-2 px-2 font-semibold">เวอร์ชัน (เก่า → ใหม่)</th>' +
         '<th class="py-2 px-2 font-semibold">MQTT Broker</th>' +
+        '<th class="py-2 px-2 font-semibold" title="เครื่องที่เฟิร์มแวร์เก่าจะไม่ได้รับ IP broker ที่กรอกไว้ด้านบน">รับ IP broker</th>' +
         '<th class="py-2 px-2 font-semibold">Max Devices</th>' +
         '</tr></thead><tbody>';
     
@@ -13152,14 +13178,38 @@ async function renderFirmwareDeployPanel(versionId) {
             ? (oldMax + ' <span class="text-green-500">→ ' + newMax + '</span>')
             : ('<span style="color:var(--status-warning-text); font-weight:bold;">' + oldMax + ' → ' + newMax + '</span>');
 
+        // "รับ IP broker" — whether THIS board will receive the address typed into
+        // the card above. Old firmware cannot parse "ota <url> <ip>", so it is
+        // decided per board and shown per row rather than as one blanket claim.
+        // The node's own reported trial outcome is stacked underneath, so the
+        // operator watches the migration land on the same row they selected.
+        const brokerStateMeta = {
+            broker_trial:    { label: '⏳ กำลังทดลอง',  color: 'var(--status-warning-text)' },
+            broker_ok:       { label: '✓ ยืนยันแล้ว',   color: 'var(--status-success-text)' },
+            broker_rollback: { label: '↩ ถอยกลับแล้ว', color: 'var(--status-critical-text)' }
+        }[n.brokerState] || null;
+        let brokerArgHtml = n.brokerArgSupported
+            ? '<span style="color:var(--status-success-text);">รับได้</span>'
+            : '<span style="color:var(--status-warning-text);" title="เฟิร์มแวร์เก่ากว่าที่รองรับคำสั่ง ota &lt;url&gt; &lt;ip&gt; — จะส่งเฉพาะคำสั่งอัปเดตเฟิร์มแวร์">ไม่รับ (fw เก่า)</span>';
+        if (brokerStateMeta) {
+            brokerArgHtml += '<div style="color:' + brokerStateMeta.color + ';">' + brokerStateMeta.label +
+                (n.brokerStateAddr ? ' <span class="font-mono">' + escapeHTML(n.brokerStateAddr) + '</span>' : '') +
+                '</div>';
+        }
+
         tableHtml += '<tr style="border-bottom: 1px solid var(--border-color);">' +
             '<td class="py-2 px-2"><input type="' + (canaryPassed ? 'checkbox' : 'radio') + '" ' +
             'name="firmware-target-' + versionId + '" ' +
-            'class="firmware-target-input-' + versionId + '" value="' + n.boardMac + '"></td>' +
+            'class="firmware-target-input-' + versionId + '" value="' + n.boardMac + '" ' +
+            // Carried on the checkbox so the confirm dialog can state exactly how
+            // many of the SELECTED boards will actually take the broker change,
+            // without re-fetching the node list at submit time.
+            'data-broker-ok="' + (n.brokerArgSupported ? '1' : '0') + '"></td>' +
             '<td class="py-2 px-2 font-mono">' + n.boardMac + (n.description ? ' - ' + escapeHTML(n.description) : '') + '</td>' +
             '<td class="py-2 px-2">' + (isOnline ? '🟢 ออนไลน์' : '⚪ ออฟไลน์') + '</td>' +
             '<td class="py-2 px-2">' + oldVersion + ' → <strong>' + newVersion + '</strong></td>' +
             '<td class="py-2 px-2">' + (newConfig.mqttBroker ? brokerHtml : '-') + '</td>' +
+            '<td class="py-2 px-2">' + brokerArgHtml + '</td>' +
             '<td class="py-2 px-2">' + (newConfig.maxDevices ? maxHtml : '-') + '</td>' +
             '</tr>';
     });
@@ -13193,26 +13243,6 @@ async function renderFirmwareDeployPanel(versionId) {
     // by IP. On a hostname or domain it would fail validation the moment it was
     // submitted, so offer nothing rather than something wrong.
     const hostIsIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(window.location.hostname);
-
-    // Mirrors isUsableBrokerAddr() in the server and isUsableBrokerAddr() in the
-    // firmware. Kept as its own function so the three stay comparable by eye.
-    function brokerAddrProblem(value) {
-        const v = String(value || '').trim();
-        if (!v) return null;                        // ว่าง = ไม่เปลี่ยน broker
-        if (v.indexOf(':') >= 0) return 'ต้องเป็น IPv4 (ไม่รองรับ IPv6)';
-        const parts = v.split('.');
-        if (parts.length !== 4) return 'ต้องเป็นเลข 4 ชุดคั่นด้วยจุด เช่น 172.16.251.50';
-        for (const part of parts) {
-            if (!/^\d{1,3}$/.test(part)) return 'ใช้ได้เฉพาะตัวเลขกับจุด';
-            if (part.length > 1 && part.charAt(0) === '0') return 'ห้ามมีเลข 0 นำหน้า เช่น 01';
-            if (Number(part) > 255) return 'แต่ละชุดต้องไม่เกิน 255';
-        }
-        const o = parts.map(Number);
-        if (o[0] === 0) return 'ใช้ 0.x.x.x ไม่ได้';
-        if (o[0] === 127) return 'ใช้ loopback (127.x) ไม่ได้ — เครื่องจะวนต่อหาตัวเอง';
-        if (o[0] === 255 || o[3] === 255) return 'ใช้ broadcast address ไม่ได้';
-        return null;
-    }
 
     const brokerCard = document.createElement('div');
     brokerCard.className = 'mb-4 rounded-xl text-xs overflow-hidden';
@@ -13333,16 +13363,17 @@ async function renderFirmwareDeployPanel(versionId) {
 
     brokerCard.appendChild(brokerBody);
     panel.appendChild(brokerCard);
-    validateBrokerField();
 
     const deployBtn = document.createElement('button');
     deployBtn.type = 'button';
+    deployBtn.id = 'firmware-deploy-btn-' + versionId;   // validateBrokerField() disables this
     deployBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold mb-3';
     deployBtn.style.background = 'var(--status-warning-text)';
     deployBtn.style.color = 'var(--text-inverse)';
     deployBtn.textContent = 'Deploy';
     deployBtn.onclick = () => submitFirmwareDeploy(versionId);
     panel.appendChild(deployBtn);
+    validateBrokerField();
 
     const statusList = document.createElement('div');
     statusList.id = 'firmware-status-list-' + versionId;
@@ -13358,16 +13389,43 @@ async function submitFirmwareDeploy(versionId) {
     const msgEl = document.getElementById('firmware-panel-msg-' + versionId);
     if (!targets.length) { if (msgEl) msgEl.textContent = 'กรุณาเลือกเครื่องอย่างน้อย 1 เครื่อง'; return; }
 
-    const confirmed = await confirmAction({
-        title: 'ยืนยันการ deploy เฟิร์มแวร์',
-        kind: 'danger',
-        body: '<p>จะส่งเฟิร์มแวร์ไปยัง ' + targets.length + ' เครื่อง</p>',
-        confirmText: 'Deploy'
-    });
-    if (!confirmed) return;
-
+    // Read the broker field BEFORE confirming, so the dialog can state the real
+    // consequence. A broker migration is far more dangerous than a firmware
+    // update — burying it in a generic "จะส่งเฟิร์มแวร์ไปยัง N เครื่อง" would let
+    // an operator approve a network change they never noticed they requested.
     const brokerInput = document.getElementById('firmware-broker-' + versionId);
     const mqttBroker = brokerInput ? brokerInput.value.trim() : '';
+    const brokerProblem = brokerAddrProblem(mqttBroker);
+    if (brokerProblem) {
+        if (msgEl) msgEl.textContent = 'IP broker ไม่ถูกต้อง: ' + brokerProblem;
+        return;
+    }
+
+    const checkedEls = Array.from(inputs);
+    const brokerOkCount = checkedEls.filter(el => el.dataset.brokerOk === '1').length;
+    const brokerSkipCount = checkedEls.length - brokerOkCount;
+
+    let confirmBody = '<p>จะส่งเฟิร์มแวร์ไปยัง <strong>' + targets.length + ' เครื่อง</strong></p>';
+    if (mqttBroker) {
+        confirmBody += '<p style="margin-top:.5rem;">และย้าย MQTT broker ไปที่ <strong>' + escapeHTML(mqttBroker) + '</strong>' +
+            (brokerOkCount === targets.length
+                ? ' ทั้ง ' + brokerOkCount + ' เครื่อง'
+                : ' เฉพาะ ' + brokerOkCount + ' เครื่องที่รองรับ') + '</p>';
+        if (brokerSkipCount > 0) {
+            confirmBody += '<div class="dialog-note"><strong>' + brokerSkipCount + ' เครื่อง</strong>' +
+                ' เฟิร์มแวร์เก่าเกินกว่าจะรับ IP broker — จะได้รับเฉพาะคำสั่งอัปเดตเฟิร์มแวร์</div>';
+        }
+        confirmBody += '<div class="dialog-note">เครื่องจะเก็บ broker เดิมไว้เป็นทางถอย ' +
+            'ถ้า broker ใหม่ต่อไม่ติดและไม่ได้รายชื่อจากระบบภายใน 15 นาที จะถอยกลับเองอัตโนมัติ</div>';
+    }
+
+    const confirmed = await confirmAction({
+        title: mqttBroker ? 'ยืนยัน deploy + ย้าย MQTT broker' : 'ยืนยันการ deploy เฟิร์มแวร์',
+        kind: 'danger',
+        body: confirmBody,
+        confirmText: mqttBroker ? 'Deploy และย้าย broker' : 'Deploy'
+    });
+    if (!confirmed) return;
 
     if (msgEl) msgEl.textContent = 'กำลังส่งคำสั่ง...';
     try {
@@ -13381,7 +13439,17 @@ async function submitFirmwareDeploy(versionId) {
             if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + (result.message || result.error);
             return;
         }
-        if (msgEl) msgEl.textContent = 'ส่งคำสั่งแล้ว กำลังรอผลตอบกลับจากเครื่อง...';
+        // Report the SERVER's per-node decision, not the browser's earlier guess —
+        // the server re-checks each board's firmware version and is authoritative
+        // about which ones actually received the broker address.
+        const sentResults = Array.isArray(result.results) ? result.results : [];
+        const brokerSkipped = sentResults.filter(x => x.ok && x.brokerSkippedReason);
+        let sentMsg = 'ส่งคำสั่งแล้ว กำลังรอผลตอบกลับจากเครื่อง...';
+        if (brokerSkipped.length) {
+            sentMsg += ' — ไม่ได้ส่ง IP broker ให้ ' + brokerSkipped.length + ' เครื่อง: ' +
+                brokerSkipped.map(x => x.boardMac).join(', ');
+        }
+        if (msgEl) msgEl.textContent = sentMsg;
         pollFirmwareDeployments(versionId);
     } catch (e) {
         if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + escapeHTML(e.message);
@@ -14893,6 +14961,9 @@ module.exports = {
     resolveNodeIdForMac,
     canDeployToTargets,
     isValidOtaUrl,
+    isUsableBrokerAddr,
+    nodeSupportsBrokerArg,
+    OTA_BROKER_ARG_MIN_FW,
     parseOtaStatusTopic,
     parseOtaStatusPayload,
     parseBootTopic,

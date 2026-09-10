@@ -45,6 +45,29 @@
 #include <esp_mac.h>       // esp_read_mac() — อ่าน MAC เรียงถูกลำดับ
 
 // ═══════════════════════════════════════════════════════════════════
+// EMBEDDED METADATA — webapp อ่านจากไฟล์ .bin ได้ทันทีหลังอัปโหลด
+//
+//   webapp จะค้นหา magic string "NAidMETA" ในไฟล์ binary แล้วอ่าน
+//   ฟิลด์ถัดไปตาม layout ที่ตรงกัน เพื่อแสดงข้อมูล config ก่อน deploy
+//   ⚠️ ห้ามเปลี่ยนลำดับ/ขนาดฟิลด์ — webapp อ่านตาม offset ตายตัว
+//      ถ้าต้องเพิ่มฟิลด์ ให้เพิ่มต่อท้าย reserved แล้วขึ้น metaVersion
+// ═══════════════════════════════════════════════════════════════════
+// ⚠️ forward-declare เท่านั้น — ค่าจริงอยู่หลัง #define CONFIG ด้านล่าง
+//    เพราะ struct ต้องรู้จักก่อนที่ Arduino จะสร้าง prototype อัตโนมัติ
+struct __attribute__((packed)) FirmwareMetadata {
+    char     magic[8];          // "NAidMETA" — ใช้ค้นหาตำแหน่งใน binary
+    uint8_t  metaVersion;       // เวอร์ชันของ struct นี้ (เริ่มที่ 1)
+    char     fwVersion[24];     // เช่น "2.1.0"
+    char     mqttBroker[48];    // เช่น "172.16.251.38"
+    uint16_t mqttPort;          // เช่น 1883
+    char     mqttBaseTopic[16]; // เช่น "ble"
+    uint8_t  maxDevices;        // เช่น 8
+    char     defaultSsid[33];   // SSID สำรอง
+    char     buildDate[24];     // เช่น "Sep 10 2026"
+    char     reserved[32];      // เผื่อเพิ่มฟิลด์ในอนาคต
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // CONFIG — แก้ส่วนนี้ก่อนอัพโหลด
 // ═══════════════════════════════════════════════════════════════════
 
@@ -127,6 +150,7 @@ static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
 #define FW_VERSION       "2.1.0"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
 #define TOPIC_CMD_ALL    MQTT_BASE_TOPIC "/node/all/cmd"           // สั่งพร้อมกันทุกโหนด
@@ -139,6 +163,9 @@ static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตห�
 //   ⚠️ ต้องตั้งมากกว่าเวลา block นานสุดใน loop หนึ่งรอบ ไม่งั้นจะรีเซ็ตทั้งที่ปกติ
 //      วัดแล้วกรณีแย่สุด ~12 วิ (connect 8 + discovery 3 + อื่น ๆ) จึงตั้ง 30 วิ
 #define WDT_TIMEOUT_SEC              30
+#define BROKER_TRY_MAX_BOOTS         2       // ลองรวมกี่บูต ถ้าไม่ติด → กลับ broker เดิม
+#define BROKER_CONFIRM_MS            120000  // ต้องต่อติดต่อเนื่องกี่ ms ก่อนยืนยันเป็นตัวหลัก
+#define BROKER_TRIAL_DEADLINE_MS     900000  // ทดลองได้ไม่เกิน 15 นาที ไม่ผ่าน = ถอยกลับ
 
 // ชั้นที่ 2: เน็ตหลุดยาว = รีบูต
 //   ครอบคลุมเคสที่ chip ไม่ค้าง แต่ WiFi/MQTT stack เอ๋อจนต่อไม่ติดอีกเลย
@@ -196,6 +223,22 @@ static char TOPIC_PRIORITY_NODE[64] = "";   // เติมตอนบูตห
 //   ถ้าไม่แก้ nimconfig.h ให้ตั้ง MAX_DEVICES เป็น 3 แทน
 #define MAX_DEVICES      8
 
+// ── ค่าจริงของ metadata ที่ฝังลงใน .bin ──
+//    ต้องอยู่หลัง #define ทั้งหมดที่ใช้เป็นค่าเริ่มต้น
+//    attribute(used) กัน linker ตัดทิ้ง (ไม่มีโค้ดอ้างถึงโดยตรง)
+static const FirmwareMetadata __attribute__((used, section(".rodata")))
+FIRMWARE_META = {
+    {'N','A','i','d','M','E','T','A'},  // magic — ห้ามเปลี่ยน
+    1,                                   // metaVersion
+    FW_VERSION,                          // fwVersion
+    MQTT_BROKER,                         // mqttBroker
+    MQTT_PORT,                           // mqttPort
+    MQTT_BASE_TOPIC,                     // mqttBaseTopic
+    MAX_DEVICES,                         // maxDevices
+    WIFI_SSID,                           // defaultSsid
+    __DATE__,                            // buildDate (คอมไพเลอร์ใส่ให้)
+    ""                                   // reserved
+};
 // ── ตัวดักตอนคอมไพล์: กันตั้งค่าขัดกันจนแครชหน้างาน ──
 //    (ค่าจริงของไลบรารีถูกอ่านมาแล้วจาก nimconfig.h ตอน #include NimBLEDevice.h)
 #if defined(CONFIG_BT_NIMBLE_MAX_CONNECTIONS) && (MAX_DEVICES > CONFIG_BT_NIMBLE_MAX_CONNECTIONS)
@@ -422,6 +465,7 @@ struct RegDevice {
 static RegDevice registry[MAX_REGISTERED];
 static int  numRegistered = 0;             // จำนวนจริงที่ใช้อยู่
 static bool haveNodeList  = false;         // เคยได้รายชื่อเฉพาะโหนดแล้วหรือยัง
+static bool sawAppRoster  = false;        // เคยได้รายชื่อ MAC จากแอปเราบน broker นี้แล้วหรือยัง
 static bool listDirty     = true;          // ต้องรายงานรายชื่อปัจจุบันกลับขึ้น MQTT
 static Preferences prefs;
 
@@ -718,6 +762,11 @@ static const char* resetReasonText() {
 static bool otaReady = false;          // เริ่ม ArduinoOTA แล้วหรือยัง
 static volatile bool otaBusy = false;      // ระหว่างอัปเดต หยุดงานอื่นทั้งหมด
 static uint32_t pendingRebootAt = 0;
+static String   activeMqttBroker;
+static bool     brokerOnTrial         = false;  // กำลังทดลอง broker ตัวใหม่อยู่
+static uint32_t brokerOkSince         = 0;      // ต่อ broker ทดลองติดมาตั้งแต่เมื่อไร
+static bool     brokerRollbackPending = false;  // ต้องแจ้งกลับว่า rollback แล้ว
+static bool     brokerTrialAnnounced  = false;  // แจ้ง broker_trial ไปแล้วหรือยัง (แจ้งครั้งเดียว)
 
 static void nlog(const char* fmt, ...) {
     char b[200];
@@ -780,6 +829,25 @@ static void doHttpOta(const char* url) {
         }
     }
     otaBusy = false;                       // ล้มเหลว → กลับไปทำงานปกติต่อ
+}
+
+// ตรวจว่าเป็น IPv4 ที่ใช้ได้จริง — กัน admin พิมพ์ผิดแล้วเครื่องหลุดจากระบบถาวร
+static bool isUsableBrokerAddr(const String& s) {
+    if (s.length() < 7 || s.length() >= 48) return false;
+    if (s.indexOf(':') >= 0) return false;              // ปฏิเสธ IPv6 — โหนดใช้ IPv4 เท่านั้น
+    int dots = 0;
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '.') dots++;
+        else if (c < '0' || c > '9') return false;      // อนุญาตแค่ตัวเลขกับจุด
+    }
+    if (dots != 3) return false;
+    IPAddress probe;
+    if (!probe.fromString(s)) return false;
+    if (probe[0] == 0) return false;                    // 0.x.x.x
+    if (probe[0] == 127) return false;                  // loopback
+    if (probe[0] == 255 || probe[3] == 255) return false; // broadcast
+    return true;
 }
 
 // คำสั่งเป็นข้อความธรรมดา ส่งด้วย mosquitto_pub ได้ตรง ๆ ไม่ต้องมี GUI
@@ -869,12 +937,73 @@ static void handleCommand(const char* cmd) {
              (unsigned long)ESP.getFreeHeap(), WiFi.localIP().toString().c_str());
 
     } else if (strncmp(cmd, "ota ", 4) == 0) {
-        const char* url = cmd + 4;
-        while (*url == ' ') url++;
-        if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0)
-            doHttpOta(url);
-        else
+        bool brokerArmed = false;
+        const char* p = cmd + 4;
+        while (*p == ' ') p++;
+        // หาช่องว่างตัวถัดไป (คั่นระหว่าง url กับ broker_ip)
+        const char* spacePtr = strchr(p, ' ');
+        String url;
+        String newBroker = "";
+        
+        if (spacePtr != nullptr) {
+            url = String(p).substring(0, spacePtr - p);
+            newBroker = String(spacePtr + 1);
+            newBroker.trim();
+        } else {
+            url = String(p);
+        }
+
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            if (newBroker.length() > 0) {
+                if (!isUsableBrokerAddr(newBroker)) {
+                    nlog("[OTA] ❌ broker IP ไม่ถูกต้อง: %s — ยกเลิกทั้งคำสั่ง", newBroker.c_str());
+                    publishOtaStatus("failed", "broker ip ไม่ถูกต้อง");
+                    return;
+                }
+                if (newBroker != activeMqttBroker) {
+                    prefs.begin("naid", false);
+                    // บอร์ดที่ไม่เคยย้าย broker ยังไม่มีคีย์นี้ใน NVS — ถ้าไม่ตรึงไว้ตอนนี้
+                    // ตอนถอยกลับจะไปได้ค่า default ของเฟิร์มแวร์ใหม่ ซึ่งไม่เคยพิสูจน์ว่าต่อติด
+                    if (prefs.getString("mqtt_broker", "").length() == 0)
+                        prefs.putString("mqtt_broker", activeMqttBroker);
+                    prefs.putString("mqtt_broker_try", newBroker);   // ไม่ทับตัวที่ยืนยันแล้ว
+                    brokerArmed = true;
+                    prefs.putUChar("mqtt_try_boots", 0);
+                    prefs.end();
+                    nlog("[OTA] ตั้ง broker ทดลอง %s (ตัวเดิมยังเก็บไว้เป็นทางถอย)", newBroker.c_str());
+                }
+            }
+            doHttpOta(url.c_str());
+            // มาถึงบรรทัดนี้ = doHttpOta ไม่ได้รีบูต → อัปเดตไม่สำเร็จ
+            // ต้องปลด broker ทดลองออก ไม่ให้ไปโดนใช้ตอนรีบูตรอบหน้าโดยไม่ตั้งใจ
+            if (brokerArmed) {
+                prefs.begin("naid", false);
+                prefs.remove("mqtt_broker_try");
+                prefs.remove("mqtt_try_boots");
+                prefs.end();
+                nlog("[OTA] อัปเดตไม่สำเร็จ → ปลด broker ทดลองออกแล้ว");
+            }
+        } else {
             nlog("[CMD] URL ไม่ถูกต้อง ต้องขึ้นต้นด้วย http:// หรือ https://");
+        }
+
+    } else if (strncmp(cmd, "broker ", 7) == 0) {
+        String nb = String(cmd + 7); nb.trim();
+        if (!isUsableBrokerAddr(nb)) {
+            nlog("[CMD] broker IP ไม่ถูกต้อง: %s", nb.c_str());
+            publishOtaStatus("failed", "broker ip ไม่ถูกต้อง");
+            return;
+        }
+        if (nb == activeMqttBroker) { nlog("[CMD] broker เดิมอยู่แล้ว ไม่ต้องเปลี่ยน"); return; }
+        prefs.begin("naid", false);
+        if (prefs.getString("mqtt_broker", "").length() == 0)
+            prefs.putString("mqtt_broker", activeMqttBroker);
+        prefs.putString("mqtt_broker_try", nb);
+        prefs.putUChar("mqtt_try_boots", 0);
+        prefs.end();
+        nlog("[CMD] ตั้ง broker ทดลอง %s — รีบูตเพื่อทดลองใช้", nb.c_str());
+        publishOtaStatus("broker_trial", nb.c_str());
+        pendingRebootAt = millis() + 2000;
 
     } else {
         nlog("[CMD] ไม่รู้จักคำสั่ง | ใช้ได้: status, version, reboot, ota <url>, "
@@ -948,6 +1077,10 @@ static void mqttCallback(char* topic, byte* payload, unsigned int len) {
         Serial.printf("[MQTT-RX] topic ไม่ตรงกับที่รออยู่ — ข้าม\n");
         return;
     }
+    // ข้อความมาถึง topic รายชื่อ = broker นี้มีข้อมูลที่แอปเรา publish ไว้จริง
+    // (ble/mac ส่งแบบ retained) ใช้เป็นหลักฐานว่าไม่ใช่ broker ตัวอื่นที่บังเอิญรับ
+    // connection ได้ — ตั้งก่อน parse เพราะรายชื่อว่าง (DB ยังไม่จับคู่) ก็ยังนับ
+    sawAppRoster = true;
 
     if (applyDeviceList(buf, isNode ? "รายชื่อเฉพาะโหนด" : "รายชื่อรวม") && isNode)
         haveNodeList = true;
@@ -1805,7 +1938,7 @@ static void ensureNetwork() {
 
     char cid[40];
     snprintf(cid, sizeof(cid), "naid-%s-%06lx", NODE_ID, (unsigned long)macSuffix24());
-    Serial.printf("[MQTT] เชื่อม %s:%d ...\n", MQTT_BROKER, MQTT_PORT);
+    Serial.printf("[MQTT] เชื่อม %s:%d ...\n", activeMqttBroker.c_str(), MQTT_PORT);
     if (mqtt.connect(cid, MQTT_USER, MQTT_PASS)) {
         Serial.println("[MQTT] ✅ เชื่อมต่อแล้ว");
         {   // รายงานว่ารอบที่แล้วดับเพราะอะไร — ใช้ไล่หาสาเหตุจากที่นั่งได้เลย
@@ -1817,6 +1950,7 @@ static void ensureNetwork() {
             mqtt.publish(t, p, true);       // retained — เปิดดูย้อนหลังได้
         }
         haveNodeList = false;                  // ให้ retained message ตัดสินใหม่ทุกครั้งที่ต่อใหม่
+        sawAppRoster = false;                  // ให้ broker ใหม่ต้องพิสูจน์ตัวเองอีกครั้ง
         subscribeDeviceList();
     } else {
         Serial.printf("[MQTT] ❌ rc=%d\n", mqtt.state());
@@ -1877,16 +2011,18 @@ static void publishHeartbeat() {
 
     int links = 0;
     for (auto& s : slots) if (s.inUse) links++;
-    char topic[48], payload[256];
+    char topic[48], payload[384];
     snprintf(topic, sizeof(topic), "%s/node/%s", MQTT_BASE_TOPIC, NODE_ID);
     snprintf(payload, sizeof(payload),
              "{\"uptime\": %lu, \"links\": %d, \"heap\": %lu, "
              "\"wifi_rssi\": %d, \"time_ok\": %d, \"boot_reason\": \"%s\", "
-             "\"version\": \"%s\", \"ip\": \"%s\"}",
+             "\"version\": \"%s\", \"ip\": \"%s\", "
+             "\"mqtt_broker\": \"%s\", \"mqtt_port\": %d, \"max_devices\": %d}",
              (unsigned long)(now / 1000), links,
              (unsigned long)ESP.getFreeHeap(), WiFi.RSSI(), timeSynced() ? 1 : 0,
              resetReasonText(),
-             FW_VERSION, WiFi.localIP().toString().c_str(), (unsigned long)rtcBootCount);
+             FW_VERSION, WiFi.localIP().toString().c_str(),
+             activeMqttBroker.c_str(), MQTT_PORT, MAX_DEVICES);
     mqtt.publish(topic, payload);
 }
 
@@ -1941,6 +2077,42 @@ void setup() {
     //    → มองจากภายนอกเหมือน "บอร์ดเงียบสนิท ไม่มี log อะไรเลย"
     Serial.printf("  Watchdog: จะเริ่มเฝ้าหลัง setup เสร็จ (timeout %d วิ)\n", WDT_TIMEOUT_SEC);
     Serial.println("════════════════════════════════════════");
+
+    prefs.begin("naid", true);
+    String confirmedBroker = prefs.getString("mqtt_broker", FIRMWARE_META.mqttBroker);
+    String trialBroker     = prefs.getString("mqtt_broker_try", "");
+    uint8_t trialBoots     = prefs.getUChar("mqtt_try_boots", 0);
+    prefs.end();
+
+    if (trialBroker.length() > 0 && trialBoots < BROKER_TRY_MAX_BOOTS) {
+        // ⚠️ นับ "ก่อน" ลอง — ถ้าเครื่องค้างกลางทางจนถูก watchdog รีเซ็ต
+        //    ตัวนับก็เดินแล้ว จึงไม่มีทางวนรีบูตไม่จบกับ broker ที่ผิด
+        prefs.begin("naid", false);
+        size_t counterWrote = prefs.putUChar("mqtt_try_boots", trialBoots + 1);
+        prefs.end();
+        if (counterWrote == 0) {
+            // เขียนตัวนับไม่ได้ = ไม่มีทางรู้ว่าลองไปกี่รอบ ถ้าขืนลองต่อจะวนลอง
+            // candidate เดิมทุกบูตไม่สิ้นสุด เลือกทางปลอดภัย: ไม่ทดลอง ใช้ตัวที่ยืนยันแล้ว
+            activeMqttBroker = confirmedBroker;
+            brokerOnTrial    = false;
+            Serial.println("[MQTT] ⚠️ เขียนตัวนับ NVS ไม่ได้ → ไม่ทดลอง broker ใหม่ ใช้ตัวเดิม");
+        } else {
+            activeMqttBroker = trialBroker;
+            brokerOnTrial    = true;
+            Serial.printf("[MQTT] ทดลอง broker ใหม่ %s (ครั้งที่ %d/%d)\n",
+                          trialBroker.c_str(), trialBoots + 1, BROKER_TRY_MAX_BOOTS);
+        }
+    } else {
+        activeMqttBroker = confirmedBroker;
+        if (trialBroker.length() > 0) {
+            prefs.begin("naid", false);
+            prefs.remove("mqtt_broker_try");
+            prefs.remove("mqtt_try_boots");
+            prefs.end();
+            brokerRollbackPending = true;
+            Serial.printf("[MQTT] broker ทดลองใช้ไม่ได้ → กลับไปใช้ %s\n", confirmedBroker.c_str());
+        }
+    }
 
     // ทะเบียนนาฬิกา — NVS ก่อน แล้วรอ MQTT ส่งรายชื่อจริงจากฐานข้อมูลมาทับ
     loadRegistryAtBoot();
@@ -2077,7 +2249,10 @@ void setup() {
     }
 
     // --- MQTT ---
-    mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+    // ⚠️ PubSubClient::setServer(const char*, ...) เก็บ pointer ไม่ copy string
+    //    activeMqttBroker เป็น global String จึงอยู่รอด — แต่ห้าม assign ค่าใหม่
+    //    ทับตัวแปรนี้ตอน runtime โดยไม่เรียก setServer() ใหม่ (pointer จะชี้ขยะ)
+    mqtt.setServer(activeMqttBroker.c_str(), MQTT_PORT);
     mqtt.setCallback(mqttCallback);        // รับรายชื่อ MAC + คำสั่งควบคุม
 
     // ArduinoOTA/mDNS เริ่มได้ต่อเมื่อ WiFi ติดแล้วเท่านั้น
@@ -2147,6 +2322,61 @@ void loop() {
                       (unsigned long)(NET_DEAD_REBOOT_MS / 60000));
         Serial.flush();
         ESP.restart();
+    }
+
+    // ── broker ทดลอง: ต่อติดต่อเนื่องนานพอ = ยืนยันเป็นตัวหลัก ──
+    //    ที่ต้องรอต่อเนื่อง ไม่ใช่แค่ connect ติดครั้งเดียว เพราะ broker
+    //    "ที่ผิดแต่มีอยู่จริง" ในเครือข่ายอาจตอบ CONNACK ให้ได้
+    if (brokerOnTrial) {
+        // ── เพดานเวลาทดลอง ──
+        //    broker ที่ติด ๆ หลุด ๆ จะรีเซ็ต brokerOkSince ตลอดจนไม่เคยครบ
+        //    BROKER_CONFIRM_MS ในขณะที่ lastNetOk ก็ถูกรีเฟรชจนชั้น net-dead
+        //    ไม่ยิง → ค้างสถานะทดลองไม่จบ ตัดบทด้วยเพดานเวลาแทน
+        if (millis() >= BROKER_TRIAL_DEADLINE_MS) {
+            prefs.begin("naid", false);
+            prefs.remove("mqtt_broker_try");
+            prefs.remove("mqtt_try_boots");
+            prefs.end();
+            brokerOnTrial = false;
+            nlog("[MQTT] broker ทดลองไม่ผ่านใน %lu นาที → ถอยกลับตัวเดิมแล้วรีบูต",
+                 (unsigned long)(BROKER_TRIAL_DEADLINE_MS / 60000));
+            publishOtaStatus("broker_rollback", "ทดลองไม่ผ่านตามเวลาที่กำหนด");
+            pendingRebootAt = millis() + 2000;   // รีบูตเพื่อกลับไปใช้ broker ที่ยืนยันแล้ว
+        // ต้องมีทั้ง "ต่อติด" และ "ได้รายชื่อจากแอปเรา" — connected อย่างเดียว
+        // พิสูจน์แค่ว่ามี broker ตัวหนึ่งรับ connection ไม่ได้พิสูจน์ว่าเป็นตัวที่ถูก
+        } else if (mqtt.connected() && sawAppRoster) {
+            if (brokerOkSince == 0) brokerOkSince = millis();
+            else if (millis() - brokerOkSince >= BROKER_CONFIRM_MS) {
+                prefs.begin("naid", false);
+                size_t wrote = prefs.putString("mqtt_broker", activeMqttBroker);
+                if (wrote > 0) {
+                    prefs.remove("mqtt_broker_try");
+                    prefs.remove("mqtt_try_boots");
+                }
+                prefs.end();
+                if (wrote > 0) {
+                    brokerOnTrial = false;
+                    nlog("[MQTT] ✅ ยืนยัน broker %s เป็นตัวหลักแล้ว", activeMqttBroker.c_str());
+                    publishOtaStatus("broker_ok", activeMqttBroker.c_str());
+                } else {
+                    // เขียน NVS ไม่ผ่าน — คงสถานะทดลองไว้ เดี๋ยวรอบหน้าลองยืนยันใหม่
+                    brokerOkSince = 0;
+                    nlog("[MQTT] ⚠️ เขียน NVS ไม่สำเร็จ — ยังไม่ยืนยัน broker");
+                }
+            }
+        } else {
+            brokerOkSince = 0;      // หลุด → เริ่มนับใหม่
+        }
+    }
+    // แจ้งครั้งเดียวตอนต่อ broker ทดลองติด — เส้นทาง OTA รีบูตมาแล้วยังไม่เคยแจ้ง
+    // ทำให้ UI ไม่เห็นสถานะ "กำลังทดลอง" เลยตลอดช่วง 2-15 นาทีที่รอผล
+    if (brokerOnTrial && !brokerTrialAnnounced && mqtt.connected()) {
+        brokerTrialAnnounced = true;
+        publishOtaStatus("broker_trial", activeMqttBroker.c_str());
+    }
+    if (brokerRollbackPending && mqtt.connected()) {
+        brokerRollbackPending = false;
+        publishOtaStatus("broker_rollback", activeMqttBroker.c_str());
     }
 
     // ── ชั้นที่ 3: รีบูตตามรอบ (รอจังหวะที่ไม่มีเรือนเชื่อมอยู่) ──

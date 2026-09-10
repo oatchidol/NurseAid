@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { roleHasCapability } = require('../server.js');
 const { generateFirmwareDownloadToken, buildFirmwareFilename } = require('../server.js');
+const { isUsableBrokerAddr, nodeSupportsBrokerArg } = require('../server.js');
 const {
     resolveNodeIdForMac,
     canDeployToTargets,
@@ -68,4 +69,76 @@ test('parseOtaStatusPayload safely parses, returns null on malformed JSON', () =
         { state: 'success', detail: 'ok', version: '2.1.0' }
     );
     assert.equal(parseOtaStatusPayload(Buffer.from('not json')), null);
+});
+
+test('isUsableBrokerAddr accepts usable IPv4 addresses and trims surrounding whitespace', () => {
+    assert.equal(isUsableBrokerAddr('172.16.251.50'), true);
+    assert.equal(isUsableBrokerAddr('10.0.0.1'), true);
+    assert.equal(isUsableBrokerAddr('192.168.1.1'), true);
+    assert.equal(isUsableBrokerAddr('8.8.8.8'), true);
+    assert.equal(isUsableBrokerAddr(' 172.16.251.50 '), true);
+});
+
+test('isUsableBrokerAddr rejects values that are not dotted-quad IPv4 addresses', () => {
+    assert.equal(isUsableBrokerAddr(''), false);
+    assert.equal(isUsableBrokerAddr('abc'), false);
+    assert.equal(isUsableBrokerAddr('172.16.251'), false);
+    assert.equal(isUsableBrokerAddr('172.16.251.50.1'), false);
+    assert.equal(isUsableBrokerAddr('172.16.251.x'), false);
+    assert.equal(isUsableBrokerAddr('nurseaid.local'), false);
+    assert.equal(isUsableBrokerAddr('2001:db8::1'), false);
+    assert.equal(isUsableBrokerAddr('172.16.251.50:1883'), false);
+});
+
+test('isUsableBrokerAddr rejects out-of-range octets', () => {
+    assert.equal(isUsableBrokerAddr('256.1.1.1'), false);
+    assert.equal(isUsableBrokerAddr('1.1.1.256'), false);
+    assert.equal(isUsableBrokerAddr('999.1.1.1'), false);
+});
+
+test('isUsableBrokerAddr rejects ambiguous leading zeros', () => {
+    assert.equal(isUsableBrokerAddr('172.016.251.50'), false);
+    assert.equal(isUsableBrokerAddr('01.1.1.1'), false);
+});
+
+test('isUsableBrokerAddr rejects reserved or unusable addresses', () => {
+    assert.equal(isUsableBrokerAddr('0.0.0.0'), false);
+    assert.equal(isUsableBrokerAddr('0.1.2.3'), false);
+    assert.equal(isUsableBrokerAddr('127.0.0.1'), false);
+    assert.equal(isUsableBrokerAddr('127.1.1.1'), false);
+    assert.equal(isUsableBrokerAddr('255.255.255.255'), false);
+    assert.equal(isUsableBrokerAddr('192.168.1.255'), false);
+});
+
+test('isUsableBrokerAddr rejects non-string values', () => {
+    assert.equal(isUsableBrokerAddr(null), false);
+    assert.equal(isUsableBrokerAddr(undefined), false);
+    assert.equal(isUsableBrokerAddr(12345), false);
+    assert.equal(isUsableBrokerAddr({}), false);
+    assert.equal(isUsableBrokerAddr([]), false);
+});
+
+test('nodeSupportsBrokerArg supports firmware versions at or above 2.1.0', () => {
+    assert.equal(nodeSupportsBrokerArg('2.1.0'), true);
+    assert.equal(nodeSupportsBrokerArg('2.1.1'), true);
+    assert.equal(nodeSupportsBrokerArg('2.2.0'), true);
+    assert.equal(nodeSupportsBrokerArg('3.0.0'), true);
+    assert.equal(nodeSupportsBrokerArg('10.0.0'), true);
+});
+
+test('nodeSupportsBrokerArg rejects firmware versions below 2.1.0', () => {
+    assert.equal(nodeSupportsBrokerArg('2.0.9'), false);
+    assert.equal(nodeSupportsBrokerArg('2.0.0'), false);
+    assert.equal(nodeSupportsBrokerArg('1.9.9'), false);
+});
+
+test('nodeSupportsBrokerArg treats unknown firmware as unsupported so a broker arg is never sent blind', () => {
+    assert.equal(nodeSupportsBrokerArg(null), false);
+    assert.equal(nodeSupportsBrokerArg(undefined), false);
+    assert.equal(nodeSupportsBrokerArg(''), false);
+    assert.equal(nodeSupportsBrokerArg('unknown'), false);
+    assert.equal(nodeSupportsBrokerArg('2.1'), false);
+    assert.equal(nodeSupportsBrokerArg('v2.1.0'), false);
+    assert.equal(nodeSupportsBrokerArg(123), false);
+    assert.equal(nodeSupportsBrokerArg({}), false);
 });

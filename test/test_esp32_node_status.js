@@ -42,8 +42,21 @@ test('parseHeartbeatPayload parses valid heartbeat JSON and passes through field
         time_ok: 1,
         boot_reason: 'BOD',
         version: '2.3.1',
-        ip: '172.16.5.9'
+        ip: '172.16.5.9',
+        mqtt_broker: null,
+        mqtt_port: null,
+        max_devices: null
     });
+});
+
+test('parseHeartbeatPayload passes through broker, port and max_devices when present', () => {
+    const payload = Buffer.from(
+        '{"uptime":5400,"heap":190000,"wifi_rssi":-62,"time_ok":1,"boot_reason":"BOD","version":"2.3.1","ip":"172.16.5.9","mqtt_broker":"172.16.251.50","mqtt_port":1883,"max_devices":8}'
+    );
+    const parsed = parseHeartbeatPayload(payload);
+    assert.equal(parsed.mqtt_broker, '172.16.251.50');
+    assert.equal(parsed.mqtt_port, 1883);
+    assert.equal(parsed.max_devices, 8);
 });
 
 test('parseHeartbeatPayload tolerates a missing boot_reason (older in-field firmware)', () => {
