@@ -300,12 +300,12 @@ async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
 // last_seen_at / ip_address / last_fw_version. If the nodeId is not yet known,
 // the heartbeat is buffered (not dropped) until the authoritative ble/esp32
 // inventory message resolves it.
-async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip }) {
+async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip, mqtt_broker, mqtt_port, max_devices }) {
     const boardMac = await resolveBoardMacByNodeId(nodeId);
     if (!boardMac) {
         // Heartbeat arrived before the authoritative ble/esp32 inventory message.
         // Buffer it so it is not silently lost — flush when identity resolves.
-        bufferPendingHeartbeat(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip });
+        bufferPendingHeartbeat(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip, mqtt_broker, mqtt_port, max_devices });
         console.warn(`[ESP32 Heartbeat] Heartbeat from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
         return;
     }
@@ -339,8 +339,8 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
     await restoreEsp32NodeIfRevoked(boardMac, nodeId, 'heartbeat');
     await pool.query(
         `INSERT INTO esp32_node_status
-             (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+             (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, mqtt_broker, mqtt_port, max_devices, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
          ON CONFLICT (board_mac) DO UPDATE SET
              fw_version = EXCLUDED.fw_version,
              ip_address = EXCLUDED.ip_address,
@@ -348,8 +348,12 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
              uptime_sec = EXCLUDED.uptime_sec,
              boot_reason = EXCLUDED.boot_reason,
              free_heap_bytes = EXCLUDED.free_heap_bytes,
+             mqtt_broker = COALESCE(EXCLUDED.mqtt_broker, esp32_node_status.mqtt_broker),
+             mqtt_port = COALESCE(EXCLUDED.mqtt_port, esp32_node_status.mqtt_port),
+             max_devices = COALESCE(EXCLUDED.max_devices, esp32_node_status.max_devices),
              last_seen_at = NOW()`,
-        [boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null]
+        [boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null,
+         mqtt_broker || null, mqtt_port ?? null, max_devices ?? null]
     );
 }
 
@@ -1508,6 +1512,16 @@ async function initDatabase() {
         await pool.query(`ALTER TABLE patients ADD COLUMN IF NOT EXISTS clinical_note TEXT`);
     } catch (e) { console.error("Patient clinical_note migration error:", e.message); }
 
+    // ─── Firmware metadata: embedded config from .bin + heartbeat config fields ──
+    try {
+        await pool.query(`
+            ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS embedded_config JSONB;
+            ALTER TABLE esp32_node_status ADD COLUMN IF NOT EXISTS mqtt_broker VARCHAR(64);
+            ALTER TABLE esp32_node_status ADD COLUMN IF NOT EXISTS mqtt_port INTEGER;
+            ALTER TABLE esp32_node_status ADD COLUMN IF NOT EXISTS max_devices INTEGER;
+        `);
+    } catch (e) { console.error("Firmware metadata migration error:", e.message); }
+
         const userCount = await pool.query('SELECT COUNT(*) FROM users');
     if (parseInt(userCount.rows[0].count) === 0) {
         const initialPassword = process.env.INITIAL_ADMIN_PASSWORD || '';
@@ -2542,6 +2556,27 @@ ${ICON_SET}
         @keyframes scan-pulse {
             0%, 100% { opacity: 0.6; transform: translateY(0); }
             50% { opacity: 1; transform: translateY(2px); }
+        }
+
+        /* Pulsing marker on the most recent trend reading ("Medical Monitor Sweep").
+           Colour comes from --trend-color (set per card at .trend-card--hr/--spo2/--temp,
+           server.js ~3561-3563) so there is a single source of truth for the metric colour.
+           No dedicated prefers-reduced-motion rule is needed: the *, *::before, *::after
+           catch-all further down this file already neutralises any animation added later. */
+        @keyframes trend-pulse {
+            0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--trend-color) 55%, transparent); }
+            70%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--trend-color) 0%, transparent); }
+            100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--trend-color) 0%, transparent); }
+        }
+        .trend-pulse-dot {
+            position: absolute;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--trend-color);
+            transform: translate(-50%, -50%);
+            animation: trend-pulse 1.6s ease-out infinite;
+            pointer-events: none;
         }
 
         /* Table header theme */
@@ -3601,6 +3636,7 @@ ${ICON_SET}
         }
 
         #sidePanel .trend-chart {
+            position: relative;
             flex: 1 1 0;
             height: auto !important;
             min-height: 0;
@@ -4964,6 +5000,7 @@ ${ICON_SET}
         setInterval(monitorGlobalAlerts, 10000);
 
         let panelCharts = {};
+        let panelPulseDots = {};
         let panelTrendRequest = null;
         let panelTrendState = {
             hn: '', name: '', hours: 24,
@@ -5042,6 +5079,106 @@ ${ICON_SET}
         };
         Chart.register(panelTrendRangePlugin);
 
+        // "Medical Monitor Sweep" — a left-to-right reveal (like an oscilloscope trace) plus
+        // a soft neon glow on the line itself. Both hook the *singular* beforeDatasetDraw /
+        // afterDatasetDraw (per dataset), while panelTrendRangePlugin above draws its threshold
+        // bands in the *plural* beforeDatasetsDraw (whole chart, always runs first in Chart.js)
+        // — so the clinical bands are never clipped or glowed by these two.
+        function prefersReducedMotion() {
+            return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        }
+
+        const trendSweepPlugin = {
+            id: 'trendSweep',
+            afterInit: function(chart) {
+                const cfg = (chart.options.plugins && chart.options.plugins.trendSweep) || {};
+                if (cfg.reducedMotion) {
+                    chart.$sweepProgress = 1;
+                    return;
+                }
+                const duration = Number(cfg.duration) || 550;
+                const start = performance.now();
+                chart.$sweepProgress = 0;
+                const step = function(now) {
+                    if (!chart.ctx || !chart.canvas) return;
+                    const t = Math.min(1, (now - start) / duration);
+                    chart.$sweepProgress = 1 - Math.pow(1 - t, 3); // ease-out-cubic
+                    chart.draw();
+                    if (t < 1) requestAnimationFrame(step);
+                };
+                requestAnimationFrame(step);
+            },
+            beforeDatasetDraw: function(chart) {
+                const progress = chart.$sweepProgress;
+                const area = chart.chartArea;
+                if (progress === undefined || progress >= 1 || !area) return;
+                chart.ctx.save();
+                chart.ctx.beginPath();
+                chart.ctx.rect(area.left, area.top, Math.max(0, (area.right - area.left) * progress), area.bottom - area.top);
+                chart.ctx.clip();
+            },
+            afterDatasetDraw: function(chart) {
+                const progress = chart.$sweepProgress;
+                if (progress === undefined || progress >= 1) return;
+                chart.ctx.restore();
+            }
+        };
+        Chart.register(trendSweepPlugin);
+
+        const trendGlowPlugin = {
+            id: 'trendGlow',
+            beforeDatasetDraw: function(chart) {
+                const cfg = (chart.options.plugins && chart.options.plugins.trendGlow) || {};
+                if (!cfg.color) return;
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                chart.ctx.save();
+                chart.ctx.shadowColor = cfg.color;
+                chart.ctx.shadowBlur = isDark ? 8 : 6;
+            },
+            afterDatasetDraw: function(chart) {
+                const cfg = (chart.options.plugins && chart.options.plugins.trendGlow) || {};
+                if (!cfg.color) return;
+                chart.ctx.restore();
+            }
+        };
+        Chart.register(trendGlowPlugin);
+
+        // Positions (or creates) the small pulsing dot marking the latest real reading on one
+        // trend chart. Reads --trend-color from CSS (set per card) — no new colour literal
+        // here. Safe to call again after a chart rebuild or on resize.
+        function updatePulseDot(id, chart) {
+            const canvas = document.getElementById(id);
+            const container = canvas && canvas.parentElement;
+            if (!container || !chart) return;
+            let dot = panelPulseDots[id];
+            if (!dot) {
+                dot = document.createElement('span');
+                dot.className = 'trend-pulse-dot';
+                container.appendChild(dot);
+                panelPulseDots[id] = dot;
+            }
+            const dataset = chart.data.datasets[0];
+            const meta = chart.getDatasetMeta(0);
+            const points = meta && meta.data;
+            let lastIndex = -1;
+            if (dataset && points) {
+                for (let i = dataset.data.length - 1; i >= 0; i--) {
+                    const point = dataset.data[i];
+                    if (point && point.y !== null && Number.isFinite(point.y)) { lastIndex = i; break; }
+                }
+            }
+            // onResize can fire synchronously during Chart.js's own constructor, before the
+            // dataset's point elements are fully laid out — points[lastIndex] may not exist
+            // yet even though lastIndex was found in the raw data. Treat that as "not ready".
+            if (lastIndex < 0 || !points[lastIndex]) {
+                dot.style.display = 'none';
+                return;
+            }
+            dot.style.display = '';
+            dot.style.left = points[lastIndex].x + 'px';
+            dot.style.top = points[lastIndex].y + 'px';
+        }
+
         function closePanel() {
             document.getElementById('sidePanel').classList.remove('active');
             document.getElementById('panelOverlay').style.display = 'none';
@@ -5066,6 +5203,10 @@ ${ICON_SET}
                 panelCharts[id].destroy();
             });
             panelCharts = {};
+            Object.keys(panelPulseDots).forEach(function(id) {
+                if (panelPulseDots[id]) panelPulseDots[id].remove();
+            });
+            panelPulseDots = {};
             ['avg-hr', 'avg-spo2', 'avg-temp'].forEach(function(id) {
                 const node = document.getElementById(id);
                 if (node) node.textContent = '';
@@ -5407,7 +5548,13 @@ ${ICON_SET}
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
-                            animation: { duration: 450, easing: 'easeOutQuart' },
+                            // The initial-load reveal is driven entirely by trendSweepPlugin
+                            // now (a left-to-right clip), so Chart.js's own point-growth
+                            // animation is turned off here to avoid two reveals fighting each
+                            // other; hover/tooltip transitions keep a quick fade of their own.
+                            animation: { duration: 0 },
+                            transitions: { active: { animation: { duration: 150 } } },
+                            onResize: function(chart) { updatePulseDot(id, chart); },
                             interaction: { intersect: false, mode: 'index' },
                             layout: { padding: { top: 6, right: 12, bottom: 2, left: 4 } },
                             scales: {
@@ -5457,6 +5604,8 @@ ${ICON_SET}
                                     warningMax: axisConfig.warningMax,
                                     criticalMax: axisConfig.criticalMax
                                 },
+                                trendGlow: { color: color },
+                                trendSweep: { duration: 550, reducedMotion: prefersReducedMotion() },
                                 tooltip: {
                                     displayColors: false,
                                     backgroundColor: '#0f172a',
@@ -5479,6 +5628,7 @@ ${ICON_SET}
                             }
                         }
                     });
+                    updatePulseDot(id, panelCharts[id]);
                     updateTrendSummary(summaryId, values, axisConfig.decimals);
                 };
 
@@ -7665,7 +7815,7 @@ async function esp32NodesForUi(req) {
     );
     const metadataByMac = new Map(metadata.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const healthStatus = await pool.query(
-        'SELECT board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at FROM esp32_node_status'
+        'SELECT board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, mqtt_broker, mqtt_port, max_devices, last_seen_at FROM esp32_node_status'
     );
     const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const registry = await pool.query(
@@ -7791,6 +7941,9 @@ async function esp32NodesForUi(req) {
             wifiRssi: health.wifi_rssi ?? null,
             freeHeapBytes: health.free_heap_bytes ?? null,
             bootReason: health.boot_reason || null,
+            mqttBroker: health.mqtt_broker || null,
+            mqttPort: health.mqtt_port ?? null,
+            maxDevices: health.max_devices ?? null,
             lastSeenAt,
             stale,
             mqttSessionSeen: mqttClientIps.has(node.ipAddress)
@@ -13520,7 +13673,10 @@ function parseHeartbeatPayload(buffer) {
             time_ok: data.time_ok ?? null,
             boot_reason: data.boot_reason ?? null,
             version: data.version ?? null,
-            ip: data.ip ?? null
+            ip: data.ip ?? null,
+            mqtt_broker: data.mqtt_broker ?? null,
+            mqtt_port: data.mqtt_port ?? null,
+            max_devices: data.max_devices ?? null
         };
     } catch (e) {
         return null;
