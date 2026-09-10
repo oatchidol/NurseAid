@@ -3,6 +3,8 @@
 Each MQTT message is a full snapshot for one ESP32 board. The registry never
 silently deletes a board: a board that stops reporting becomes disconnected and
 remains in the topology until an explicit decommission mechanism is added.
+Each watch belongs to one board: the latest report wins, or the freshest cached
+board wins on startup, with canonical board MAC order breaking age ties.
 """
 
 from __future__ import annotations
@@ -102,6 +104,7 @@ class Esp32TopologyRegistry:
         sensors = value.get("sensors") if isinstance(value, dict) else None
         if not isinstance(sensors, dict):
             return
+        candidates: dict[str, tuple[BoardState, float]] = {}
         for raw_id, raw_sensor in sensors.items():
             try:
                 board_mac = canonical_mac(raw_sensor.get("boardMac") or raw_id)
@@ -113,7 +116,20 @@ class Esp32TopologyRegistry:
                 devices = tuple(canonical_mac(watch.get("watchId")) for watch in raw_watches if isinstance(watch, dict))
             except (ValueError, TypeError):
                 continue
-            self.boards[board_mac] = BoardState(node_id, board_mac, ip_address, devices)
+            age = raw_sensor.get("lastSeenAgeSeconds")
+            if isinstance(age, bool) or not isinstance(age, (int, float)) or age != age:
+                age = float("inf")
+            candidates[board_mac] = (BoardState(node_id, board_mac, ip_address, devices), age)
+
+        owners: dict[str, tuple[float, str]] = {}
+        for board_mac, (board, age) in candidates.items():
+            rank = (age, board_mac)
+            for device in board.devices:
+                if device not in owners or rank < owners[device]:
+                    owners[device] = rank
+        for board_mac, (board, age) in candidates.items():
+            board.devices = tuple(device for device in board.devices if owners[device][1] == board_mac)
+            self.boards[board_mac] = board
             self.expected_from_cache.add(board_mac)
 
     def apply(self, payload: object, now_monotonic: float | None = None) -> None:
@@ -131,6 +147,11 @@ class Esp32TopologyRegistry:
                 now,
                 True,
             )
+            reported_devices = set(parsed["devices"])
+            if reported_devices:
+                for other_mac, board in self.boards.items():
+                    if other_mac != board_mac:
+                        board.devices = tuple(device for device in board.devices if device not in reported_devices)
 
     def topology_ready(self, now_monotonic: float | None = None) -> bool:
         with self.lock:
