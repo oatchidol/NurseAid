@@ -28,6 +28,8 @@ const {
     createResilientSingleFlightCache,
     markStatusesUnavailable,
     offlineThresholdMinutes,
+    offlineThresholdMinutesForPriority,
+    freshnessPolicyForPriority,
     shouldRaiseOfflineAlert
 } = require('./live-status');
 const {
@@ -77,11 +79,18 @@ const LIVE_FRESHNESS_POLICY = {
     liveHr: Number.isFinite(parsedLiveHrFreshness) && parsedLiveHrFreshness > 0 ? parsedLiveHrFreshness : 30,
     sessionStartedAtMs: SERVER_STARTED_AT_MS
 };
+// The Influx range has to cover the WIDEST freshness any patient can be given,
+// not the global default. A low-priority patient's window is stretched to cover
+// their scheduled rest (see freshnessPolicyForPriority), and a reading older
+// than this range is never fetched at all -- so a range computed from the
+// unwidened policy would quietly cap the widening and put the patient back to
+// reading as offline near the end of every rest.
+const LIVE_WIDEST_FRESHNESS_POLICY = freshnessPolicyForPriority(LIVE_FRESHNESS_POLICY, 'low');
 const LIVE_CLINICAL_QUERY_WINDOW_MINUTES = calculateQueryWindowMinutes({
-    clinical: LIVE_FRESHNESS_POLICY.clinical,
-    status: LIVE_FRESHNESS_POLICY.status,
-    quality: LIVE_FRESHNESS_POLICY.quality,
-    presence: LIVE_FRESHNESS_POLICY.presence
+    clinical: LIVE_WIDEST_FRESHNESS_POLICY.clinical,
+    status: LIVE_WIDEST_FRESHNESS_POLICY.status,
+    quality: LIVE_WIDEST_FRESHNESS_POLICY.quality,
+    presence: LIVE_WIDEST_FRESHNESS_POLICY.presence
 });
 const LIVE_BATTERY_QUERY_WINDOW_MINUTES = calculateQueryWindowMinutes({
     battery: LIVE_FRESHNESS_POLICY.battery
@@ -6152,7 +6161,13 @@ async function queryLiveStatuses() {
         const sensor = influxData.get(mac);
         const settings = { ...defaultSettings, ...(settingByMac.get(mac) || {}), mac: device.mac };
         const limits = alertThresholds(settings);
-        const snapshot = buildLiveSnapshot(sensor, nowMs, LIVE_FRESHNESS_POLICY);
+        // A medium/low priority watch is disconnected on purpose between
+        // measurements to spare its battery, so the global freshness windows
+        // would call it stale long before its next scheduled reading. Widen
+        // them for that watch only; 'high' returns the policy untouched.
+        const snapshot = buildLiveSnapshot(
+            sensor, nowMs, freshnessPolicyForPriority(LIVE_FRESHNESS_POLICY, device.priority)
+        );
         let { hr, temp, battery } = snapshot;
         let spo2 = snapshot.spo2;
         if (snapshot.recoveryPending) {
@@ -6264,10 +6279,17 @@ async function runAlertEngine() {
         for (const status of statuses) {
             const mac = normalizeMac(status.mac);
             const deviceSettings = status._alertSettings || {};
-            const thresholdMinutes = offlineThresholdMinutes(deviceSettings);
+            // Same reasoning as the freshness widening above: without this a
+            // patient on low priority trips the 2-minute offline alert during
+            // every scheduled rest.
+            const thresholdMinutes = offlineThresholdMinutesForPriority(deviceSettings, status.priority);
             const offlineAlertEnabled = deviceSettings.enable_offline_alert !== false;
             const connectionOffline = offlineAlertEnabled
-                && shouldRaiseOfflineAlert(status, deviceSettings, uptimeSeconds);
+                && shouldRaiseOfflineAlert(
+                    status,
+                    { ...deviceSettings, offline_threshold_minutes: thresholdMinutes },
+                    uptimeSeconds
+                );
             const openOfflineAlert = openOfflineByMac.get(mac);
 
             if (connectionOffline && !openOfflineAlert) {

@@ -281,10 +281,13 @@ def _on_message(client, userdata, msg):
                 # invent or refresh a wear-status value. This lets the dashboard
                 # show "connecting"/"measuring" while retaining the last actual
                 # status=0/1 point at its original timestamp.
+                # 2 means the node deliberately disconnected the watch for a
+                # priority rest — the watch is still paired, so it must not be
+                # collapsed into 0 (gone) on the way to InfluxDB.
                 activity = str(data_json.get("activity") or "").strip()
                 if activity:
                     status_fields = {"activity": activity}
-                    if wearable_status in (0, 1):
+                    if wearable_status in (0, 1, 2):
                         status_fields["value"] = float(wearable_status)
                     data_buffer.setdefault("ble/status", {})[mac] = buffered_fields(
                         status_fields, data_json

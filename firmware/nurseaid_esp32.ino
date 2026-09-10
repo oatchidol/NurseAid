@@ -297,6 +297,8 @@ FIRMWARE_META = {
 //      ถ้าแอปไม่เคยส่ง priority มาเลย ระบบจะทำงานเหมือนก่อนมี feature นี้ทุกประการ
 #define PRIORITY_MEDIUM_INTERVAL_MS    (5UL * 60UL * 1000UL)   // 5 นาที
 #define PRIORITY_LOW_INTERVAL_MS      (10UL * 60UL * 1000UL)   // 10 นาที
+// สถานะ 2 = "ยังจับคู่อยู่ แค่พักตามรอบ priority" — ต่างจาก 0 ที่แปลว่าหลุด/ถอดออก
+#define WEARABLE_STATUS_RESTING        2
 
 // --- SPO2 LOW ALERT (เหมือน Pi) ---
 #define SPO2_LOW_THRESHOLD            95   // ต่ำกว่านี้ → วัดซ้ำทันที
@@ -792,7 +794,7 @@ static void publishOtaStatus(const char* state, const char* detail) {
     mqtt.loop();                           // ดันออกทันทีก่อนจะไปทำงานหนัก
 }
 
-static void slotCleanupFwd(DeviceSlot& s, bool graceful);   // นิยามจริงอยู่ด้านล่าง
+static void slotCleanupFwd(DeviceSlot& s, bool graceful, bool planned = false);   // นิยามจริงอยู่ด้านล่าง
 
 static void doHttpOta(const char* url) {
     nlog("[OTA] เริ่มอัปเดตจาก %s", url);
@@ -1572,7 +1574,7 @@ static void manageScan() {
 // ═══════════════════════════════════════════════════════════════════
 // CONNECTOR — ต่อทีละเรือน มี stagger + backoff (แทน adapter lock ของ Python)
 // ═══════════════════════════════════════════════════════════════════
-static void slotCleanup(DeviceSlot& s, bool countAsFail);
+static void slotCleanup(DeviceSlot& s, bool countAsFail, bool planned = false);
 
 // กวาดเรือนที่หลุดออกทันที — เรียกแทรกได้ทุกจุดที่เพิ่งกลับจากงานที่ block นาน
 //   ปกติ s.gone ถูกจัดการใน serviceSlot() แต่ถ้า loop ติดอยู่ใน connect()
@@ -1710,12 +1712,23 @@ static void publishDisconnected(DeviceSlot& s, const char* reason) {
     Serial.printf("[MQTT] %s ส่งค่า 0 ทั้งหมด (สาเหตุ: %s)\n", s.macUp, reason);
 }
 
-static void slotCleanup(DeviceSlot& s, bool graceful);
-static void slotCleanupFwd(DeviceSlot& s, bool graceful) { slotCleanup(s, graceful); }
+// พักตามรอบ priority — ต่างจาก publishDisconnected() ตรงที่ "ไม่" ล้างค่าชีพจรเป็น 0
+// เพราะเรือนยังจับคู่อยู่ ค่าล่าสุดที่วัดได้ยังใช้ได้ ให้ฝั่งแอปถือค่าเดิมไว้จนถึงรอบหน้า
+static void publishResting(DeviceSlot& s) {
+    if (!mqtt.connected() || !s.inUse) return;
+    for (int k = 0; k < K_COUNT; k++) s.lastPub[k] = 0;   // กัน rate limit 1 วิ เหมือนกัน
+    publishMetric(s, K_STATUS, WEARABLE_STATUS_RESTING, false);
+    mqtt.loop();
+    Serial.printf("[MQTT] %s ส่งสถานะพักตามรอบ (status=%d)\n", s.macUp, WEARABLE_STATUS_RESTING);
+}
 
-static void slotCleanup(DeviceSlot& s, bool graceful) {
+static void slotCleanup(DeviceSlot& s, bool graceful, bool planned);
+static void slotCleanupFwd(DeviceSlot& s, bool graceful, bool planned) { slotCleanup(s, graceful, planned); }
+
+static void slotCleanup(DeviceSlot& s, bool graceful, bool planned) {
     // ส่งค่า 0 ก่อนเป็นอันดับแรก — ทำผ่าน WiFi เร็วกว่ารอ BLE disconnect
-    publishDisconnected(s, graceful ? "ตัดการเชื่อมต่อ" : "อุปกรณ์หลุด");
+    if (planned) publishResting(s);
+    else         publishDisconnected(s, graceful ? "ตัดการเชื่อมต่อ" : "อุปกรณ์หลุด");
 
     if (s.client) {
         if (graceful && s.client->isConnected()) {
@@ -1895,7 +1908,7 @@ static void serviceSlot(DeviceSlot& s) {
                     Serial.printf("[PRIORITY] %s วัดครบรอบแล้ว (priority=%s) → ตัดการเชื่อมต่อ พักไป %lu นาที\n",
                                   s.macUp, PRIORITY_NAME[registry[reg].priority],
                                   (unsigned long)(interval / 60000));
-                    slotCleanup(s, true);
+                    slotCleanup(s, true, true);   // planned = พักตามรอบ ไม่ใช่หลุด
                     // ⚠️ ต้องตั้งหลัง slotCleanup เสมอ (pattern เดียวกับ OFFWRIST_RECHECK_MS
                     //    ด้านบน) เพราะข้างใน slotCleanup เขียน nextAttempt เป็น +3 วิเสมอ
                     //    ตั้งก่อนจะโดนทับแล้วต่อกลับทันทีแทนที่จะพักจริง

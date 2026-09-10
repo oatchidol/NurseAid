@@ -5,6 +5,67 @@ function toPositiveNumber(entry) {
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+// Wearable status values as published by the firmware.
+//   0 = gone / off wrist, 1 = worn, 2 = still paired but deliberately
+//   disconnected for a priority rest (see PRIORITY_* in nurseaid_esp32.ino).
+// 2 exists so a battery-saving rest is not indistinguishable from a real
+// dropout: the watch is present, it just will not report again until its
+// next scheduled measurement.
+const WEARABLE_STATUS_OFF_WRIST = 0;
+const WEARABLE_STATUS_WORN = 1;
+const WEARABLE_STATUS_RESTING = 2;
+
+// How long the node leaves a watch alone between measurements, per priority.
+// These MUST track PRIORITY_MEDIUM_INTERVAL_MS / PRIORITY_LOW_INTERVAL_MS in
+// the firmware; if they drift apart the server starts calling resting patients
+// offline again.
+const PRIORITY_REST_SECONDS = { high: 0, medium: 300, low: 600 };
+
+// A measurement cycle plus reconnect backoff takes real time on top of the
+// rest itself, so the freshness window has to be the rest interval plus slack.
+const PRIORITY_REST_MARGIN_SECONDS = 180;
+
+function priorityRestSeconds(priority) {
+    const key = String(priority || 'high').trim().toLowerCase();
+    return PRIORITY_REST_SECONDS[key] || 0;
+}
+
+// Widen the freshness windows so a patient on medium/low priority is not
+// reported stale or offline during a rest the system itself scheduled.
+// `high` is returned untouched, so a fleet that never sets priority behaves
+// exactly as it did before this existed.
+function freshnessPolicyForPriority(basePolicy, priority) {
+    const restSeconds = priorityRestSeconds(priority);
+    // Always hand back a fresh object, never the caller's own policy: the
+    // global LIVE_FRESHNESS_POLICY is shared by every device on every poll,
+    // and one careless mutation downstream would silently retune the whole
+    // ward's staleness rules.
+    if (!restSeconds) return { ...basePolicy };
+    const floor = restSeconds + PRIORITY_REST_MARGIN_SECONDS;
+    const widen = value => Math.max(Number(value) || 0, floor);
+    return {
+        ...basePolicy,
+        clinical: widen(basePolicy?.clinical),
+        status: widen(basePolicy?.status),
+        quality: widen(basePolicy?.quality),
+        presence: widen(basePolicy?.presence)
+        // battery and liveHr are deliberately left alone: battery is already
+        // far longer than any rest, and hrLive means "streaming right now",
+        // which a resting watch genuinely is not.
+    };
+}
+
+// The offline alert must not fire inside a scheduled rest either. Raise the
+// operator's configured threshold to the rest window when priority demands it,
+// never lower it.
+function offlineThresholdMinutesForPriority(settings, priority) {
+    const configured = offlineThresholdMinutes(settings);
+    const restSeconds = priorityRestSeconds(priority);
+    if (!restSeconds) return configured;
+    const floorMinutes = Math.ceil((restSeconds + PRIORITY_REST_MARGIN_SECONDS) / 60);
+    return Math.min(60, Math.max(configured, floorMinutes));
+}
+
 function calculateQueryWindowMinutes(freshnessSeconds, minimumMinutes = 5) {
     const values = Object.values(freshnessSeconds || {})
         .map(Number)
@@ -80,8 +141,12 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
     const statusValue = statusEntry ? Number(statusEntry.value) : null;
     const connected = connectivityEntries.length > 0;
     const recoveryPending = false;
-    const worn = statusValue === 1 || (statusValue === null && vitalEntries.some(entry => toPositiveNumber(entry) !== null));
-    const explicitOffWrist = statusValue === 0;
+    // A resting watch is still on the patient - it simply is not measuring, so
+    // it must read as worn or the dashboard would blank out mid-rest.
+    const worn = statusValue === WEARABLE_STATUS_WORN
+        || statusValue === WEARABLE_STATUS_RESTING
+        || (statusValue === null && vitalEntries.some(entry => toPositiveNumber(entry) !== null));
+    const explicitOffWrist = statusValue === WEARABLE_STATUS_OFF_WRIST;
     const ageSeconds = key => {
         const timestampMs = sensor?.[key]?.timestampMs;
         return Number.isFinite(timestampMs) ? Math.max(0, Math.floor((nowMs - timestampMs) / 1000)) : null;
@@ -226,6 +291,13 @@ function markStatusesUnavailable(statuses, reason = 'telemetry_unavailable') {
 }
 
 module.exports = {
+    WEARABLE_STATUS_OFF_WRIST,
+    WEARABLE_STATUS_WORN,
+    WEARABLE_STATUS_RESTING,
+    PRIORITY_REST_SECONDS,
+    priorityRestSeconds,
+    freshnessPolicyForPriority,
+    offlineThresholdMinutesForPriority,
     calculateQueryWindowMinutes,
     buildLiveSnapshot,
     createSingleFlightCache,
