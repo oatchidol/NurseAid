@@ -100,9 +100,170 @@ function readEsp32Topology(filePath, options = {}) {
     }
 }
 
+/**
+ * Compute receiver-board availability over a sliding time window from ordered
+ * online/offline transition events. Pure function — no DB, no side effects.
+ *
+ * The board is treated as offline only during spans that begin with an 'offline'
+ * event and end at the next 'online' event (or at `nowMs` if still offline).
+ * Events older than the window are consulted to determine the state AT the
+ * window start; without such an event we fall back to `currentlyOnline`.
+ */
+function summariseEsp32Uptime(events, windowMs, nowMs, currentlyOnline) {
+    const defaultResult = { uptimePercent: 100, offlineSeconds: 0, outageCount: 0 };
+
+    // Guard against garbage input — return a safe default rather than throwing.
+    if (!Array.isArray(events) || !Number.isFinite(Number(windowMs)) || !Number.isFinite(Number(nowMs))) {
+        return defaultResult;
+    }
+
+    const windowStart = nowMs - Number(windowMs);
+
+    // Filter to valid liveness transitions and sort ascending by time.
+    const validEvents = [];
+    for (const e of events) {
+        if (!e || typeof e !== 'object') continue;
+        if (e.event_type !== 'online' && e.event_type !== 'offline') continue;
+        const t = new Date(e.created_at).getTime();
+        if (!Number.isFinite(t)) continue;
+        validEvents.push({ event_type: e.event_type, created_at: t });
+    }
+    validEvents.sort((a, b) => a.created_at - b.created_at);
+
+    // Determine the board's state at the exact window start.
+    // Events before the window set the initial state; without one we assume
+    // `currentlyOnline` (the caller's best guess from heartbeat freshness).
+    let initialState = currentlyOnline;
+    let hadPreWindowEvent = false;
+    for (let i = validEvents.length - 1; i >= 0; i--) {
+        if (validEvents[i].created_at < windowStart) {
+            initialState = validEvents[i].event_type === 'online';
+            hadPreWindowEvent = true;
+            break;
+        }
+    }
+
+    // Walk the window, accumulating offline seconds and counting outages.
+    let isOffline = !initialState;
+    let offlineSeconds = 0;
+    let outageCount = 0;
+    let lastTime = windowStart;
+
+    // If the board was already offline when the window started (due to an actual
+    // pre-window offline event), count that ongoing outage — otherwise a board
+    // dead for days would report "outages 0" on a 24h dashboard. We only do this
+    // when a real pre-window event exists; the empty-events + currentlyOnline=false
+    // fallback is intentional and must remain outageCount 0.
+    if (isOffline && hadPreWindowEvent) {
+        outageCount++;
+    }
+
+    for (const event of validEvents) {
+        if (event.created_at > nowMs) continue;   // skip future events
+        if (event.created_at < windowStart) continue; // already folded into initialState
+
+        // The segment [lastTime, event.created_at] carries the current state.
+        if (isOffline) {
+            offlineSeconds += (event.created_at - lastTime) / 1000;
+        }
+
+        if (event.event_type === 'offline') {
+            if (!isOffline) outageCount++; // new outage begins
+            isOffline = true;
+        } else {
+            // event_type === 'online' — outage ends if we were in one
+            isOffline = false;
+        }
+        lastTime = event.created_at;
+    }
+
+    // Final segment from the last event (or window start) through nowMs.
+    if (isOffline) {
+        offlineSeconds += (nowMs - lastTime) / 1000;
+    }
+
+    const totalSeconds = Number(windowMs) / 1000;
+    const uptimePercent = totalSeconds > 0
+        ? Math.round(((totalSeconds - offlineSeconds) / totalSeconds) * 1000) / 10
+        : 100;
+
+    return {
+        uptimePercent: Math.max(0, Math.min(100, uptimePercent)),
+        offlineSeconds: Math.round(offlineSeconds),
+        outageCount
+    };
+}
+
+/**
+ * Count reboot events for a single board over a sliding time window, and
+ * surface the most recent boot reason / timestamp. Pure function — no DB,
+ * no side effects.
+ *
+ * `detail` may arrive as a JS object (node-postgres JSONB parser) or as a
+ * JSON string (some drivers / mock layers stringify it). We normalise both
+ * without throwing so the UI never breaks on a malformed row.
+ *
+ * `created_at` may be a Date or an ISO string — we coerce numerically via
+ * `new Date(...).getTime()` and compare numbers, never with bare `.sort()`
+ * or string subtraction (that exact bug was already fixed elsewhere in this
+ * codebase).
+ */
+function summariseEsp32Reboots(events, windowMs, nowMs) {
+    const defaultResult = { rebootCount: 0, lastReason: null, lastRebootAt: null };
+
+    // Guard against garbage input — return a safe default rather than throwing.
+    if (!Array.isArray(events) || !Number.isFinite(Number(windowMs)) || !Number.isFinite(Number(nowMs))) {
+        return defaultResult;
+    }
+
+    const windowStart = nowMs - Number(windowMs);
+
+    // Collect reboot events whose created_at falls inside the window, coercing
+    // timestamps numerically so Date objects and ISO strings are treated alike.
+    const reboots = [];
+    for (const e of events) {
+        if (!e || typeof e !== 'object') continue;
+        if (e.event_type !== 'reboot') continue;
+        const t = new Date(e.created_at).getTime();
+        if (!Number.isFinite(t)) continue;
+        if (t < windowStart || t > nowMs) continue;
+
+        // Normalise detail: node-postgres returns a JS object for JSONB, but
+        // some test doubles / mock layers stringify it first. Handle both.
+        let detail = null;
+        try {
+            if (e.detail && typeof e.detail === 'object') {
+                detail = e.detail;
+            } else if (typeof e.detail === 'string') {
+                detail = JSON.parse(e.detail);
+            }
+        } catch (_parseErr) {
+            // Garbage JSON — leave detail as null; we still count the reboot.
+        }
+
+        reboots.push({ created_at: t, reason: detail && typeof detail.reason === 'string' ? detail.reason : null });
+    }
+
+    if (!reboots.length) {
+        return defaultResult;
+    }
+
+    // Sort ascending by numeric time — never use bare .sort() on Dates.
+    reboots.sort((a, b) => a.created_at - b.created_at);
+
+    const last = reboots[reboots.length - 1];
+    return {
+        rebootCount: reboots.length,
+        lastReason: last.reason || null,
+        lastRebootAt: new Date(last.created_at).toISOString()
+    };
+}
+
 module.exports = {
     canonicalMac,
     parseEsp32Topology,
     readEsp32Topology,
-    readMqttClientIps
+    readMqttClientIps,
+    summariseEsp32Uptime,
+    summariseEsp32Reboots
 };

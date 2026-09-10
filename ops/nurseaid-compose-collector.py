@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import re
@@ -606,6 +607,23 @@ def report_phase(action_id, phase):
         print(f"[ApplyUpdate] phase report failed ({phase}): {error}", flush=True)
 
 
+def detect_host_lan_ip():
+    """Best-effort: the LAN-facing IPv4 address this host would use to reach
+    the outside world. A UDP "connect" never actually sends a packet — it
+    only asks the kernel to pick the local address for that route — so this
+    is free of any network call and safe to run on every deploy. This
+    script runs directly on the host (not inside a bridge-networked
+    container), so the result is the host's real LAN address — the one
+    ESP32 boards on the same hospital network can actually reach — not a
+    docker-internal bridge address a container's own view would show."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
 def run_apply_update(action_id):
     """The actual pipeline. Always releases the lock. Never raises for a
     handled build/health failure — those return a result dict describing
@@ -614,6 +632,18 @@ def run_apply_update(action_id):
     caller turns into a 'failed' response."""
     acquire_apply_update_lock()
     try:
+        # Refresh FIRMWARE_OTA_BASE_URL fresh on every deploy with whatever
+        # LAN IP this host currently has (DHCP can reassign it between
+        # deploys, and a stale value would send a real ESP32 board's OTA
+        # request nowhere) — compose_command()'s subprocess inherits this
+        # process's environment, so setting it here reaches Compose's
+        # ${FIRMWARE_OTA_BASE_URL:-} substitution for the nurseaid service.
+        # An ops engineer's own pre-exported value is left alone.
+        if not os.environ.get("FIRMWARE_OTA_BASE_URL"):
+            detected_ip = detect_host_lan_ip()
+            if detected_ip:
+                app_port = os.environ.get("PORT", "3333")
+                os.environ["FIRMWARE_OTA_BASE_URL"] = f"http://{detected_ip}:{app_port}"
         report_phase(action_id, "checking")
         # Clean-tree guard: never git-reset/checkout over an ops engineer's
         # in-progress edit on the same checkout this bind-mounts.

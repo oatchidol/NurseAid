@@ -38,7 +38,9 @@ const {
 const {
     canonicalMac: canonicalEsp32Mac,
     readEsp32Topology,
-    readMqttClientIps
+    readMqttClientIps,
+    summariseEsp32Uptime,
+    summariseEsp32Reboots
 } = require('./esp32-status');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
@@ -162,14 +164,277 @@ const MQTT_PAIRED_TOPIC = 'nurseaid/paired_devices';
 
 let mqttClient = null;
 
+// Pending heartbeat buffer: heartbeats whose nodeId cannot yet be resolved to a
+// board_mac are stored here until the authoritative ble/esp32 inventory message
+// arrives and calls upsertEsp32NodeIdentity, which flushes them through the
+// normal heartbeat path. Bounded by max size and TTL so it never grows without
+// bound — a misbehaving or spoofed nodeId cannot exhaust memory.
+const ESP32_PENDING_HEARTBEAT_MAX = 64;
+const ESP32_PENDING_HEARTBEAT_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const esp32PendingHeartbeats = new Map(); // nodeId -> { parsed, receivedAt }
+// Pending boot messages whose nodeId cannot yet be resolved to a board_mac.
+// Mirrors the heartbeat buffer: bounded by the same max/TTL so it never grows
+// without bound, and flushed from the same ble/esp32 handler after identity
+// resolution. Keeps only the latest payload per nodeId so a rapid sequence of
+// retained /boot re-deliveries does not accumulate entries.
+const esp32PendingBoots = new Map(); // nodeId -> { parsed, receivedAt }
+// Tracks when the sweep should resume after an infra (MQTT) outage recovers.
+// Boards need a full threshold window to deliver their first heartbeat after
+// the link returns, or they would all be declared dead instantly.
+let esp32SweepGraceUntilMs = 0;
+
 function initMqttClient() {
     const url = `mqtt://${MQTT_HOST}:${MQTT_PORT}`;
     const options = { clientId: `nurseaid_server_${Date.now()}`, reconnectPeriod: 5000 };
     if (MQTT_USER) { options.username = MQTT_USER; options.password = MQTT_PASSWORD; }
     mqttClient = mqtt.connect(url, options);
-    mqttClient.on('connect', () => console.log('[MQTT] Server connected to broker'));
+    mqttClient.on('connect', () => {
+        console.log('[MQTT] Server connected to broker');
+        mqttClient.subscribe('ble/node/+/ota', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+/ota:', err.message);
+        });
+        // The bare heartbeat topic ble/node/<id> (no suffix). Subscribed alongside
+        // the OTA status topic so both are handled in the single message handler.
+        mqttClient.subscribe('ble/node/+', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+:', err.message);
+        });
+        // The ESP32 publishes a RETAINED boot message once per power-on so the
+        // server can reconstruct reboot history even after restarts. Subscribed
+        // alongside the bare heartbeat topic; dispatched before it in the handler
+        // so intent is explicit and robust to future regex edits.
+        mqttClient.subscribe('ble/node/+/boot', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/node/+/boot:', err.message);
+        });
+        // The legacy ble/esp32 topic carries the ONLY authoritative nodeId<->board_mac
+        // mapping. Subscribed so we can resolve unknown heartbeats and keep the
+        // durable esp32_nodes registry current.
+        mqttClient.subscribe('ble/esp32', { qos: 1 }, (err) => {
+            if (err) console.error('[MQTT] Failed to subscribe to ble/esp32:', err.message);
+        });
+    });
     mqttClient.on('error', (err) => console.error('[MQTT] Connection error:', err.message));
     mqttClient.on('offline', () => console.warn('[MQTT] Client went offline, will reconnect'));
+    mqttClient.on('message', (topic, payload) => {
+        const nodeId = parseOtaStatusTopic(topic);
+        if (nodeId) {
+            const parsed = parseOtaStatusPayload(payload);
+            if (!parsed) {
+                console.error(`[Firmware OTA] Malformed status payload from node ${nodeId}`);
+                return;
+            }
+            handleOtaStatusMessage(nodeId, parsed).catch(err =>
+                console.error('[Firmware OTA] Failed to record status:', err.message));
+            return;
+        }
+        // Legacy ble/esp32 inventory snapshot — the authoritative source for
+        // nodeId<->board_mac resolution. Flushes any buffered heartbeat for this node.
+        if (topic === 'ble/esp32') {
+            const parsed = parseEsp32InventoryPayload(payload);
+            if (!parsed) {
+                console.error('[ESP32 Inventory] Malformed ble/esp32 payload');
+                return;
+            }
+            upsertEsp32NodeIdentity(parsed.boardMac, parsed.nodeId, parsed.ipAddress)
+                .then(() => {
+                    flushPendingHeartbeat(parsed.nodeId);
+                    flushPendingBoot(parsed.nodeId);
+                })
+                .catch(err => console.error('[ESP32 Inventory] Failed to upsert identity:', err.message));
+            return;
+        }
+        // Boot message (ble/node/<id>/boot) — RETAINED, published once per power-on.
+        // Checked before the bare heartbeat so intent is explicit and robust to
+        // future regex edits that might broaden parseHeartbeatTopic.
+        const bootNodeId = parseBootTopic(topic);
+        if (bootNodeId) {
+            const parsed = parseBootPayload(payload);
+            if (!parsed) {
+                console.error(`[ESP32 Boot] Malformed boot payload from node ${bootNodeId}`);
+                return;
+            }
+            handleBootMessage(bootNodeId, parsed).catch(err =>
+                console.error('[ESP32 Boot] Failed to record boot:', err.message));
+            return;
+        }
+        // Bare heartbeat message (ble/node/<id>, no suffix).
+        const heartbeatNodeId = parseHeartbeatTopic(topic);
+        if (!heartbeatNodeId) return; // not a heartbeat — nothing else is subscribed today, but stay defensive
+        const parsed = parseHeartbeatPayload(payload);
+        if (!parsed) {
+            console.error(`[ESP32 Heartbeat] Malformed heartbeat payload from node ${heartbeatNodeId}`);
+            return;
+        }
+        handleHeartbeatMessage(heartbeatNodeId, parsed).catch(err =>
+            console.error('[ESP32 Heartbeat] Failed to record status:', err.message));
+    });
+}
+
+async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
+    // Resolve nodeId -> board_mac via the durable esp32_nodes registry instead
+    // of reading the volatile topology snapshot file. This is the same path used
+    // by handleHeartbeatMessage and avoids an expensive per-OTA-call file read
+    // plus several DB queries that esp32NodesForUi performs.
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
+        console.error(`[Firmware OTA] Status from unknown nodeId ${nodeId} — no matching board_mac`);
+        return;
+    }
+    // Update the most recent pending/start deployment row for this board.
+    await pool.query(
+        `UPDATE firmware_deployments
+         SET status=$1, detail=$2, reported_version=$3, updated_at=NOW()
+         WHERE id = (
+             SELECT id FROM firmware_deployments
+             WHERE board_mac=$4 AND status IN ('pending','start')
+             ORDER BY requested_at DESC LIMIT 1
+         )`,
+        [state, detail || null, version || null, boardMac]
+    );
+}
+
+// Persist ESP32 board health/status from a heartbeat message. Resolves the bare
+// nodeId carried in the topic to a board_mac via the durable esp32_nodes
+// registry (mirrors handleOtaStatusMessage), then upserts one row per board so
+// the admin UI can show fw version, uptime, WiFi signal, free heap, boot reason
+// and last-seen freshness. Also keeps the esp32_nodes registry fresh with
+// last_seen_at / ip_address / last_fw_version. If the nodeId is not yet known,
+// the heartbeat is buffered (not dropped) until the authoritative ble/esp32
+// inventory message resolves it.
+async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip }) {
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
+        // Heartbeat arrived before the authoritative ble/esp32 inventory message.
+        // Buffer it so it is not silently lost — flush when identity resolves.
+        bufferPendingHeartbeat(nodeId, { uptime, heap, wifi_rssi, time_ok, boot_reason, version, ip });
+        console.warn(`[ESP32 Heartbeat] Heartbeat from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
+        return;
+    }
+    // Detect firmware upgrades: if both the stored and incoming versions are
+    // non-null and differ, record a fw_changed event. We deliberately skip the
+    // case where the stored value is null (first-ever observation) so we do not
+    // fabricate a "change" from nothing. Detected here only — not in the boot
+    // handler — to avoid logging the same upgrade twice from two topics.
+    if (version != null) {
+        const prev = await pool.query(
+            'SELECT last_fw_version FROM esp32_nodes WHERE board_mac = $1',
+            [boardMac]
+        );
+        const oldVersion = prev.rows[0] ? prev.rows[0].last_fw_version : null;
+        if (oldVersion != null && oldVersion !== version) {
+            await recordEsp32Event(boardMac, nodeId, 'fw_changed', { from: oldVersion, to: version });
+        }
+    }
+    // Keep the durable registry fresh: last_seen_at, ip_address and last_fw_version.
+    await pool.query(
+        `UPDATE esp32_nodes SET
+             last_seen_at = NOW(),
+             ip_address = COALESCE($1, ip_address),
+             last_fw_version = COALESCE($2, last_fw_version)
+         WHERE board_mac = $3`,
+        [ip || null, version || null, boardMac]
+    );
+    // Auto-restore a revoked board when it proves it is alive via heartbeat.
+    // The bare heartbeat topic (ble/node/<id>) is NOT retained, so this only
+    // fires on genuine live heartbeats — not on broker replay after a restart.
+    await restoreEsp32NodeIfRevoked(boardMac, nodeId, 'heartbeat');
+    await pool.query(
+        `INSERT INTO esp32_node_status
+             (board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (board_mac) DO UPDATE SET
+             fw_version = EXCLUDED.fw_version,
+             ip_address = EXCLUDED.ip_address,
+             wifi_rssi = EXCLUDED.wifi_rssi,
+             uptime_sec = EXCLUDED.uptime_sec,
+             boot_reason = EXCLUDED.boot_reason,
+             free_heap_bytes = EXCLUDED.free_heap_bytes,
+             last_seen_at = NOW()`,
+        [boardMac, version || null, ip || null, wifi_rssi ?? null, uptime ?? null, boot_reason || null, heap ?? null]
+    );
+}
+
+// Handle a RETAINED boot message published once per power-on by the ESP32.
+// The topic carries nodeId but NOT board_mac, so we resolve via the durable
+// esp32_nodes registry. The retained flag means the broker re-delivers this
+// message on every subscribe (server restart, MQTT reconnect), so the monotonic
+// bootCount guard is essential: only a strictly greater count (or a counter
+// reset after reflashing) counts as a genuine reboot event.
+//
+// Deliberately NOT auto-restoring revoked boards from here. The retained /boot
+// topic is re-delivered on every server restart and MQTT reconnect, so an
+// auto-restore trigger in this handler would resurrect every hidden board on
+// every deploy — making the revoke feature useless. Auto-restore lives only in
+// the non-retained heartbeat (ble/node/<id>) and inventory (ble/esp32) paths.
+//
+// Deliberately NOT implementing uptime-goes-backwards detection as a second
+// heuristic. The retained /boot message plus the monotonic counter guard is
+// already self-healing — a missed boot message sits retained on the broker and
+// gets delivered on the next reconnect where bootCount > baseline still holds.
+// A second heuristic would double-count the same reboot and corrupt the
+// "how flaky is this board" number, which is the entire purpose of this feature.
+async function handleBootMessage(nodeId, { bootCount, reason, version }) {
+    const boardMac = await resolveBoardMacByNodeId(nodeId);
+    if (!boardMac) {
+        // Boot arrived before the authoritative ble/esp32 inventory message.
+        // Buffer it so it is not silently lost — flush when identity resolves.
+        bufferPendingBoot(nodeId, { bootCount, reason, version });
+        console.warn(`[ESP32 Boot] Boot from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
+        return;
+    }
+    // Read the current baseline so we can apply the decision table.
+    const prev = await pool.query(
+        'SELECT last_boot_count FROM esp32_nodes WHERE board_mac = $1',
+        [boardMac]
+    );
+    const lastBootCount = prev.rows[0] ? prev.rows[0].last_boot_count : null;
+
+    if (lastBootCount === null) {
+        // First time we see this board — store the bootCount as baseline.
+        // Do NOT record an event: we have no idea whether this boot just happened
+        // or happened last week, and inventing history would be fabrication.
+        await pool.query(
+            `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+            [bootCount, boardMac]
+        );
+        return;
+    }
+
+    if (bootCount === lastBootCount) {
+        // RETAINED MESSAGE REPLAY: the broker re-delivers retained messages on
+        // every subscribe (server restart, MQTT reconnect). Do not fabricate a
+        // phantom reboot event.
+        return;
+    }
+
+    if (bootCount > lastBootCount) {
+        // Genuine reboot — counter advanced.
+        await recordEsp32Event(boardMac, nodeId, 'reboot', {
+            bootCount,
+            previousBootCount: lastBootCount,
+            reason
+        });
+        await pool.query(
+            `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+            [bootCount, boardMac]
+        );
+        return;
+    }
+
+    // bootCount < lastBootCount: the counter went backwards, which means the
+    // board was reflashed or its RTC memory was cleared. Record a reboot event
+    // with counterReset:true and RESET the baseline to the new lower count.
+    // Do NOT ignore this case — if we only ever accept >, a reflashed board
+    // goes silent for every reboot until it climbs back past its old count.
+    await recordEsp32Event(boardMac, nodeId, 'reboot', {
+        bootCount,
+        previousBootCount: lastBootCount,
+        reason,
+        counterReset: true
+    });
+    await pool.query(
+        `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
+        [bootCount, boardMac]
+    );
 }
 
 async function publishPairedDeviceList() {
@@ -294,7 +559,7 @@ const ROLE_CAPABILITIES = {
     super_admin: new Set([
         'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
-        'users:manage:all','wards:manage','settings:global','audit:read:all','export:read'
+        'users:manage:all','wards:manage','settings:global','audit:read:all','export:read','devices:firmware:write'
     ]),
     ward_admin: new Set([
         'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
@@ -830,7 +1095,11 @@ async function logAudit(req, action, entityType, entityId, details) {
 
 const publicPaths = new Set(['/login', '/api/login', '/health', '/health/live', '/health/ready']);
 app.use(async (req, res, next) => {
-    if (publicPaths.has(req.path)) return next();
+    // /fw/<token>/firmware.bin is deliberately unauthenticated (see the route
+    // itself) — the ESP32's HTTPUpdate client can't do cookie/session auth,
+    // so it can't be an exact entry in publicPaths (the token varies per
+    // download) and needs a prefix check instead.
+    if (publicPaths.has(req.path) || req.path.startsWith('/fw/')) return next();
 
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
     let claims;
@@ -967,6 +1236,70 @@ async function initDatabase() {
             updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             updated_at TIMESTAMP DEFAULT NOW()
         )`,
+        `CREATE TABLE IF NOT EXISTS firmware_versions (
+            id SERIAL PRIMARY KEY,
+            version VARCHAR(40) NOT NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            filename VARCHAR(255) NOT NULL,
+            file_size INTEGER NOT NULL,
+            download_token VARCHAR(64) NOT NULL UNIQUE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            uploaded_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE TABLE IF NOT EXISTS firmware_deployments (
+            id SERIAL PRIMARY KEY,
+            version_id INTEGER NOT NULL REFERENCES firmware_versions(id),
+            board_mac VARCHAR(17) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            reported_version VARCHAR(40),
+            detail TEXT,
+            requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            requested_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_firmware_deployments_version ON firmware_deployments(version_id)`,
+        // ESP32 board health/status captured from the bare MQTT heartbeat topic
+        // ble/node/<NODE_ID> (see handleHeartbeatMessage). One row per board,
+        // upserted on every heartbeat so the admin UI can show fw version, uptime,
+        // WiFi signal, free heap, boot reason and last-seen freshness.
+        `CREATE TABLE IF NOT EXISTS esp32_node_status (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            fw_version VARCHAR(40),
+            ip_address VARCHAR(45),
+            wifi_rssi INTEGER,
+            uptime_sec INTEGER,
+            boot_reason TEXT,
+            free_heap_bytes INTEGER,
+            last_seen_at TIMESTAMP DEFAULT NOW()
+        )`,
+        // esp32_nodes is the durable nodeId<->board_mac registry so a heartbeat is
+        // never dropped just because the volatile topology snapshot file is missing
+        // that board. One row per board, upserted from topology and from the live
+        // heartbeat stream.
+        `CREATE TABLE IF NOT EXISTS esp32_nodes (
+            board_mac VARCHAR(17) PRIMARY KEY,
+            node_id VARCHAR(64) UNIQUE,
+            ip_address VARCHAR(45),
+            last_boot_count INTEGER,
+            last_fw_version VARCHAR(40),
+            first_seen_at TIMESTAMP DEFAULT NOW(),
+            last_seen_at TIMESTAMP,
+            revoked_at TIMESTAMP,
+            revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        )`,
+        // esp32_node_events is an append-only transition log. A board is "currently
+        // offline" when its latest online/offline event is `offline`. Used to drive
+        // the ESP32-specific offline alert threshold without relying on heartbeat
+        // freshness alone.
+        `CREATE TABLE IF NOT EXISTS esp32_node_events (
+            id BIGSERIAL PRIMARY KEY,
+            board_mac VARCHAR(17) NOT NULL,
+            node_id VARCHAR(64),
+            event_type VARCHAR(20) NOT NULL,
+            detail JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_esp32_events_board_time ON esp32_node_events(board_mac, created_at DESC)`,
         `CREATE TABLE IF NOT EXISTS user_notification_settings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) UNIQUE,
@@ -1033,6 +1366,7 @@ async function initDatabase() {
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS temp_warning_max DECIMAL(3,1);
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS enable_offline_alert BOOLEAN DEFAULT true;
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS offline_threshold_minutes INTEGER DEFAULT 2;
+            ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS esp32_offline_threshold_minutes INTEGER DEFAULT 5;
             UPDATE alert_settings SET
                 hr_warning_min=COALESCE(hr_warning_min, CASE WHEN hr_min+10 < hr_max-10 THEN hr_min+10 ELSE ROUND(hr_min+(hr_max-hr_min)/3.0) END),
                 hr_warning_max=COALESCE(hr_warning_max, CASE WHEN hr_min+10 < hr_max-10 THEN hr_max-10 ELSE ROUND(hr_max-(hr_max-hr_min)/3.0) END),
@@ -1050,6 +1384,7 @@ async function initDatabase() {
             ALTER TABLE alert_settings ALTER COLUMN temp_warning_max SET DEFAULT 37.0;
             ALTER TABLE alert_settings ALTER COLUMN enable_offline_alert SET DEFAULT true;
             ALTER TABLE alert_settings ALTER COLUMN offline_threshold_minutes SET DEFAULT 2;
+            ALTER TABLE alert_settings ALTER COLUMN esp32_offline_threshold_minutes SET DEFAULT 5;
         `);
         await pool.query(`
             CREATE UNIQUE INDEX IF NOT EXISTS uq_vital_signs_logs_mac_recorded_at
@@ -1060,6 +1395,14 @@ async function initDatabase() {
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_path TEXT;
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_original_name TEXT;
             ALTER TABLE user_notification_settings ADD COLUMN IF NOT EXISTS custom_sound_uploaded_at TIMESTAMP;
+        `);
+        // Per-board revoke/restore tracking. Revoked boards are hidden from the
+        // dashboard and alerting but remain in the registry so they auto-restore
+        // when they prove they are alive again (see handleHeartbeatMessage and
+        // upsertEsp32NodeIdentity).
+        await pool.query(`
+            ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP;
+            ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
         `);
     } catch (e) { console.error("Migration error:", e.message); }
     await pool.query(`
@@ -1175,6 +1518,43 @@ async function initDatabase() {
             'INSERT INTO users (username, full_name, password, role) VALUES ($1,$2,$3,$4)',
             [process.env.INITIAL_ADMIN_USERNAME || 'admin', 'Administrator', await hashPassword(initialPassword), 'super_admin']
         );
+    }
+}
+
+// One-time idempotent seed: populate esp32_nodes from the topology snapshot and
+// any rows already sitting in esp32_node_status so the registry is not empty on
+// first deploy. A single bad row must never abort the whole backfill — each
+// per-node upsert is wrapped individually because node_id is UNIQUE and two
+// different board_macs claiming the same node_id would raise a unique violation.
+async function backfillEsp32NodeRegistry() {
+    try {
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        if (topology.nodes) {
+            for (const node of topology.nodes) {
+                try {
+                    await pool.query(
+                        `INSERT INTO esp32_nodes (board_mac, node_id, ip_address) VALUES ($1, $2, $3)
+                         ON CONFLICT (board_mac) DO UPDATE
+                             SET node_id = COALESCE(EXCLUDED.node_id, esp32_nodes.node_id),
+                                 ip_address = COALESCE(EXCLUDED.ip_address, esp32_nodes.ip_address)`,
+                        [node.boardMac, node.nodeId, node.ipAddress]
+                    );
+                } catch (e) {
+                    console.error(`[ESP32 Registry] backfill skipped node ${node.boardMac} (${node.nodeId}):`, e.message);
+                }
+            }
+        }
+        // Seed boards present in esp32_node_status but not yet in esp32_nodes.
+        await pool.query(
+            `INSERT INTO esp32_nodes (board_mac, ip_address, last_fw_version, last_seen_at)
+             SELECT board_mac, ip_address, fw_version, last_seen_at
+             FROM esp32_node_status
+             ON CONFLICT (board_mac) DO UPDATE
+                 SET last_seen_at = COALESCE(esp32_nodes.last_seen_at, EXCLUDED.last_seen_at),
+                     last_fw_version = COALESCE(esp32_nodes.last_fw_version, EXCLUDED.last_fw_version)`
+        );
+    } catch (e) {
+        console.error('[ESP32 Registry] backfill failed:', e.message);
     }
 }
 
@@ -1700,7 +2080,11 @@ const ICON_SET = `
         .ic-bulb { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M9%2018h6M10%2022h4%22%2F%3E%3Cpath%20d%3D%22M12%202a7%207%200%200%200-4%2012.7V17h8v-2.3A7%207%200%200%200%2012%202z%22%2F%3E%3C%2Fsvg%3E"); }
         .ic-hospital { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2021h18M5%2021V7l7-4%207%204v14%22%2F%3E%3Cpath%20d%3D%22M12%209v6M9%2012h6%22%2F%3E%3C%2Fsvg%3E"); }
         .ic-watch { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%226%22%2F%3E%3Cpath%20d%3D%22M9%203h6l.5%203M9%2021h6l.5-3M12%2010v2.5l1.5%201%22%2F%3E%3C%2Fsvg%3E"); }
-        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }`;
+        .ic-dot { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%227%22%20fill%3D%22black%22%20stroke%3D%22none%22%2F%3E%3C%2Fsvg%3E"); }
+        /* Password visibility toggle. --ic-eye-open is the resting (hidden) state;
+           .ic-eye-off swaps to the slashed eye so the current state is legible at a glance. */
+        .ic-eye-open { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M2%2012s3.5-7%2010-7%2010%207%2010%207-3.5%207-10%207-10-7-10-7z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%222.5%22%2F%3E%3C%2Fsvg%3E"); }
+        .ic-eye-off { --ic:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3.5%205.5a15%2015%200%200%201%2017%200%22%2F%3E%3Cpath%20d%3D%22M2%2012s3.5-7%2010-7%2010%207%2010%207-3.5%207-10%207-10-7-10-7z%22%2F%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%222.5%22%2F%3E%3Cpath%20d%3D%22M4%204l16%2016%22%2F%3E%3C%2Fsvg%3E"); }`;
 
 const DESIGN_TOKENS = `
         :root {
@@ -5611,6 +5995,9 @@ async function runAlertEngine() {
     if (alertEngineRunning) return;
     alertEngineRunning = true;
     try {
+        // Receiver monitoring is independent of patient-vitals telemetry health.
+        // A stale live-status snapshot must never prevent ESP32 board alerts from running.
+        await runEsp32ReceiverSweep();
         const snapshot = await readLiveStatuses();
         if (snapshot.stale) return;
         const statuses = snapshot.value;
@@ -5659,6 +6046,189 @@ async function runAlertEngine() {
         console.error('[Alert Engine]', error.message);
     } finally {
         alertEngineRunning = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ESP32 receiver-board liveness sweep — runs every ALERT_ENGINE_INTERVAL_MS
+// alongside the clinical alert engine but is completely decoupled from it.
+// Receiver outages are recorded ONLY in esp32_node_events so they never leak
+// into alert_logs and never trigger nurse-facing audible alerts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Append a single transition event to esp32_node_events.
+ * detail is serialised to JSONB; pass null when there is no payload.
+ */
+async function recordEsp32Event(boardMac, nodeId, eventType, detail) {
+    try {
+        const detailJson = detail !== null ? JSON.stringify(detail) : null;
+        await pool.query(
+            `INSERT INTO esp32_node_events (board_mac, node_id, event_type, detail, created_at)
+             VALUES ($1, $2, $3, $4, NOW())`,
+            [String(boardMac), nodeId ?? null, eventType, detailJson]
+        );
+    } catch (err) {
+        console.error('[ESP32 Sweep] recordEsp32Event failed:', err.message);
+    }
+}
+
+/**
+ * Clear the revoke markers on a board that has just proven it is alive, and log
+ * a `restored` event. Safe to call unconditionally: the guarded UPDATE is a
+ * no-op on a board that is not revoked, so callers need no pre-check. Doing it
+ * as one guarded UPDATE rather than SELECT-then-UPDATE also closes the race
+ * where two messages arriving together each logged their own restore event.
+ *
+ * Call this ONLY from non-retained MQTT paths — the bare heartbeat topic
+ * (ble/node/<id>) and the inventory topic (ble/esp32). The retained /boot topic
+ * is re-delivered on every server restart and broker reconnect, so restoring
+ * from there would resurrect every hidden board on every deploy.
+ *
+ * Never throws. Auto-restore is a convenience; it must not fail the
+ * heartbeat/inventory path that calls it.
+ */
+async function restoreEsp32NodeIfRevoked(boardMac, nodeId, reason) {
+    try {
+        const result = await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NULL, revoked_by = NULL
+             WHERE board_mac = $1 AND revoked_at IS NOT NULL`,
+            [String(boardMac)]
+        );
+        if (result.rowCount > 0) {
+            await recordEsp32Event(boardMac, nodeId, 'restored', { reason });
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.error('[ESP32 Restore] auto-restore failed:', err.message);
+        return false;
+    }
+}
+
+// Minimum silence before a receiver board may be permanently deleted. A board
+// that is still publishing is a working patient monitor — destroying its
+// history on a misclick is unacceptable, so the delete route refuses and tells
+// the operator to hide (revoke) it instead.
+const ESP32_DELETE_MIN_SILENCE_MS = 10 * 60 * 1000;
+
+/**
+ * True when a board has been seen recently enough that permanent deletion must
+ * be refused. A board with no usable last_seen_at has never proven it was alive,
+ * so there is no history worth protecting and deletion is allowed — otherwise
+ * a board that never reported would be undeletable forever.
+ */
+function esp32DeleteBlockedByRecentActivity(lastSeenAt, nowMs = Date.now()) {
+    if (lastSeenAt === null || lastSeenAt === undefined || lastSeenAt === '') return false;
+    const seenMs = new Date(lastSeenAt).getTime();
+    if (!Number.isFinite(seenMs)) return false;
+    return nowMs - seenMs < ESP32_DELETE_MIN_SILENCE_MS;
+}
+
+/**
+ * Return the most recent liveness event_type for a board, or null when there
+ * is no history. The id DESC tiebreak handles the case where two events share
+ * the same created_at timestamp.
+ */
+async function latestEsp32LivenessEvent(boardMac) {
+    const result = await pool.query(
+        `SELECT event_type FROM esp32_node_events
+         WHERE board_mac=$1 AND event_type IN ('online','offline')
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [String(boardMac)]
+    );
+    return result.rows.length ? result.rows[0].event_type : null;
+}
+
+/**
+ * Return the most recent infrastructure liveness event_type, or null when
+ * there is no history. Infra rows use board_mac='-' as a sentinel.
+ */
+async function latestEsp32InfraEvent() {
+    const result = await pool.query(
+        `SELECT event_type FROM esp32_node_events
+         WHERE board_mac='-' AND event_type IN ('infra_offline','infra_online')
+         ORDER BY created_at DESC, id DESC LIMIT 1`
+    );
+    return result.rows.length ? result.rows[0].event_type : null;
+}
+
+/**
+ * Sweep all registered ESP32 receiver boards and record online/offline
+ * transitions in esp32_node_events. Storm-suppression prevents false
+ * positives when the monitoring pipeline itself is down.
+ */
+async function runEsp32ReceiverSweep() {
+    try {
+        // Read threshold from alert_settings (global defaults use mac='*').
+        const settingsResult = await pool.query(
+            `SELECT esp32_offline_threshold_minutes FROM alert_settings WHERE mac='*' LIMIT 1`
+        );
+        let thresholdMinutes = 5; // hard fallback
+        if (settingsResult.rows.length > 0 && settingsResult.rows[0].esp32_offline_threshold_minutes != null) {
+            const raw = Number(settingsResult.rows[0].esp32_offline_threshold_minutes);
+            thresholdMinutes = Number.isFinite(raw) ? Math.min(60, Math.max(1, Math.round(raw))) : 5;
+        }
+        const thresholdMs = thresholdMinutes * 60 * 1000;
+
+        // Startup grace: boards need time to send their first heartbeat.
+        if (Date.now() - SERVER_STARTED_AT_MS < thresholdMs) return;
+
+        // Storm suppression — check the monitoring pipeline before judging any board.
+        // When our own MQTT link is down every board looks silent, and raising N
+        // false per-board alerts would bury the one real fact.
+        if (!mqttClient || !mqttClient.connected) {
+            const latestInfra = await latestEsp32InfraEvent();
+            if (latestInfra !== 'infra_offline') {
+                await recordEsp32Event('-', null, 'infra_offline', { reason: 'mqtt_disconnected' });
+            }
+            return;
+        }
+
+        // If infra just came back online, start a grace period so boards get a
+        // full threshold window to deliver their first heartbeat.
+        const latestInfra = await latestEsp32InfraEvent();
+        if (latestInfra === 'infra_offline') {
+            await recordEsp32Event('-', null, 'infra_online', null);
+            esp32SweepGraceUntilMs = Date.now() + thresholdMs;
+            return;
+        }
+
+        // Respect the post-recovery grace window.
+        if (Date.now() < esp32SweepGraceUntilMs) return;
+
+        // Per-board sweep: detect online/offline transitions only.
+        // Revoked boards are excluded at the SQL level — a hidden board must never
+        // raise an offline event, even if it goes silent.
+        const nodesResult = await pool.query(
+            `SELECT board_mac, node_id, last_seen_at FROM esp32_nodes WHERE revoked_at IS NULL`
+        );
+        for (const row of nodesResult.rows) {
+            // Skip boards that have never sent a heartbeat — no evidence they were ever alive.
+            if (!row.last_seen_at) continue;
+
+            const silent = Date.now() - new Date(row.last_seen_at) > thresholdMs;
+            const latestEvent = await latestEsp32LivenessEvent(row.board_mac);
+
+            if (silent && latestEvent !== 'offline') {
+                await recordEsp32Event(
+                    row.board_mac,
+                    row.node_id,
+                    'offline',
+                    { lastSeenAt: row.last_seen_at, thresholdMinutes }
+                );
+            } else if (!silent && latestEvent === 'offline') {
+                await recordEsp32Event(
+                    row.board_mac,
+                    row.node_id,
+                    'online',
+                    { lastSeenAt: row.last_seen_at }
+                );
+            }
+            // Write nothing when the state has not changed — events are transitions only.
+        }
+    } catch (error) {
+        console.error('[ESP32 Sweep]', error.message);
     }
 }
 
@@ -7094,10 +7664,59 @@ async function esp32NodesForUi(req) {
         'SELECT board_mac, description, updated_at FROM esp32_node_metadata'
     );
     const metadataByMac = new Map(metadata.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    const healthStatus = await pool.query(
+        'SELECT board_mac, fw_version, ip_address, wifi_rssi, uptime_sec, boot_reason, free_heap_bytes, last_seen_at FROM esp32_node_status'
+    );
+    const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    const registry = await pool.query(
+        'SELECT board_mac, node_id, ip_address, last_fw_version, last_seen_at FROM esp32_nodes'
+    );
+    const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
+    // Revoked (hidden) boards are excluded from the main nodes array and from
+    // every summary count below, including offlineCount — a hidden board must
+    // never contribute to the offline alarm. They are returned as their own list
+    // so the page can offer restore/delete without the operator needing DB
+    // access, and because a hidden board has no card to hang an action off.
+    const revokedResult = await pool.query(
+        `SELECT n.board_mac, n.node_id, n.ip_address, n.last_fw_version, n.last_seen_at,
+                n.revoked_at, u.username AS revoked_by_username, m.description
+           FROM esp32_nodes n
+           LEFT JOIN users u ON u.id = n.revoked_by
+           LEFT JOIN esp32_node_metadata m ON m.board_mac = n.board_mac
+          WHERE n.revoked_at IS NOT NULL
+          ORDER BY n.revoked_at DESC`
+    );
+    const revokedNowMs = Date.now();
+    const revokedNodes = revokedResult.rows.map(row => {
+        const lastSeenAt = row.last_seen_at || null;
+        const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+        return {
+            boardMac: String(row.board_mac || '').toUpperCase(),
+            nodeId: row.node_id || null,
+            ipAddress: row.ip_address || null,
+            fwVersion: row.last_fw_version || null,
+            description: String(row.description || '').trim(),
+            lastSeenAt,
+            lastSeenAgeSeconds: Number.isFinite(lastSeenMs)
+                ? Math.max(0, Math.round((revokedNowMs - lastSeenMs) / 1000))
+                : null,
+            revokedAt: row.revoked_at || null,
+            revokedByUsername: row.revoked_by_username || null,
+            // Whether DELETE /api/esp32-nodes/:mac will accept this board right
+            // now, so the UI can disable the button rather than let the operator
+            // click it and collect a 409.
+            deletable: !esp32DeleteBlockedByRecentActivity(lastSeenAt, revokedNowMs)
+        };
+    });
+    const revokedCount = revokedNodes.length;
 
     // The collector observes established TCP sessions to Mosquitto from host /proc.
-    // This is a stronger online signal than the ble/esp32 inventory message, which
-    // may only be published when topology changes rather than every few seconds.
+    // This is only a diagnostic signal: the firmware publishes ble/esp32 on a fixed
+    // 30-second timer, so the old "only on topology change" premise was wrong. A
+    // self-reported IP can disagree with host-observed TCP peers for reasons
+    // unrelated to board health (NAT, multi-homed, transient). Heartbeat freshness
+    // is authoritative because it comes from the same 30s-published topic that
+    // carries the nodeId<->board_mac mapping.
     const mqttClientIps = readMqttClientIps(ESP32_COMPOSE_STATUS_FILE);
     const mqttSessionSignalAvailable = mqttClientIps.size > 0;
 
@@ -7123,11 +7742,38 @@ async function esp32NodesForUi(req) {
         }
     }
 
-    const nodes = topology.nodes.map(node => {
+    // Exclude revoked boards from the dashboard. A revoked board is hidden but
+    // still in the registry so it auto-restores when it proves it is alive again.
+    const activeTopologyNodes = topology.nodes.filter(
+        node => !registryByMac.get(String(node.boardMac || '').toUpperCase())?.revoked_at
+    );
+    const nodes = activeTopologyNodes.map(node => {
         const meta = metadataByMac.get(node.boardMac) || {};
-        const status = mqttSessionSignalAvailable
-            ? (mqttClientIps.has(node.ipAddress) ? 'connected' : 'disconnected')
-            : node.status;
+        const health = healthByMac.get(node.boardMac) || {};
+        const reg = registryByMac.get(node.boardMac) || {};
+        // Heartbeat freshness is the authoritative liveness signal: take the most
+        // recent last_seen_at across both the durable registry and the ephemeral
+        // status table. A board seeded from topology but never seen on MQTT reads
+        // 'unknown' (not 'disconnected') because we have no evidence either way.
+        const staleAfterMs = 180000; // 3x the 60s heartbeat interval
+        const regLastSeenAt = reg.last_seen_at || null;
+        const healthLastSeenAt = health.last_seen_at || null;
+        // Compare numerically: a bare .sort() would stringify these Date objects and
+        // order them by weekday name, which silently picks the OLDER timestamp about
+        // half the time (e.g. "Sat 29 Aug" sorts after "Fri 4 Sep").
+        const lastSeenAt = [regLastSeenAt, healthLastSeenAt]
+            .filter(Boolean)
+            .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+            .pop() || null;
+        const stale = !lastSeenAt || (Date.now() - new Date(lastSeenAt).getTime() > staleAfterMs);
+        let status;
+        if (!lastSeenAt) {
+            status = 'unknown';
+        } else if (stale) {
+            status = 'disconnected';
+        } else {
+            status = 'connected';
+        }
         const jstyles = (node.jstyleMacs || []).map(mac => ({
             mac,
             patient: patientByMac.get(mac) || null
@@ -7139,21 +7785,90 @@ async function esp32NodesForUi(req) {
             jstyles,
             patients: jstyles.map(item => item.patient).filter(Boolean),
             description: String(meta.description || ''),
-            descriptionUpdatedAt: meta.updated_at || null
+            descriptionUpdatedAt: meta.updated_at || null,
+            fwVersion: health.fw_version || null,
+            uptimeSec: health.uptime_sec ?? null,
+            wifiRssi: health.wifi_rssi ?? null,
+            freeHeapBytes: health.free_heap_bytes ?? null,
+            bootReason: health.boot_reason || null,
+            lastSeenAt,
+            stale,
+            mqttSessionSeen: mqttClientIps.has(node.ipAddress)
         };
     });
+
+    // Fetch liveness transition events (online/offline) AND reboot events for
+    // all known boards in a single query. One round-trip instead of N+1 per
+    // board keeps the page fast even with many receivers. We pull `detail` so
+    // the reboot helper can surface the device-reported boot reason.
+    const livenessEvents = await pool.query(
+        `SELECT board_mac, event_type, created_at, detail FROM esp32_node_events
+         WHERE event_type IN ('online','offline','reboot')
+           AND created_at > NOW() - INTERVAL '7 days'
+         ORDER BY board_mac, created_at ASC`
+    );
+    // Group events by board_mac for O(1) lookup per node.
+    const eventsByMac = new Map();
+    for (const row of livenessEvents.rows) {
+        const mac = String(row.board_mac || '').toUpperCase();
+        let arr = eventsByMac.get(mac);
+        if (!arr) { eventsByMac.set(mac, arr = []); }
+        // Preserve the raw detail column so summariseEsp32Reboots can read it.
+        arr.push({ event_type: row.event_type, created_at: row.created_at, detail: row.detail });
+    }
+
+    const nowMs = Date.now();
+    for (const node of nodes) {
+        const boardEvents = eventsByMac.get(node.boardMac) || [];
+        // summariseEsp32Uptime expects ONLY online/offline transitions — any
+        // other row type corrupts its outage maths. This is an allowlist, not a
+        // denylist of 'reboot': the events table has since grown 'revoked' and
+        // 'restored' types, and a denylist silently leaks every future type into
+        // the uptime arithmetic.
+        const livenessOnly = boardEvents.filter(e => e.event_type === 'online' || e.event_type === 'offline');
+
+        // Determine the board's current liveness state from the LIVENESS events
+        // only. Reading the raw array here would let a reboot row that landed
+        // after an offline row mask the outage — the board would silently drop
+        // out of the offline count while still being down.
+        // If no events exist, fall back to heartbeat-based status as a best guess.
+        const latestEventType = livenessOnly.length
+            ? livenessOnly[livenessOnly.length - 1].event_type
+            : null;
+        const currentlyOnline = latestEventType === 'online'
+            || (latestEventType !== 'offline' && node.status === 'connected');
+        node.currentlyOffline = latestEventType === 'offline';
+        node.uptime24h = summariseEsp32Uptime(livenessOnly, 86400000, nowMs, currentlyOnline);
+        node.uptime7d   = summariseEsp32Uptime(livenessOnly, 604800000, nowMs, currentlyOnline);
+
+        // Reboot history is computed over the SAME full event set (including
+        // reboot rows) so every recorded reboot in the window is counted.
+        node.reboots24h = summariseEsp32Reboots(boardEvents, 86400000, nowMs);
+        node.reboots7d  = summariseEsp32Reboots(boardEvents, 604800000, nowMs);
+    }
+
+    // NodeIds whose heartbeats arrived on MQTT but whose board_mac could not yet be
+    // resolved — held in an in-memory buffer until the authoritative ble/esp32 inventory
+    // message identifies them. Surfaced here because this exact blind spot previously
+    // hid three real receiver boards from the system entirely.
+    const unidentifiedNodes = listUnidentifiedEsp32Nodes();
+
     return {
         ...topology,
         sourceStatus: topology.sourceStatus,
         mqttSessionSignalAvailable,
         nodes,
+        unidentifiedNodes,
+        revokedNodes,
         summary: {
             total: nodes.length,
             connected: nodes.filter(node => node.status === 'connected').length,
             disconnected: nodes.filter(node => node.status === 'disconnected').length,
             unknown: nodes.filter(node => node.status === 'unknown').length,
             connectedJstyle: nodes.reduce((sum, node) => sum + node.connectedJstyleCount, 0),
-            patients: nodes.reduce((sum, node) => sum + node.patients.length, 0)
+            patients: nodes.reduce((sum, node) => sum + node.patients.length, 0),
+            offlineCount: nodes.filter(node => node.currentlyOffline === true).length,
+            revokedCount
         }
     };
 }
@@ -7200,8 +7915,111 @@ app.put('/api/esp32-nodes/:mac/description', requireCapability('devices:location
     }
 });
 
+// Hide (revoke) a receiver board. The board stays in the registry but is hidden
+// from the dashboard and alerting. It auto-restores when it proves it is alive
+// again via heartbeat or inventory message, so this is a soft delete — not a
+// permanent one. Use DELETE /api/esp32-nodes/:mac for that (requires the board
+// to have been silent for at least 10 minutes).
+app.post('/api/esp32-nodes/:mac/revoke', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NOW(), revoked_by = $1 WHERE board_mac = $2`,
+            [req.user.id, boardMac]
+        );
+        await recordEsp32Event(boardMac, nodeId, 'revoked', { by: req.user.id });
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { revoked: true }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[ESP32 Revoke]', error.message);
+        res.status(500).json({ error: 'Unable to revoke ESP32 node' });
+    }
+});
+
+// Restore a previously revoked board. Clears the revoke markers and records a
+// restored event. The UI will not expose this yet, but the endpoint exists so an
+// operator can un-hide a board without direct DB access (e.g. after a mistaken
+// revoke).
+app.post('/api/esp32-nodes/:mac/restore', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        await pool.query(
+            `UPDATE esp32_nodes SET revoked_at = NULL, revoked_by = NULL WHERE board_mac = $1`,
+            [boardMac]
+        );
+        await recordEsp32Event(boardMac, nodeId, 'restored', { by: req.user.id });
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { revoked: false }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[ESP32 Restore]', error.message);
+        res.status(500).json({ error: 'Unable to restore ESP32 node' });
+    }
+});
+
+// Permanently delete a receiver board and all its associated event/status/metadata rows.
+// SAFETY: refuses to delete a board that is currently alive (last_seen_at within
+// the last 10 minutes). A misclick must never destroy the history of a working
+// patient monitor — use revoke instead in that case.
+app.delete('/api/esp32-nodes/:mac', requireCapability('devices:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    try {
+        const existing = await pool.query('SELECT node_id, last_seen_at FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+        if (!existing.rows.length) return res.status(404).json({ error: 'ESP32 node not found' });
+        const nodeId = existing.rows[0].node_id;
+        const lastSeenAt = existing.rows[0].last_seen_at;
+
+        // Safety guard: refuse to delete a board that is currently alive.
+        if (esp32DeleteBlockedByRecentActivity(lastSeenAt)) {
+            return res.status(409).json({ error: 'ตัวรับสัญญาณนี้ยังส่งสัญญาณอยู่ ไม่สามารถลบถาวรได้ กรุณาซ่อนแทน' });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const eventsResult = await client.query('DELETE FROM esp32_node_events WHERE board_mac = $1', [boardMac]);
+            const statusResult = await client.query('DELETE FROM esp32_node_status WHERE board_mac = $1', [boardMac]);
+            const metadataResult = await client.query('DELETE FROM esp32_node_metadata WHERE board_mac = $1', [boardMac]);
+            await client.query('DELETE FROM esp32_nodes WHERE board_mac = $1', [boardMac]);
+            await client.query('COMMIT');
+            logAudit(req, 'DELETE', 'esp32_node', boardMac, {
+                nodeId,
+                rowsRemoved: {
+                    events: eventsResult.rowCount,
+                    status: statusResult.rowCount,
+                    metadata: metadataResult.rowCount
+                }
+            }).catch(console.error);
+            res.json({ success: true, removed: { events: eventsResult.rowCount, status: statusResult.rowCount, metadata: metadataResult.rowCount } });
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error('[ESP32 Delete]', error.message);
+        res.status(500).json({ error: 'Unable to delete ESP32 node' });
+    }
+});
+
 app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
     const canEditLocation = roleHasCapability(req.user?.role, 'devices:location:write');
+    // Hide / restore / permanent-delete are gated behind devices:write, which
+    // staff_nurse deliberately does not hold — the same capability that guards
+    // the rest of device administration.
+    const canManageReceivers = roleHasCapability(req.user?.role, 'devices:write');
     res.send(ui(req.user, 'esp32', `
         <style>
             .receiver-page { max-width: 1280px; margin: 0 auto; }
@@ -7241,6 +8059,27 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             .receiver-toast { position:fixed; right:1.25rem; bottom:1.25rem; z-index:2200; max-width:min(92vw,26rem); padding:.8rem 1rem; border-radius:1rem; border:1px solid var(--border-color); background:var(--bg-card); box-shadow:var(--shadow-lg); font-size:.8rem; font-weight:800; }
             .receiver-toast.success { color:var(--status-success-text); }
             .receiver-toast.error { color:var(--status-critical-text); }
+            .receiver-offline-strip { display:flex; align-items:center; gap:.75rem; padding:.85rem 1.1rem; border-radius:1rem; border:1px solid var(--border-card); background:var(--bg-card); }
+            .receiver-offline-strip.critical { border-color:color-mix(in srgb, var(--status-critical-text) 30%, var(--border-card)); background:color-mix(in srgb, var(--status-critical-text) 6%, var(--bg-card)); }
+            .receiver-offline-count { font-size:1.4rem; line-height:1.1; font-weight:850; color:var(--status-critical-text); }
+            .receiver-offline-label { font-size:.78rem; font-weight:800; color:var(--text-heading); }
+            .receiver-offline-sub { font-size:.68rem; color:var(--text-tertiary); margin-top:.15rem; }
+            .receiver-unidentified { border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
+            .receiver-unidentified-title { font-size:.82rem; font-weight:850; color:var(--text-heading); margin-bottom:.35rem; }
+            .receiver-unidentified-desc { font-size:.72rem; color:var(--text-tertiary); margin-bottom:.75rem; }
+            .receiver-unidentified-item { display:flex; align-items:center; gap:.6rem; padding:.55rem .7rem; border-radius:.8rem; background:var(--bg-input); margin-bottom:.4rem; font-size:.76rem; }
+            .receiver-unidentified-id { font-weight:800; color:var(--text-heading); }
+            .receiver-unidentified-age { color:var(--text-tertiary); font-size:.68rem; }
+            .receiver-revoked { border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
+            .receiver-revoked-title { font-size:.82rem; font-weight:850; color:var(--text-heading); margin-bottom:.35rem; }
+            .receiver-revoked-desc { font-size:.72rem; color:var(--text-tertiary); margin-bottom:.75rem; }
+            .receiver-revoked-item { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.6rem .7rem; border-radius:.8rem; background:var(--bg-input); margin-bottom:.45rem; font-size:.76rem; }
+            .receiver-revoked-main { flex:1 1 14rem; min-width:0; }
+            .receiver-revoked-id { font-weight:800; color:var(--text-heading); }
+            .receiver-revoked-meta { color:var(--text-tertiary); font-size:.68rem; margin-top:.15rem; }
+            .receiver-revoked-actions { display:flex; align-items:center; gap:.45rem; flex-shrink:0; }
+            .receiver-danger-btn { display:inline-flex; align-items:center; gap:.35rem; padding:.4rem .75rem; border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--status-critical-text) 35%, var(--border-color)); background:transparent; color:var(--status-critical-text); font-size:.7rem; font-weight:800; cursor:pointer; }
+            .receiver-danger-btn:disabled { opacity:.4; cursor:not-allowed; }
             @media (max-width: 640px) {
                 .receiver-card-top { padding:1rem; gap:.75rem; }
                 .receiver-device-art { width:3.55rem; height:3.55rem; border-radius:1rem; }
@@ -7282,6 +8121,26 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
 
             <div id="receiverNotice" class="hidden card p-4" role="status"></div>
             <div id="receiverToast" class="receiver-toast hidden" role="status" aria-live="polite"></div>
+            <!-- Offline receivers strip — the only notification channel for receiver outages. -->
+            <div id="receiverOfflineStrip" class="hidden receiver-offline-strip" role="alert" aria-live="assertive">
+                <span class="receiver-offline-count" id="receiverOfflineCount">0</span>
+                <div>
+                    <div class="receiver-offline-label">ตัวรับสัญญาณออฟไลน์</div>
+                    <div class="receiver-offline-sub">กรุณาตรวจสอบตัวรับสัญญาณที่หยุดทำงาน</div>
+                </div>
+            </div>
+            <!-- Unidentified nodes — heartbeats seen on MQTT but board_mac unresolved. -->
+            <div id="receiverUnidentifiedSection" class="hidden receiver-unidentified" role="region" aria-label="ตัวรับที่ยังระบุตัวตนไม่ได้">
+                <div class="receiver-unidentified-title">เห็นบน MQTT แต่ยังระบุตัวไม่ได้</div>
+                <div class="receiver-unidentified-desc">บอร์ดเหล่านี้กำลังส่ง heartbeat มาทาง MQTT แต่ NurseAid ยังไม่สามารถจับคู่ board_mac ได้ — อาจเป็นเพราะเฟิร์มแวร์เก่าหรือการตั้งค่าที่ยังไม่สมบูรณ์</div>
+                <div id="receiverUnidentifiedList"></div>
+            </div>
+            <div id="receiverRevokedSection" class="hidden receiver-revoked" role="region" aria-label="ตัวรับสัญญาณที่ซ่อนไว้">
+                <div class="receiver-revoked-title">ตัวรับสัญญาณที่ซ่อนไว้ (<span id="receiverRevokedCount">0</span>)</div>
+                <div class="receiver-revoked-desc">บอร์ดเหล่านี้ถูกซ่อนออกจากหน้าหลักและไม่แจ้งเตือนเมื่อออฟไลน์ แต่ยังอยู่ในระบบครบทั้งข้อมูลและประวัติ — หากบอร์ดกลับมาส่งสัญญาณเอง ระบบจะกู้คืนให้อัตโนมัติ</div>
+                <div id="receiverRevokedList"></div>
+            </div>
+
             <section id="receiverGrid" class="grid xl:grid-cols-2 gap-4" aria-label="รายการตัวรับสัญญาณ"></section>
         </div>
     `, `
@@ -7290,6 +8149,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
         const receiverUpdated = document.getElementById('receiverUpdated');
         const receiverToast = document.getElementById('receiverToast');
         const canEditReceiverLocation = ${canEditLocation ? 'true' : 'false'};
+        const canManageReceivers = ${canManageReceivers ? 'true' : 'false'};
         let receiverTimer = null;
         let receiverLoading = false;
         let receiverToastTimer = null;
@@ -7314,6 +8174,17 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const minutes = Math.floor(value / 60);
             if (minutes < 60) return minutes + ' นาทีที่แล้ว';
             return Math.floor(minutes / 60) + ' ชั่วโมงที่แล้ว';
+        }
+
+        // Format last-seen time from a Date string (node.lastSeenAt).
+        // Falls back to topology-based seconds when the Date is unavailable.
+        function receiverLastSeenText(lastSeenAt, fallbackSeconds) {
+            if (lastSeenAt) {
+                const ms = Date.now() - new Date(lastSeenAt).getTime();
+                if (ms < 0) return 'เมื่อสักครู่นี้';
+                return receiverAgeText(Math.round(ms / 1000));
+            }
+            return receiverAgeText(fallbackSeconds);
         }
 
         function renderReceiverPatients(node) {
@@ -7347,6 +8218,13 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const editButton = canEditReceiverLocation
                 ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
                 : '';
+            // Only "hide" is offered on a visible card. Permanent delete lives in
+            // the hidden-boards section below: a board with a card is usually
+            // still publishing, and the delete route refuses those anyway — so
+            // showing the button here would just hand out 409s.
+            const hideButton = canManageReceivers
+                ? '<button type="button" data-revoke-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-node="' + escapeHTML(node.nodeId || '') + '" class="receiver-edit-btn" aria-label="ซ่อนตัวรับสัญญาณ ' + escapeHTML(node.nodeId) + '">ซ่อน</button>'
+                : '';
             const jstyleCount = Number.isFinite(Number(node.connectedJstyleCount)) ? Number(node.connectedJstyleCount) : 0;
             return '<article class="receiver-card' + problemClass + '">' +
                 '<div class="receiver-card-top">' +
@@ -7363,19 +8241,37 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                                 '<div class="receiver-location break-words">' + escapeHTML(locationText) + '</div>' +
                                 '<div class="receiver-node-meta">ตัวรับ ' + escapeHTML(node.nodeId) + '</div>' +
                             '</div>' +
-                            '<div class="shrink-0">' + editButton + '</div>' +
+                            '<div class="shrink-0 flex items-center gap-2">' + editButton + hideButton + '</div>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
                 '<div class="receiver-metrics">' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">ผู้ป่วย / JStyle</div><div class="receiver-metric-value">' + escapeHTML(String(node.patients?.length || 0)) + ' / ' + escapeHTML(String(jstyleCount)) + ' รายการ</div></div>' +
-                    '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverLastSeenText(node.lastSeenAt, node.lastSeenAgeSeconds)) + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">IP Address</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.ipAddress || '-') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">Board MAC</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.boardMac || '-') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">เวอร์ชันเฟิร์มแวร์</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.fwVersion || 'ไม่ทราบ') + (node.stale ? ' <span style="color:var(--status-warning-text);">⚠️ ไม่มีข้อมูลสถานะล่าสุด</span>' : '') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">หน่วยความจำว่าง</div><div class="receiver-metric-value">' + (typeof node.freeHeapBytes === 'number' ? Math.round(node.freeHeapBytes / 1024) + ' KB' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">อัปไทม์</div><div class="receiver-metric-value">' + (typeof node.uptimeSec === 'number' ? Math.floor(node.uptimeSec / 3600) + ' ชม ' + Math.floor((node.uptimeSec % 3600) / 60) + ' น' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">ออนไลน์ 24 ชม.</div><div class="receiver-metric-value">' + (node.uptime24h ? node.uptime24h.uptimePercent.toFixed(1) + ' %' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">ออนไลน์ 7 วัน</div><div class="receiver-metric-value">' + (node.uptime7d ? node.uptime7d.uptimePercent.toFixed(1) + ' %' : 'ไม่มีข้อมูล') + '</div></div>' +
+                    // Reboot history: only surface when the board has actually rebooted
+                    // in the window — zero reboots stays quiet so healthy boards do
+                    // not get visual noise. Elevated counts use the warning colour
+                    // (amber) to be noticeable without competing with the red offline
+                    // indicator, which remains the most urgent state on this page.
+                    (node.reboots24h && node.reboots24h.rebootCount > 0 ? '<div class="receiver-metric"><div class="receiver-metric-label">รีบูต 24 ชม.</div><div class="receiver-metric-value" style="color:' + (node.reboots24h.rebootCount >= 3 ? 'var(--status-warning-text)' : 'var(--text-primary)') + ';">' + escapeHTML(String(node.reboots24h.rebootCount)) + ' ครั้ง</div></div>' : '') +
+                    (node.reboots7d && node.reboots7d.rebootCount > 0 ? '<div class="receiver-metric"><div class="receiver-metric-label">รีบูต 7 วัน</div><div class="receiver-metric-value" style="color:' + (node.reboots7d.rebootCount >= 7 ? 'var(--status-warning-text)' : 'var(--text-primary)') + ';">' + escapeHTML(String(node.reboots7d.rebootCount)) + ' ครั้ง</div></div>' : '') +
+                    // Source the reason from the 7-day window so it is shown whenever
+                    // any reboot is known (not just within the last 24 h). Render the
+                    // relative time of that reboot alongside the reason, using the
+                    // same helper as the heartbeat field. The label matches the
+                    // neighbouring "รีบูต 7 วัน" / "ออนไลน์ 7 วัน" voice.
+                    (node.reboots7d && node.reboots7d.lastReason ? '<div class="receiver-metric" style="grid-column:span 2;"><div class="receiver-metric-label">สาเหตุรีบูต 7 วัน</div><div class="receiver-metric-value">' + escapeHTML(receiverLastSeenText(node.reboots7d.lastRebootAt)) + ' — ' + escapeHTML(node.reboots7d.lastReason) + '</div></div>' : '') +
                 '</div>' +
                 renderReceiverPatients(node) +
                 '<details class="receiver-tech"><summary>ข้อมูลเพิ่มเติมของตัวรับสัญญาณ</summary><div class="mt-2 space-y-1 text-xs" style="color:var(--text-tertiary);"><div>Node ID: <span class="font-mono">' + escapeHTML(node.nodeId || '-') + '</span></div><div>จำนวน JStyle ที่เชื่อม: ' + escapeHTML(String(jstyleCount)) + '</div><div>แหล่งข้อมูล: MQTT</div></div></details>' +
-                '<div class="receiver-footer"><span>' + (node.status === 'connected' ? 'พร้อมรับสัญญาณผู้ป่วย' : 'กรุณาตรวจสอบตัวรับสัญญาณ') + '</span><span>' + escapeHTML(receiverAgeText(node.lastSeenAgeSeconds)) + '</span></div>' +
+                '<div class="receiver-footer"><span>' + (node.status === 'connected' ? 'พร้อมรับสัญญาณผู้ป่วย' : 'กรุณาตรวจสอบตัวรับสัญญาณ') + '</span><span>' + escapeHTML(receiverLastSeenText(node.lastSeenAt, node.lastSeenAgeSeconds)) + '</span></div>' +
             '</article>';
         }
 
@@ -7386,6 +8282,36 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             document.getElementById('receiverProblem').textContent = (summary.disconnected ?? 0) + (summary.unknown ?? 0);
             document.getElementById('receiverPatients').textContent = summary.patients ?? 0;
             receiverUpdated.textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+            // Surface offline receivers prominently — this page is the only notification channel.
+            const offlineCount = summary.offlineCount ?? 0;
+            const offlineStrip = document.getElementById('receiverOfflineStrip');
+            if (offlineCount > 0) {
+                document.getElementById('receiverOfflineCount').textContent = offlineCount;
+                offlineStrip.classList.remove('hidden');
+                offlineStrip.classList.add('critical');
+            } else {
+                offlineStrip.classList.add('hidden');
+                offlineStrip.classList.remove('critical');
+            }
+
+            // Show unidentified nodes only when there are some to report.
+            const unidentified = Array.isArray(data.unidentifiedNodes) ? data.unidentifiedNodes : [];
+            const unidentifiedSection = document.getElementById('receiverUnidentifiedSection');
+            if (unidentified.length) {
+                document.getElementById('receiverUnidentifiedList').innerHTML = unidentified.map(item => {
+                    const ageText = receiverAgeText(item.ageSeconds);
+                    return '<div class="receiver-unidentified-item">' +
+                        '<span class="receiver-unidentified-id font-mono">' + escapeHTML(item.nodeId) + '</span>' +
+                        '<span class="receiver-unidentified-age">เห็นเมื่อ ' + escapeHTML(ageText) + '</span>' +
+                    '</div>';
+                }).join('');
+                unidentifiedSection.classList.remove('hidden');
+            } else {
+                unidentifiedSection.classList.add('hidden');
+            }
+
+            renderRevokedReceivers(data);
 
             const nodes = Array.isArray(data.nodes) ? [...data.nodes] : [];
             const rank = { disconnected:0, unknown:1, connected:2 };
@@ -7401,6 +8327,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             receiverGrid.innerHTML = nodes.map(receiverCard).join('');
             receiverGrid.querySelectorAll('[data-edit-receiver]').forEach(button => {
                 button.addEventListener('click', () => editReceiverLocation(button.dataset.mac, button.dataset.description || ''));
+            });
+            receiverGrid.querySelectorAll('[data-revoke-receiver]').forEach(button => {
+                button.addEventListener('click', () => revokeReceiver(button.dataset.mac, button.dataset.node || ''));
             });
         }
 
@@ -7457,6 +8386,97 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const updateCount = () => { if (count) count.textContent = String(input?.value?.length || 0) + '/200'; };
             input?.addEventListener('input', updateCount);
             updateCount();
+        };
+
+        function renderRevokedReceivers(data) {
+            const section = document.getElementById('receiverRevokedSection');
+            const list = document.getElementById('receiverRevokedList');
+            const countEl = document.getElementById('receiverRevokedCount');
+            const revoked = Array.isArray(data.revokedNodes) ? data.revokedNodes : [];
+            if (!revoked.length) {
+                list.innerHTML = '';
+                section.classList.add('hidden');
+                return;
+            }
+            countEl.textContent = String(revoked.length);
+            list.innerHTML = revoked.map(item => {
+                const label = item.description || item.nodeId || item.boardMac || '-';
+                const revokedAtText = item.revokedAt
+                    ? new Date(item.revokedAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'})
+                    : 'ไม่ทราบเวลา';
+                const byText = item.revokedByUsername ? ' โดย ' + escapeHTML(item.revokedByUsername) : '';
+                // The delete button is disabled from the server-computed
+                // deletable flag so the operator never clicks into a 409.
+                const actions = canManageReceivers
+                    ? '<div class="receiver-revoked-actions">' +
+                        '<button type="button" class="receiver-edit-btn" data-restore-receiver="1" data-mac="' + escapeHTML(item.boardMac) + '" data-node="' + escapeHTML(item.nodeId || '') + '">กู้คืน</button>' +
+                        '<button type="button" class="receiver-danger-btn" data-delete-receiver="1" data-mac="' + escapeHTML(item.boardMac) + '" data-node="' + escapeHTML(item.nodeId || '') + '"' + (item.deletable ? '' : ' disabled title="บอร์ดนี้ยังส่งสัญญาณภายใน 10 นาทีที่ผ่านมา จึงยังลบถาวรไม่ได้"') + '>ลบถาวร</button>' +
+                      '</div>'
+                    : '';
+                return '<div class="receiver-revoked-item">' +
+                    '<div class="receiver-revoked-main">' +
+                        '<div class="receiver-revoked-id">' + escapeHTML(label) + '</div>' +
+                        '<div class="receiver-revoked-meta font-mono">' + escapeHTML(item.boardMac || '-') + (item.nodeId ? ' · ' + escapeHTML(item.nodeId) : '') + '</div>' +
+                        '<div class="receiver-revoked-meta">ซ่อนเมื่อ ' + escapeHTML(revokedAtText) + byText + ' · heartbeat ล่าสุด ' + escapeHTML(receiverLastSeenText(item.lastSeenAt, item.lastSeenAgeSeconds)) + '</div>' +
+                    '</div>' + actions +
+                '</div>';
+            }).join('');
+            section.classList.remove('hidden');
+            list.querySelectorAll('[data-restore-receiver]').forEach(button => {
+                button.addEventListener('click', () => restoreReceiver(button.dataset.mac, button.dataset.node || ''));
+            });
+            list.querySelectorAll('[data-delete-receiver]').forEach(button => {
+                button.addEventListener('click', () => deleteReceiver(button.dataset.mac, button.dataset.node || ''));
+            });
+        }
+
+        window.revokeReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'ซ่อนตัวรับสัญญาณ',
+                body: '<p>ซ่อนตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> ออกจากหน้าหลักใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> ข้อมูลและประวัติยังอยู่ครบ ระบบจะหยุดแจ้งเตือนเมื่อบอร์ดนี้ออฟไลน์ และหากบอร์ดกลับมาส่งสัญญาณเอง ระบบจะกู้คืนให้อัตโนมัติ</div>',
+                confirmText: 'ซ่อน',
+                loadingText: 'กำลังซ่อน…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/revoke', { method: 'POST' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถซ่อนตัวรับสัญญาณได้'));
+                    showReceiverToast('ซ่อนตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
+        };
+
+        window.restoreReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'กู้คืนตัวรับสัญญาณ',
+                body: '<p>นำตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> กลับมาแสดงบนหน้าหลักใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> บอร์ดนี้จะกลับเข้าระบบแจ้งเตือนออฟไลน์อีกครั้ง</div>',
+                kind: 'info',
+                confirmText: 'กู้คืน',
+                loadingText: 'กำลังกู้คืน…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/restore', { method: 'POST' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถกู้คืนตัวรับสัญญาณได้'));
+                    showReceiverToast('กู้คืนตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
+        };
+
+        window.deleteReceiver = async (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            await confirmAction({
+                title: 'ลบตัวรับสัญญาณถาวร',
+                body: '<p>ลบตัวรับ <span class="font-mono">' + escapeHTML(nodeId || safeMac) + '</span> ออกจากระบบถาวรใช่หรือไม่?</p><div class="dialog-note"><strong>คำเตือน:</strong> การลบไม่สามารถย้อนกลับได้ ประวัติออนไลน์/ออฟไลน์ ประวัติรีบูต สถานะเฟิร์มแวร์ และจุดติดตั้งของบอร์ดนี้จะถูกลบทั้งหมด หากเพียงต้องการเอาออกจากหน้าจอ ให้ใช้การซ่อนแทน</div>',
+                confirmText: 'ลบถาวร',
+                loadingText: 'กำลังลบ…',
+                onConfirm: async () => {
+                    const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac), { method: 'DELETE' });
+                    if (!response.ok) throw new Error(await apiErrorMessage(response, 'ไม่สามารถลบตัวรับสัญญาณได้'));
+                    showReceiverToast('ลบตัวรับสัญญาณเรียบร้อยแล้ว', 'success');
+                    await loadReceivers();
+                }
+            });
         };
 
         loadReceivers();
@@ -9875,6 +10895,20 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
         .login-notice-title { color: var(--text-heading); }
         /* Tinted from its own text token, so the badge holds its ratio in both themes. */
         .login-notice-icon { color: var(--status-critical-text); background: color-mix(in srgb, var(--status-critical-text) 14%, transparent); }
+
+        /* Password field with an inline visibility toggle. The wrapper is the input's
+           containing block so the button sits flush on the right edge; the icon tints
+           from its own text token so it holds AA ratio in both themes and matches the
+           rest of the form rather than importing a new colour. */
+        .login-pw-wrap { position: relative; display: flex; align-items: center; }
+        .login-pw-wrap .login-input { padding-right: 3.25rem; flex: 1 1 auto; }
+        .login-pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem;
+            padding: 0; border: none; border-radius: 999px; background: transparent;
+            color: var(--text-secondary); cursor: pointer; transition: background-color .15s ease, color .15s ease; }
+        .login-pw-toggle:hover { background: var(--bg-card-hover); color: var(--text-heading); }
+        .login-pw-toggle:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--border-focus); }
+        .login-pw-toggle .ic { width: 1.25rem; height: 1.25rem; }
     </style>
     <!-- Tailwind must load AFTER the inline <style> above. The Tailwind Play CDN used to inject its stylesheet at runtime, i.e. after inline styles, so loading it earlier flips same-specificity cascade rules. -->
     <link rel="stylesheet" href="/assets/tailwind.css">
@@ -9896,7 +10930,13 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             </div>
             <div>
                 <label for="p" class="login-label block mb-1.5 text-sm font-semibold">รหัสผ่าน</label>
-                <input id="p" name="password" type="password" required autocomplete="current-password" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500">
+                <div class="login-pw-wrap">
+                    <input id="p" name="password" type="password" required autocomplete="current-password" inputmode="text" class="login-input w-full p-4 rounded-2xl focus:ring-2 focus:ring-blue-500" aria-describedby="pwHelp">
+                    <button type="button" id="pwToggle" class="login-pw-toggle" aria-label="แสดงรหัสผ่าน" title="แสดงรหัสผ่าน">
+                        <span class="ic ic-eye-open" aria-hidden="true"></span>
+                    </button>
+                </div>
+                <p id="pwHelp" class="mt-1.5 text-xs login-sub hidden">แตะไอคอนดวงตาเพื่อแสดงหรือซ่อนรหัสผ่าน</p>
             </div>
             <button type="submit" class="login-submit w-full p-4 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">เข้าสู่ระบบ</button>
         </form>
@@ -9923,6 +10963,24 @@ app.get('/login', (req, res) => res.send(`<!DOCTYPE html>
             }
         }
         document.getElementById('loginForm').addEventListener('submit', event => { event.preventDefault(); login(); });
+        // Password visibility toggle. Switches the input between type="password" and
+        // type="text", swaps the eye glyph for its slashed state, and updates the
+        // accessible label so keyboard/AT users know the current state. inputmode is set
+        // to text too so mobile keyboards show letters rather than a masked keypad.
+        (function(){
+            const pw = document.getElementById('p');
+            const btn = document.getElementById('pwToggle');
+            const icon = btn.querySelector('.ic');
+            let visible = false;
+            function apply(){
+                pw.type = visible ? 'text' : 'password';
+                icon.classList.toggle('ic-eye-off', visible);
+                icon.classList.toggle('ic-eye-open', !visible);
+                btn.setAttribute('aria-label', visible ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน');
+                btn.title = visible ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน';
+            }
+            btn.addEventListener('click', function(){ visible = !visible; apply(); });
+        })();
     </script>
 </body>
 </html>`));
@@ -11090,6 +12148,25 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 <pre class="overflow-x-auto rounded-lg p-3 text-xs font-mono" style="background: var(--bg-input); color: var(--text-primary);">git pull&#10;docker compose up -d --build</pre>
             </div>
         </div>
+
+        <div class="rounded-2xl border p-5 md:p-6 mt-6" style="background: var(--bg-card); border-color: var(--border-color);">
+            <h3 class="text-lg font-black mb-1" style="color: var(--text-heading);">อัปเดตเฟิร์มแวร์ ESP32</h3>
+            <p class="text-sm mb-4" style="color: var(--text-secondary);">อัปโหลดไฟล์ .bin แล้วทดสอบกับเครื่อง canary 1 เครื่องก่อน จึงจะเลือกส่งไปหลายเครื่องได้</p>
+
+            <form id="firmware-upload-form" class="flex flex-col sm:flex-row gap-3 mb-5" onsubmit="return false;">
+                <input type="file" id="firmware-file-input" accept=".bin" required class="text-sm">
+                <input type="text" id="firmware-version-input" placeholder="เวอร์ชัน เช่น 1.3.0" required maxlength="40"
+                       class="rounded-xl border px-3 py-2 text-sm" style="background: var(--bg-input); border-color: var(--border-color);">
+                <input type="text" id="firmware-notes-input" placeholder="เปลี่ยนแปลงอะไรบ้าง (ไม่บังคับ)"
+                       class="flex-1 rounded-xl border px-3 py-2 text-sm" style="background: var(--bg-input); border-color: var(--border-color);">
+                <button type="button" onclick="uploadFirmware()" id="firmware-upload-btn"
+                        class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg"
+                        style="background: var(--accent-primary-strong); color: var(--text-inverse);">อัปโหลด</button>
+            </form>
+            <p id="firmware-upload-status" class="text-sm mb-4" style="color: var(--text-secondary);"></p>
+
+            <div id="firmware-version-list"></div>
+        </div>
     `, `
         let updateCheckController = null;
         let lastUpdateCheckData = null;
@@ -11321,6 +12398,318 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                 await new Promise(res => setTimeout(res, 5000));
             }
         }
+
+let firmwareDeployPollTimer = null;
+let firmwareOpenVersionId = null;
+
+const FIRMWARE_STATUS_META = {
+    pending:   { label: 'รอส่งคำสั่ง',                        color: 'var(--text-tertiary)' },
+    start:     { label: 'กำลังอัปเดต...',                     color: 'var(--status-warning-text)' },
+    success:   { label: 'สำเร็จ',                             color: 'var(--status-success-text)' },
+    no_update: { label: 'เครื่องปฏิเสธ (ไม่มีอัปเดตใหม่)',      color: 'var(--text-tertiary)' },
+    failed:    { label: 'ล้มเหลว',                             color: 'var(--status-critical-text)' },
+    timeout:   { label: 'หมดเวลารอ',                          color: 'var(--status-critical-text)' }
+};
+
+function firmwareBadgeHtml(canaryPassed) {
+    return canaryPassed
+        ? '<span class="text-xs" style="color:var(--status-success-text);">canary ผ่านแล้ว</span>'
+        : '<span class="text-xs" style="color:var(--status-warning-text);">ยังไม่ผ่าน canary</span>';
+}
+
+async function loadFirmwareVersions() {
+    const r = await fetch('/api/firmware/versions');
+    const data = await r.json().catch(() => ({}));
+    const list = document.getElementById('firmware-version-list');
+    list.replaceChildren();
+    (data.versions || []).forEach(v => {
+        const wrap = document.createElement('div');
+        wrap.className = 'rounded-xl border mb-2';
+        wrap.style.background = 'var(--bg-input)';
+        wrap.style.borderColor = 'var(--border-color)';
+
+        const row = document.createElement('div');
+        row.className = 'p-3 flex items-center justify-between gap-3';
+        const label = document.createElement('div');
+        label.innerHTML = '<span class="font-bold">v' + escapeHTML(v.version) + '</span> ' +
+            '<span id="firmware-badge-' + v.id + '">' + firmwareBadgeHtml(Boolean(v.canary_passed)) + '</span>' +
+            (v.notes ? '<div class="text-xs" style="color:var(--text-secondary);">' + escapeHTML(v.notes) + '</div>' : '');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        btn.style.background = 'var(--accent-primary-strong)';
+        btn.style.color = 'var(--text-inverse)';
+        btn.textContent = firmwareOpenVersionId === v.id ? 'ปิด' : 'ส่งไปเครื่อง...';
+        btn.onclick = () => toggleFirmwareDeployPanel(v.id);
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        editBtn.style.background = 'var(--bg-card-hover)';
+        editBtn.style.color = 'var(--text-heading)';
+        editBtn.textContent = 'แก้ไข';
+        editBtn.onclick = () => editFirmwareNotes(v.id, v.notes || '');
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold';
+        deleteBtn.style.background = 'var(--status-critical-text)';
+        deleteBtn.style.color = 'var(--text-inverse)';
+        deleteBtn.textContent = 'ลบ';
+        deleteBtn.onclick = () => deleteFirmwareVersion(v.id, v.version);
+
+        const actions = document.createElement('div');
+        actions.className = 'flex items-center gap-2';
+        actions.appendChild(editBtn);
+        actions.appendChild(deleteBtn);
+        actions.appendChild(btn);
+
+        row.appendChild(label);
+        row.appendChild(actions);
+        wrap.appendChild(row);
+
+        const panel = document.createElement('div');
+        panel.id = 'firmware-panel-' + v.id;
+        panel.className = firmwareOpenVersionId === v.id ? 'px-3 pb-3' : 'hidden px-3 pb-3';
+        wrap.appendChild(panel);
+
+        list.appendChild(wrap);
+    });
+    if (firmwareOpenVersionId) renderFirmwareDeployPanel(firmwareOpenVersionId);
+}
+
+window.editFirmwareNotes = (versionId, currentNotes) => {
+    openModal('แก้ไขรายละเอียดเฟิร์มแวร์',
+        '<div class="space-y-2">' +
+            '<label for="firmwareNotesEdit" class="block text-sm font-bold mb-1">รายละเอียด</label>' +
+            '<textarea id="firmwareNotesEdit" maxlength="2000" rows="4" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);">' + escapeHTML(currentNotes) + '</textarea>' +
+        '</div>',
+        async () => {
+            const input = document.getElementById('firmwareNotesEdit');
+            const submit = document.getElementById('modalSubmit');
+            setModalBusy(true);
+            submit.textContent = 'กำลังบันทึก…';
+            try {
+                const response = await fetch('/api/firmware/versions/' + versionId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notes: String(input?.value || '') })
+                });
+                if (!response.ok) throw new Error(await apiErrorMessage(response, 'บันทึกไม่สำเร็จ'));
+                closeModal(true, true);
+                showNotice('บันทึกรายละเอียดเรียบร้อยแล้ว');
+                await loadFirmwareVersions();
+            } catch (error) {
+                closeModal(false, true);
+                showNotice(error.message || 'บันทึกไม่สำเร็จ');
+            }
+        });
+};
+
+window.deleteFirmwareVersion = async (versionId, version) => {
+    await confirmAction({
+        title: 'ลบเฟิร์มแวร์',
+        body: '<p>คุณต้องการลบเฟิร์มแวร์เวอร์ชัน v' + escapeHTML(version) + ' ใช่หรือไม่?</p><div class="dialog-note"><strong>หมายเหตุ:</strong> การลบไม่สามารถย้อนกลับได้ และจะลบประวัติการ deploy ของเวอร์ชันนี้ด้วย</div>',
+        confirmText: 'ลบเฟิร์มแวร์',
+        loadingText: 'กำลังลบ…',
+        onConfirm: async () => {
+            const response = await fetch('/api/firmware/versions/' + versionId, { method: 'DELETE' });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                if (data.error === 'ACTIVE_DEPLOYMENT_IN_PROGRESS') {
+                    throw new Error('ไม่สามารถลบได้ ขณะนี้มีการ deploy เวอร์ชันนี้อยู่ ให้รอจนเสร็จก่อน');
+                }
+                throw new Error(await apiErrorMessage(response, 'ไม่สามารถลบเฟิร์มแวร์ได้'));
+            }
+            await loadFirmwareVersions();
+        }
+    });
+};
+
+async function toggleFirmwareDeployPanel(versionId) {
+    if (firmwareDeployPollTimer) { clearInterval(firmwareDeployPollTimer); firmwareDeployPollTimer = null; }
+    firmwareOpenVersionId = (firmwareOpenVersionId === versionId) ? null : versionId;
+    loadFirmwareVersions();
+}
+
+async function renderFirmwareDeployPanel(versionId) {
+    const panel = document.getElementById('firmware-panel-' + versionId);
+    if (!panel) return;
+    panel.replaceChildren();
+
+    const msgEl = document.createElement('p');
+    msgEl.id = 'firmware-panel-msg-' + versionId;
+    msgEl.className = 'text-xs mb-2';
+    msgEl.style.color = 'var(--text-secondary)';
+    msgEl.textContent = 'กำลังโหลดรายชื่อเครื่อง...';
+    panel.appendChild(msgEl);
+
+    const [nodesRes, vRes] = await Promise.all([
+        fetch('/api/esp32-nodes'),
+        fetch('/api/firmware/versions')
+    ]);
+    const nodesData = await nodesRes.json().catch(() => ({}));
+    const vData = await vRes.json().catch(() => ({}));
+    const nodes = nodesData.nodes || [];
+    const versionRow = (vData.versions || []).find(x => x.id === versionId);
+    const canaryPassed = Boolean(versionRow && versionRow.canary_passed);
+
+    if (!nodes.length) {
+        msgEl.textContent = 'ไม่พบเครื่อง ESP32 ที่จับคู่ไว้';
+        return;
+    }
+
+    msgEl.textContent = canaryPassed
+        ? 'canary ผ่านแล้ว — เลือกได้หลายเครื่อง'
+        : 'ยังไม่ผ่าน canary — เลือกทดสอบได้แค่ 1 เครื่องก่อน';
+
+    const pickList = document.createElement('div');
+    pickList.className = 'flex flex-col gap-1 mb-3';
+    nodes.forEach(n => {
+        const item = document.createElement('label');
+        item.className = 'flex items-center gap-2 text-xs';
+        const input = document.createElement('input');
+        input.type = canaryPassed ? 'checkbox' : 'radio';
+        input.name = 'firmware-target-' + versionId;
+        input.className = 'firmware-target-input-' + versionId;
+        input.value = n.boardMac;
+        const span = document.createElement('span');
+        span.textContent = (n.status === 'connected' ? '🟢 ' : '⚪ ') + n.boardMac +
+            (n.description ? ' - ' + n.description : '') +
+            (n.status === 'connected' ? ' (ออนไลน์)' : ' (ออฟไลน์)') +
+            (n.fwVersion ? ' — ปัจจุบัน: ' + n.fwVersion : ' — ยังไม่ทราบเวอร์ชัน');
+        item.appendChild(input);
+        item.appendChild(span);
+        pickList.appendChild(item);
+    });
+    panel.appendChild(pickList);
+
+    const deployBtn = document.createElement('button');
+    deployBtn.type = 'button';
+    deployBtn.className = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold mb-3';
+    deployBtn.style.background = 'var(--status-warning-text)';
+    deployBtn.style.color = 'var(--text-inverse)';
+    deployBtn.textContent = 'Deploy';
+    deployBtn.onclick = () => submitFirmwareDeploy(versionId);
+    panel.appendChild(deployBtn);
+
+    const statusList = document.createElement('div');
+    statusList.id = 'firmware-status-list-' + versionId;
+    statusList.className = 'flex flex-col gap-1';
+    panel.appendChild(statusList);
+
+    pollFirmwareDeployments(versionId);
+}
+
+async function submitFirmwareDeploy(versionId) {
+    const inputs = document.querySelectorAll('.firmware-target-input-' + versionId + ':checked');
+    const targets = Array.from(inputs).map(el => el.value);
+    const msgEl = document.getElementById('firmware-panel-msg-' + versionId);
+    if (!targets.length) { if (msgEl) msgEl.textContent = 'กรุณาเลือกเครื่องอย่างน้อย 1 เครื่อง'; return; }
+
+    const confirmed = await confirmAction({
+        title: 'ยืนยันการ deploy เฟิร์มแวร์',
+        kind: 'danger',
+        body: '<p>จะส่งเฟิร์มแวร์ไปยัง ' + targets.length + ' เครื่อง</p>',
+        confirmText: 'Deploy'
+    });
+    if (!confirmed) return;
+
+    if (msgEl) msgEl.textContent = 'กำลังส่งคำสั่ง...';
+    try {
+        const r = await fetch('/api/firmware/deploy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ versionId, targets })
+        });
+        const result = await r.json();
+        if (!r.ok) {
+            if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + (result.message || result.error);
+            return;
+        }
+        if (msgEl) msgEl.textContent = 'ส่งคำสั่งแล้ว กำลังรอผลตอบกลับจากเครื่อง...';
+        pollFirmwareDeployments(versionId);
+    } catch (e) {
+        if (msgEl) msgEl.textContent = 'Deploy ล้มเหลว: ' + escapeHTML(e.message);
+    }
+}
+
+async function pollFirmwareDeployments(versionId) {
+    if (firmwareDeployPollTimer) clearInterval(firmwareDeployPollTimer);
+    const poll = async () => {
+        const r = await fetch('/api/firmware/deployments?versionId=' + versionId);
+        const data = await r.json().catch(() => ({}));
+        const rows = data.deployments || [];
+        const statusList = document.getElementById('firmware-status-list-' + versionId);
+        if (statusList) {
+            statusList.replaceChildren();
+            if (!rows.length) {
+                const p = document.createElement('p');
+                p.className = 'text-xs';
+                p.style.color = 'var(--text-tertiary)';
+                p.textContent = 'ยังไม่เคยส่งไปเครื่องไหนเลย';
+                statusList.appendChild(p);
+            }
+            rows.forEach(d => {
+                const meta = FIRMWARE_STATUS_META[d.status] || { label: d.status, color: 'var(--text-tertiary)' };
+                const item = document.createElement('div');
+                item.className = 'text-xs rounded-lg p-2';
+                item.style.background = 'var(--bg-card)';
+                item.innerHTML =
+                    '<span class="font-bold">' + escapeHTML(d.board_mac) + '</span> — ' +
+                    '<span style="color:' + meta.color + '; font-weight:700;">' + escapeHTML(meta.label) + '</span>' +
+                    (d.detail ? '<div style="color:var(--text-secondary);">' + escapeHTML(d.detail) + '</div>' : '') +
+                    (d.reported_version ? '<div style="color:var(--text-tertiary);">รายงานเวอร์ชัน: ' + escapeHTML(d.reported_version) + '</div>' : '');
+                statusList.appendChild(item);
+            });
+        }
+        const allTerminal = rows.length > 0 && rows.every(d => ['success', 'no_update', 'failed', 'timeout'].includes(d.status));
+        if (allTerminal) {
+            clearInterval(firmwareDeployPollTimer);
+            firmwareDeployPollTimer = null;
+            const hasSuccess = rows.some(d => d.status === 'success');
+            const badgeEl = document.getElementById('firmware-badge-' + versionId);
+            const wasPassedAlready = Boolean(badgeEl && badgeEl.textContent.indexOf('ผ่านแล้ว') >= 0);
+            if (badgeEl) badgeEl.innerHTML = firmwareBadgeHtml(hasSuccess);
+            if (hasSuccess && !wasPassedAlready) {
+                // Canary just passed for the first time — re-render the panel
+                // so the picker switches from single-select (radio) to
+                // multi-select (checkbox) without a manual close/reopen.
+                renderFirmwareDeployPanel(versionId);
+            }
+        }
+    };
+    poll();
+    firmwareDeployPollTimer = window.setInterval(poll, 3000);
+}
+
+async function uploadFirmware() {
+    const fileInput = document.getElementById('firmware-file-input');
+    const versionInput = document.getElementById('firmware-version-input');
+    const notesInput = document.getElementById('firmware-notes-input');
+    const statusEl = document.getElementById('firmware-upload-status');
+    if (!fileInput.files[0] || !versionInput.value.trim()) {
+        statusEl.textContent = 'กรุณาเลือกไฟล์ .bin และกรอกเวอร์ชัน';
+        return;
+    }
+    const fd = new FormData();
+    fd.append('firmware', fileInput.files[0]);
+    fd.append('version', versionInput.value.trim());
+    fd.append('notes', notesInput.value.trim());
+    statusEl.textContent = 'กำลังอัปโหลด...';
+    try {
+        const r = await fetch('/api/firmware/upload', { method: 'POST', body: fd });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'UPLOAD_FAILED');
+        statusEl.textContent = 'อัปโหลดสำเร็จ: v' + escapeHTML(data.version);
+        fileInput.value = ''; versionInput.value = ''; notesInput.value = '';
+        loadFirmwareVersions();
+    } catch (e) {
+        statusEl.textContent = 'อัปโหลดล้มเหลว: ' + escapeHTML(e.message);
+    }
+}
+
+loadFirmwareVersions();
     `));
 });
 
@@ -12017,8 +13406,542 @@ app.get('/api/system/apply-update/status', adminOnly, async (req, res) => {
     res.json(response);
 });
 
+// ─── ESP32 Firmware OTA ────────────────────────────────────────────
+// The firmware (firmware/nurseaid_esp32.ino) already supports pull-OTA:
+// an MQTT "ota <url>" command makes it HTTP-download a .bin and self-flash,
+// reporting progress back on ble/node/<id>/ota. This section is the
+// server-side half: upload, host, trigger, track.
+
+function generateFirmwareDownloadToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function buildFirmwareFilename(versionId, _originalName) {
+    // Ignore the original name/extension entirely — the stored filename is
+    // always server-generated, so a mislabeled or malicious upload can't
+    // control what lands on disk (same reasoning as the notification-sound
+    // uploader's user_<id>.<ext> naming).
+    return `fw_${versionId}.bin`;
+}
+
+function resolveNodeIdForMac(nodes, mac) {
+    const target = String(mac || '').toUpperCase();
+    const found = (nodes || []).find(n => String(n.boardMac || '').toUpperCase() === target);
+    return found ? found.nodeId : null;
+}
+
+function canDeployToTargets(deploymentRows, targetCount) {
+    if (targetCount <= 1) return { allowed: true, reason: null };
+    const hasSuccess = (deploymentRows || []).some(row => row.status === 'success');
+    if (hasSuccess) return { allowed: true, reason: null };
+    return {
+        allowed: false,
+        reason: 'ต้อง deploy สำเร็จกับเครื่อง canary (1 เครื่อง) ก่อน ถึงจะเลือกหลายเครื่องได้'
+    };
+}
+
+function isValidOtaUrl(url) {
+    return typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'));
+}
+
+function parseOtaStatusTopic(topic) {
+    const match = /^ble\/node\/([^/]+)\/ota$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+function parseOtaStatusPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object') return null;
+        return { state: data.state, detail: data.detail, version: data.version };
+    } catch (e) {
+        return null;
+    }
+}
+
+// The ESP32 publishes a RETAINED boot message to ble/node/<NODE_ID>/boot once
+// per power-on. Matching the topic exactly keeps us from mistaking other
+// ble/node/... messages (log, devices, etc.) for a boot event.
+function parseBootTopic(topic) {
+    const match = /^ble\/node\/([^/]+)\/boot$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+// Parse the boot JSON payload defensively. The bootCount field is the anchor of
+// the replay guard, so it must be a trustworthy non-negative integer — booleans,
+// non-finite numbers, negatives and non-integers are all rejected. reason and
+// version are free-form device text; they are trimmed and length-capped so they
+// cannot bloat the JSONB detail column or the VARCHAR(40) last_fw_version column.
+function parseBootPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+        const bootCount = data.boot;
+        if (typeof bootCount !== 'number' || !Number.isFinite(bootCount) || bootCount < 0 || !Number.isInteger(bootCount)) {
+            return null;
+        }
+
+        const reason = typeof data.reason === 'string' ? data.reason.trim() : null;
+        const version = typeof data.version === 'string' ? data.version.trim() : null;
+
+        // Free-form device text must not be stored unbounded.
+        const cappedReason = reason !== null && reason.length > 200 ? reason.slice(0, 200) : reason;
+        // Match the last_fw_version VARCHAR(40) column width.
+        const cappedVersion = version !== null && version.length > 40 ? version.slice(0, 40) : version;
+
+        return { bootCount, reason: cappedReason, version: cappedVersion };
+    } catch (e) {
+        return null;
+    }
+}
+
+// The ESP32 heartbeat publishes to the BARE topic ble/node/<NODE_ID> with NO
+// suffix (unlike the OTA status topic which is ble/node/<id>/ota). Matching the
+// bare topic exactly keeps us from mistaking other ble/node/... messages (log,
+// boot, devices, etc.) for a heartbeat.
+function parseHeartbeatTopic(topic) {
+    const match = /^ble\/node\/([^/]+)$/.exec(String(topic || ''));
+    return match ? match[1] : null;
+}
+
+// Parse the heartbeat JSON payload. Fields are read by name (not position) so the
+// order in the payload does not matter. boot_reason is optional: older firmware in
+// the field predates that field, so its absence must not fail parsing — it is
+// surfaced as null and left untouched on upsert.
+function parseHeartbeatPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+        return {
+            uptime: data.uptime ?? null,
+            heap: data.heap ?? null,
+            wifi_rssi: data.wifi_rssi ?? null,
+            time_ok: data.time_ok ?? null,
+            boot_reason: data.boot_reason ?? null,
+            version: data.version ?? null,
+            ip: data.ip ?? null
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+// The legacy ble/esp32 topic carries a full inventory snapshot for one board —
+// node_id, board MAC, and IP in a single message. This is the ONLY MQTT topic
+// that carries both nodeId and board_mac together, so it is the authoritative
+// source for identity resolution. Parse it defensively: any missing or invalid
+// field means we drop the message rather than pollute the registry with garbage.
+const ESP32_NODE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+function parseEsp32InventoryPayload(buffer) {
+    try {
+        const data = JSON.parse(buffer.toString());
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+        const nodeId = String(data.node_id || '').trim();
+        if (!ESP32_NODE_ID_RE.test(nodeId)) return null;
+
+        // canonicalEsp32Mac returns '' when the MAC is invalid — treat that as failure.
+        const boardMac = canonicalEsp32Mac(data.mac);
+        if (!boardMac) return null;
+
+        const ipAddress = String(data.ip || '').trim();
+        if (!ipAddress || ipAddress.length > 45) return null;
+
+        return { nodeId, boardMac, ipAddress };
+    } catch (e) {
+        return null;
+    }
+}
+
+// Resolve a nodeId to its canonical board_mac using the durable esp32_nodes
+// table. Returns the mac string or null when the nodeId has never been seen.
+async function resolveBoardMacByNodeId(nodeId) {
+    const result = await pool.query(
+        'SELECT board_mac FROM esp32_nodes WHERE node_id = $1',
+        [nodeId]
+    );
+    return result.rows[0] ? result.rows[0].board_mac : null;
+}
+
+// Upsert the durable nodeId<->board_mac registry. node_id is UNIQUE, so if a
+// node_id is reassigned to a different board (board swapped, same node name) we
+// must first clear the old claim before inserting the new one — otherwise the
+// INSERT would raise a unique violation. Both statements run in a transaction
+// so the registry is never left in an inconsistent state.
+async function upsertEsp32NodeIdentity(boardMac, nodeId, ipAddress) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // Clear any stale claim: if another board still holds this node_id, release it.
+        await client.query(
+            'UPDATE esp32_nodes SET node_id = NULL WHERE node_id = $1 AND board_mac <> $2',
+            [nodeId, boardMac]
+        );
+        await client.query(
+            `INSERT INTO esp32_nodes (board_mac, node_id, ip_address)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (board_mac) DO UPDATE SET
+                 node_id = EXCLUDED.node_id,
+                 ip_address = COALESCE(EXCLUDED.ip_address, esp32_nodes.ip_address)`,
+            [boardMac, nodeId, ipAddress]
+        );
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
+    // Auto-restore a revoked board when the authoritative ble/esp32 inventory
+    // message arrives. This topic is NOT retained, so this only fires on genuine
+    // live inventory reports — not on broker replay after a restart.
+    //
+    // Deliberately OUTSIDE the try/finally above. Inside it, a failure here hit
+    // the `catch`, which issued a ROLLBACK against an already-committed
+    // transaction and then rethrew — turning a successful identity upsert into
+    // a reported failure.
+    await restoreEsp32NodeIfRevoked(boardMac, nodeId, 'inventory');
+}
+
+// Return an array of { nodeId, lastSeenAt, ageSeconds } for heartbeats that have
+// arrived on MQTT but whose board_mac has not yet been resolved. Exposed so a
+// later step can surface "seen on MQTT but unidentified" in the UI. Entries are
+// derived from the pending heartbeat buffer; stale entries (past TTL) are pruned
+// on each call.
+function listUnidentifiedEsp32Nodes() {
+    prunePendingHeartbeats();
+    const now = Date.now();
+    const result = [];
+    for (const [nodeId, entry] of esp32PendingHeartbeats) {
+        const ageMs = now - entry.receivedAt;
+        result.push({
+            nodeId,
+            lastSeenAt: entry.receivedAt,
+            ageSeconds: Math.round(ageMs / 1000)
+        });
+    }
+    return result;
+}
+
+// Prune entries older than the TTL from the pending heartbeat buffer. Called
+// whenever the buffer is touched so it never grows without bound.
+function prunePendingHeartbeats() {
+    const now = Date.now();
+    for (const [nodeId, entry] of esp32PendingHeartbeats) {
+        if (now - entry.receivedAt > ESP32_PENDING_HEARTBEAT_TTL_MS) {
+            esp32PendingHeartbeats.delete(nodeId);
+        }
+    }
+}
+
+// Buffer a heartbeat whose nodeId cannot yet be resolved. Overwrites any older
+// pending payload for the same nodeId so we always keep the latest data. When
+// the buffer is full, evict the oldest entry first.
+function bufferPendingHeartbeat(nodeId, parsed) {
+    prunePendingHeartbeats();
+    if (esp32PendingHeartbeats.size >= ESP32_PENDING_HEARTBEAT_MAX) {
+        // Evict the oldest entry.
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of esp32PendingHeartbeats) {
+            if (entry.receivedAt < oldestTime) {
+                oldestTime = entry.receivedAt;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey !== null) esp32PendingHeartbeats.delete(oldestKey);
+    }
+    esp32PendingHeartbeats.set(nodeId, { parsed, receivedAt: Date.now() });
+}
+
+// Flush any pending heartbeat for a nodeId now that its board_mac is known.
+// Called from the ble/esp32 handler after upsertEsp32NodeIdentity succeeds.
+async function flushPendingHeartbeat(nodeId) {
+    const entry = esp32PendingHeartbeats.get(nodeId);
+    if (!entry) return;
+    esp32PendingHeartbeats.delete(nodeId);
+    // Re-run through the normal heartbeat path so esp32_node_status is updated.
+    await handleHeartbeatMessage(nodeId, entry.parsed).catch(err =>
+        console.error('[ESP32 Heartbeat] Failed to flush buffered heartbeat:', err.message));
+}
+
+// Prune entries older than the TTL from the pending boot buffer. Called whenever
+// the buffer is touched so it never grows without bound. Uses the same TTL as
+// the heartbeat buffer since both share the same identity-resolution window.
+function prunePendingBoots() {
+    const now = Date.now();
+    for (const [nodeId, entry] of esp32PendingBoots) {
+        if (now - entry.receivedAt > ESP32_PENDING_HEARTBEAT_TTL_MS) {
+            esp32PendingBoots.delete(nodeId);
+        }
+    }
+}
+
+// Buffer a boot message whose nodeId cannot yet be resolved. Overwrites any
+// older pending payload for the same nodeId so we always keep the latest data.
+// When the buffer is full, evict the oldest entry first. Uses the same max and
+// TTL constants as the heartbeat buffer.
+function bufferPendingBoot(nodeId, parsed) {
+    prunePendingBoots();
+    if (esp32PendingBoots.size >= ESP32_PENDING_HEARTBEAT_MAX) {
+        // Evict the oldest entry.
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of esp32PendingBoots) {
+            if (entry.receivedAt < oldestTime) {
+                oldestTime = entry.receivedAt;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey !== null) esp32PendingBoots.delete(oldestKey);
+    }
+    esp32PendingBoots.set(nodeId, { parsed, receivedAt: Date.now() });
+}
+
+// Flush any pending boot for a nodeId now that its board_mac is known.
+// Called from the ble/esp32 handler after upsertEsp32NodeIdentity succeeds,
+// alongside flushPendingHeartbeat so a board's first boot message is not lost
+// just because its identity arrived seconds later.
+async function flushPendingBoot(nodeId) {
+    const entry = esp32PendingBoots.get(nodeId);
+    if (!entry) return;
+    esp32PendingBoots.delete(nodeId);
+    await handleBootMessage(nodeId, entry.parsed).catch(err =>
+        console.error('[ESP32 Boot] Failed to flush buffered boot:', err.message));
+}
+
+const FIRMWARE_UPLOAD_DIR = process.env.FIRMWARE_UPLOAD_DIR || path.join(__dirname, 'uploads', 'firmware');
+try { fs.mkdirSync(FIRMWARE_UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('[Firmware] mkdir failed:', e.message); }
+
+const FIRMWARE_MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB — ESP32 app partitions are typically ~1.3-1.9MB
+
+// The ESP32 firmware's doHttpOta() connects with a plain WiFiClient (no TLS —
+// see firmware/nurseaid_esp32.ino), so the OTA download URL must always be
+// plain http:// on this app's own port, regardless of what scheme the admin's
+// own browser used. 'trust proxy' (line ~49) makes req.protocol correctly
+// report "https" for the admin's session through the edge reverse proxy —
+// exactly the value that must NOT be reused here, or a real device gets an
+// https:// URL it cannot open (confirmed live: HTTPUpdate error -104 "Wrong
+// HTTP Code", the plain client's connection being reset by the TLS port).
+// Set this explicitly per site if the device-reachable LAN address/port
+// differs from req.hostname (e.g. the public hostname isn't reachable from
+// the hospital LAN on this app's port) — e.g. "http://172.16.251.45:3333".
+const FIRMWARE_OTA_BASE_URL = process.env.FIRMWARE_OTA_BASE_URL || '';
+
+const firmwareUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: FIRMWARE_MAX_UPLOAD_BYTES },
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').replace('.', '').toLowerCase();
+        if (ext === 'bin') return cb(null, true);
+        cb(new Error('UNSUPPORTED_FIRMWARE_FORMAT'));
+    }
+}).single('firmware');
+
+app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (req, res) => {
+    firmwareUpload(req, res, async (err) => {
+        if (err) {
+            const error = err.message === 'UNSUPPORTED_FIRMWARE_FORMAT' ? 'UNSUPPORTED_FIRMWARE_FORMAT'
+                : err.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'UPLOAD_FAILED';
+            return res.status(400).json({ error });
+        }
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: 'NO_FILE' });
+        const version = String(req.body.version || '').trim().slice(0, 40);
+        const notes = String(req.body.notes || '').trim();
+        if (!version) return res.status(400).json({ error: 'VERSION_REQUIRED' });
+
+        try {
+            const token = generateFirmwareDownloadToken();
+            const inserted = await pool.query(
+                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                [version, notes, '', file.size, token, req.user.id]
+            );
+            const versionId = inserted.rows[0].id;
+            const filename = buildFirmwareFilename(versionId, file.originalname);
+            fs.writeFileSync(path.join(FIRMWARE_UPLOAD_DIR, filename), file.buffer);
+            await pool.query(`UPDATE firmware_versions SET filename=$1 WHERE id=$2`, [filename, versionId]);
+            logAudit(req, 'CREATE', 'firmware_version', String(versionId), { version, file_size: file.size }).catch(console.error);
+            res.json({ success: true, id: versionId, version });
+        } catch (error) {
+            console.error('[Firmware Upload]', error.message);
+            res.status(500).json({ error: 'UPLOAD_FAILED' });
+        }
+    });
+});
+
+// No capability/session gate here on purpose — the ESP32's HTTPUpdate
+// client can't do cookie/session auth. Security is the token: random,
+// single-purpose, not linked from anywhere but the deploy trigger itself.
+app.get('/fw/:token/firmware.bin', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT filename FROM firmware_versions WHERE download_token=$1`,
+            [req.params.token]
+        );
+        if (!result.rows.length) return res.status(404).end();
+        const filePath = path.join(FIRMWARE_UPLOAD_DIR, result.rows[0].filename);
+        let stat;
+        try { stat = fs.statSync(filePath); } catch (e) { return res.status(404).end(); }
+        // The ESP32's HTTPUpdate client requires Content-Length up front to
+        // size the OTA partition write — without it (the default when a
+        // stream is piped with no explicit header, which sends chunked
+        // transfer-encoding instead) it fails with "Server Did Not Report
+        // Size" before ever reading a byte of the body. Confirmed live.
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', stat.size);
+        fs.createReadStream(filePath).pipe(res);
+    } catch (e) {
+        console.error('[Firmware Serve]', e.message);
+        res.status(500).end();
+    }
+});
+
+app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.body.versionId, 10);
+    const targets = Array.isArray(req.body.targets) ? req.body.targets.map(String) : [];
+    if (!Number.isInteger(versionId) || targets.length === 0) {
+        return res.status(400).json({ error: 'INVALID_REQUEST' });
+    }
+
+    try {
+        const versionResult = await pool.query(`SELECT id, download_token FROM firmware_versions WHERE id=$1`, [versionId]);
+        if (!versionResult.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        const { download_token } = versionResult.rows[0];
+
+        const existingDeployments = await pool.query(
+            `SELECT status FROM firmware_deployments WHERE version_id=$1`, [versionId]
+        );
+        const gate = canDeployToTargets(existingDeployments.rows, targets.length);
+        if (!gate.allowed) return res.status(400).json({ error: 'CANARY_REQUIRED', message: gate.reason });
+
+        const origin = FIRMWARE_OTA_BASE_URL || `http://${req.hostname}:${PORT}`;
+        const url = `${origin}/fw/${download_token}/firmware.bin`;
+        if (!isValidOtaUrl(url)) return res.status(500).json({ error: 'INVALID_URL' });
+
+        const topology = await esp32NodesForUi(req);
+        const results = [];
+        for (const boardMac of targets) {
+            const nodeId = resolveNodeIdForMac(topology.nodes, boardMac);
+            if (!nodeId) {
+                results.push({ boardMac, ok: false, error: 'NODE_NOT_FOUND' });
+                continue;
+            }
+            await pool.query(
+                `INSERT INTO firmware_deployments (version_id, board_mac, status, requested_by)
+                 VALUES ($1, $2, 'pending', $3)`,
+                [versionId, boardMac, req.user.id]
+            );
+            const cmdTopic = `ble/node/${nodeId}/cmd`; // per-node only — never ble/node/all/cmd
+            mqttClient.publish(cmdTopic, `ota ${url}`, { qos: 1 });
+            results.push({ boardMac, ok: true, nodeId });
+        }
+        logAudit(req, 'system:firmware_deploy:start', 'firmware_version', String(versionId), { targets }).catch(console.error);
+        res.json({ success: true, results });
+    } catch (error) {
+        console.error('[Firmware Deploy]', error.message);
+        res.status(500).json({ error: 'DEPLOY_FAILED' });
+    }
+});
+
+app.get('/api/firmware/deployments', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.query.versionId, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+        const result = await pool.query(
+            `SELECT board_mac, status, reported_version, detail, requested_at, updated_at
+             FROM firmware_deployments WHERE version_id=$1 ORDER BY requested_at DESC`,
+            [versionId]
+        );
+        res.json({ deployments: result.rows });
+    } catch (error) {
+        console.error('[Firmware Deployments]', error.message);
+        res.status(500).json({ error: 'QUERY_FAILED' });
+    }
+});
+
+app.get('/api/firmware/versions', requireCapability('devices:firmware:write'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT fv.id, fv.version, fv.notes, fv.uploaded_at,
+                    EXISTS(SELECT 1 FROM firmware_deployments fd WHERE fd.version_id=fv.id AND fd.status='success') AS canary_passed
+             FROM firmware_versions fv ORDER BY fv.uploaded_at DESC`
+        );
+        res.json({ versions: result.rows });
+    } catch (error) {
+        console.error('[Firmware Versions]', error.message);
+        res.status(500).json({ error: 'QUERY_FAILED' });
+    }
+});
+
+app.put('/api/firmware/versions/:id', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    const notes = String(req.body.notes || '').trim();
+    try {
+        const result = await pool.query(
+            `UPDATE firmware_versions SET notes=$1 WHERE id=$2 RETURNING id`,
+            [notes, versionId]
+        );
+        if (!result.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        logAudit(req, 'UPDATE', 'firmware_version', String(versionId), { notes }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[Firmware Update]', error.message);
+        res.status(500).json({ error: 'UPDATE_FAILED' });
+    }
+});
+
+// Deleting a version is blocked only while a deployment of it is actively in
+// flight (pending/start) — a terminal-status history (success/failed/etc.) is
+// not a reason to keep a version around, so it's removed along with the
+// version row rather than left dangling against the FK.
+app.delete('/api/firmware/versions/:id', requireCapability('devices:firmware:write'), async (req, res) => {
+    const versionId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(versionId)) return res.status(400).json({ error: 'INVALID_REQUEST' });
+    try {
+        const activeCheck = await pool.query(
+            `SELECT 1 FROM firmware_deployments WHERE version_id=$1 AND status IN ('pending','start') LIMIT 1`,
+            [versionId]
+        );
+        if (activeCheck.rows.length) {
+            return res.status(400).json({ error: 'ACTIVE_DEPLOYMENT_IN_PROGRESS' });
+        }
+        const versionResult = await pool.query(`SELECT filename, version FROM firmware_versions WHERE id=$1`, [versionId]);
+        if (!versionResult.rows.length) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+        const { filename, version } = versionResult.rows[0];
+
+        const deploymentsDeleted = await pool.query(`DELETE FROM firmware_deployments WHERE version_id=$1`, [versionId]);
+        await pool.query(`DELETE FROM firmware_versions WHERE id=$1`, [versionId]);
+
+        if (filename) {
+            try { fs.unlinkSync(path.join(FIRMWARE_UPLOAD_DIR, filename)); }
+            catch (e) { console.error('[Firmware Delete] Failed to remove .bin file:', e.message); }
+        }
+
+        // Success-path console log — previously only the error path logged
+        // anything, so a successful delete left no trace in `docker compose
+        // logs` and could only be reconstructed from audit_logs after the
+        // fact. Logging here makes it visible in real time too.
+        console.log(`[Firmware Delete] version_id=${versionId} (v${version}) deleted by user ${req.user?.id ?? 'unknown'}; file=${filename || 'none'}; ${deploymentsDeleted.rowCount} deployment row(s) removed`);
+
+        logAudit(req, 'DELETE', 'firmware_version', String(versionId), {
+            version,
+            filename,
+            deploymentRowsRemoved: deploymentsDeleted.rowCount
+        }).catch(console.error);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[Firmware Delete]', error.message);
+        res.status(500).json({ error: 'DELETE_FAILED' });
+    }
+});
+
 async function startServer() {
     await initDatabase();
+    try { await backfillEsp32NodeRegistry(); } catch (e) { console.error('[ESP32 Registry] backfill failed during startup:', e.message); }
     initMqttClient();
     // Allow MQTT connection to establish before seeding paired list
     setTimeout(() => publishPairedDeviceList(), 2000);
@@ -12063,5 +13986,27 @@ module.exports = {
     classifyVitalRange,
     parseSemver,
     compareSemver,
-    highestVersion
+    highestVersion,
+    roleHasCapability,
+    generateFirmwareDownloadToken,
+    buildFirmwareFilename,
+    resolveNodeIdForMac,
+    canDeployToTargets,
+    isValidOtaUrl,
+    parseOtaStatusTopic,
+    parseOtaStatusPayload,
+    parseBootTopic,
+    parseBootPayload,
+    handleBootMessage,
+    parseHeartbeatTopic,
+    parseHeartbeatPayload,
+    parseEsp32InventoryPayload,
+    upsertEsp32NodeIdentity,
+    resolveBoardMacByNodeId,
+    listUnidentifiedEsp32Nodes,
+    runEsp32ReceiverSweep,
+    recordEsp32Event,
+    latestEsp32LivenessEvent,
+    esp32DeleteBlockedByRecentActivity,
+    ESP32_DELETE_MIN_SILENCE_MS
 };
