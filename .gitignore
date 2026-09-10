@@ -51,3 +51,7 @@ nul
 
 # Local skill tooling lockfile — machine-specific, not part of the deployable app.
 skills-lock.json
+
+# Machine-local MCP server config for agent tooling (host paths + local
+# credentials) — not part of the deployable app, never committed.
+.mcp.json
