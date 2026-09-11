@@ -7707,13 +7707,13 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         </div>
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
-                            <optgroup label="วัดต่อเนื่อง · แจ้งหลุดเร็วสุด">
+                            <optgroup label="วัดต่อเนื่อง · เปลืองแบตมากสุด">
                                 <option value="high" \${p.priority !== 'medium' && p.priority !== 'low' ? 'selected' : ''}>สูง</option>
                             </optgroup>
-                            <optgroup label="พักรอบละ 1 นาที · แจ้งหลุดช้าลง">
+                            <optgroup label="พักรอบละ 1 นาที · ประหยัดแบต">
                                 <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
                             </optgroup>
-                            <optgroup label="พักรอบละ 5 นาที · แจ้งหลุดช้าสุด">
+                            <optgroup label="พักรอบละ 5 นาที · ประหยัดแบตมากสุด">
                                 <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
                             </optgroup>
                         </select>
