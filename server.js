@@ -7706,17 +7706,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
                         \${priorityBadge}
-                        <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ตั้งค่าความสำคัญ">
-                            <option value="">ไม่ระบุ</option>
-                            <optgroup label="วัดต่อเนื่อง ไม่พัก">
-                                <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
-                            </optgroup>
-                            <optgroup label="วัดทุก 1 นาที · ประหยัดแบตนาฬิกา">
-                                <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
-                            </optgroup>
-                            <optgroup label="วัดทุก 5 นาที · ประหยัดแบตมากสุด">
-                                <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
-                            </optgroup>
+                        <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
+                            <option value="high" \${p.priority !== 'medium' && p.priority !== 'low' ? 'selected' : ''}>สูง · วัดต่อเนื่อง — รู้เร็วที่สุดเมื่ออุปกรณ์หลุด</option>
+                            <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง · พักรอบละ 1 นาที — ประหยัดแบต แจ้งหลุดช้าลง</option>
+                            <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ · พักรอบละ 5 นาที — ประหยัดแบตสุด แจ้งหลุดช้าสุด</option>
                         </select>
                         <button type="button" data-action="open-config" class="admin-only shrink-0 p-1 transition-colors \${settingsColor}" aria-label="ตั้งค่าขีดจำกัดรายบุคคล">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -10547,8 +10540,14 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
             COALESCE(s.enable_offline_alert,d.enable_offline_alert,true) enable_offline_alert,
             COALESCE(s.offline_threshold_minutes,d.offline_threshold_minutes,2) offline_threshold_minutes,
             COALESCE(s.enable_webhook,d.enable_webhook,false) enable_webhook,
-            COALESCE(s.webhook_url,d.webhook_url,'') webhook_url
+            COALESCE(s.webhook_url,d.webhook_url,'') webhook_url,
+            pt.priority
             FROM nurseaid n LEFT JOIN alert_settings s ON LOWER(s.mac)=LOWER(n.mac)
+            LEFT JOIN LATERAL (
+                SELECT priority FROM patients
+                WHERE LOWER(hn_number) = LOWER(n.hm_number)
+                ORDER BY id DESC LIMIT 1
+            ) pt ON true
             LEFT JOIN alert_settings d ON d.mac='*'
             WHERE n.hm_number IS NOT NULL ${scope.clause ? 'AND ' + scope.clause : ''}
             ORDER BY n.bed_no`, scope.params),
@@ -10561,6 +10560,11 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
         enable_sound: true, enable_line: true, enable_offline_alert: true,
         offline_threshold_minutes: 2, enable_webhook: false, webhook_url: ''
     };
+    // Naming the priority in the note matters: a nurse who set the threshold to 2
+    // minutes and sees 8 needs to know which setting widened it, not just that it
+    // is different. The widening itself is enforced in live-status.js, which floors
+    // the threshold at the rest period plus its margin.
+    const PRIORITY_REST_LABELS = { medium: ' กลาง', low: ' ต่ำ' };
     const defaultLimits = alertThresholds(defaults);
     const rows = r.rows.map(d => {
         const hasCustom = Boolean(d.has_custom);
@@ -10571,7 +10575,7 @@ app.get('/alert-settings', requireCapability('alerts:settings:write'), async (re
                 <h3 class="font-bold truncate" style="color:var(--text-primary);">${escapeHtml(d.name || '-')}</h3><p class="text-2xs" style="color:var(--text-tertiary);">HN ${escapeHtml(d.hm_number || '-')} · อุปกรณ์ #${escapeHtml(d.device_no)}</p>
             </div></div>
             <div class="range-patient-values mb-3"><div class="range-patient-value"><span>HEART RATE</span><strong>N ${limits.hrWarningMin}–${limits.hrWarningMax} · C นอก ${limits.hrMin}–${limits.hrMax}</strong></div><div class="range-patient-value"><span>SpO₂</span><strong>N ≥${limits.spo2WarningMin}% · C ≤${limits.spo2CriticalMin}%</strong></div><div class="range-patient-value"><span>TEMPERATURE</span><strong>N ${limits.tempWarningMin}–${limits.tempWarningMax} · C นอก ${limits.tempMin}–${limits.tempMax}</strong></div></div>
-            <p class="text-2xs mb-3" style="color:var(--text-secondary);">${d.enable_offline_alert ? `<span class="ic ic-signal" aria-hidden="true"></span> แจ้งเมื่ออุปกรณ์ขาดการติดต่อ ${offlineThresholdMinutes(d)} นาที` : '<span class="ic ic-signal" aria-hidden="true"></span> ปิดการแจ้งเตือนอุปกรณ์หลุด'}</p>
+            <p class="text-2xs mb-3" style="color:var(--text-secondary);">${d.enable_offline_alert ? `<span class="ic ic-signal" aria-hidden="true"></span> แจ้งเมื่ออุปกรณ์ขาดการติดต่อ ${offlineThresholdMinutesForPriority(d, d.priority)} นาที${offlineThresholdMinutesForPriority(d, d.priority) > offlineThresholdMinutes(d) ? ` <span style="color:var(--text-tertiary);">(ตั้งไว้ ${offlineThresholdMinutes(d)} นาที · ขยายให้ครอบรอบพักของความสำคัญ${escapeHtml(PRIORITY_REST_LABELS[d.priority] || '')})</span>` : ''}` : '<span class="ic ic-signal" aria-hidden="true"></span> ปิดการแจ้งเตือนอุปกรณ์หลุด'}</p>
             <div class="flex gap-2"><button type="button" onclick="editAlertSettings('${escapeJsSingle(d.mac)}', ${limits.hrMin}, ${limits.hrWarningMin}, ${limits.hrWarningMax}, ${limits.hrMax}, ${limits.spo2CriticalMin}, ${limits.spo2WarningMin}, ${limits.tempMin}, ${limits.tempWarningMin}, ${limits.tempWarningMax}, ${limits.tempMax}, ${Boolean(d.enable_sound)}, ${Boolean(d.enable_line)}, ${Boolean(d.enable_offline_alert)}, ${offlineThresholdMinutes(d)}, ${Boolean(d.enable_webhook)}, '${escapeJsSingle(d.webhook_url || '')}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--accent-primary-strong);color:var(--text-inverse);"><span class="ic ic-gear" aria-hidden="true"></span> ตั้งค่าเฉพาะราย</button>${hasCustom ? `<button type="button" onclick="resetPatientAlertSettings('${escapeJsSingle(d.mac)}')" class="px-3 py-2 rounded-xl text-xs font-bold" style="background:var(--bg-badge);color:var(--text-secondary);border:1px solid var(--border-color);">ใช้ค่ากลาง</button>` : ''}</div>
         </article>`;
     }).join('');
