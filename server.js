@@ -7707,9 +7707,15 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         </div>
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
-                            <option value="high" \${p.priority !== 'medium' && p.priority !== 'low' ? 'selected' : ''}>สูง · วัดต่อเนื่อง — รู้เร็วที่สุดเมื่ออุปกรณ์หลุด</option>
-                            <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง · พักรอบละ 1 นาที — ประหยัดแบต แจ้งหลุดช้าลง</option>
-                            <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ · พักรอบละ 5 นาที — ประหยัดแบตสุด แจ้งหลุดช้าสุด</option>
+                            <optgroup label="วัดต่อเนื่อง · แจ้งหลุดเร็วสุด">
+                                <option value="high" \${p.priority !== 'medium' && p.priority !== 'low' ? 'selected' : ''}>สูง</option>
+                            </optgroup>
+                            <optgroup label="พักรอบละ 1 นาที · แจ้งหลุดช้าลง">
+                                <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
+                            </optgroup>
+                            <optgroup label="พักรอบละ 5 นาที · แจ้งหลุดช้าสุด">
+                                <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
+                            </optgroup>
                         </select>
                         <button type="button" data-action="open-config" class="admin-only shrink-0 p-1 transition-colors \${settingsColor}" aria-label="ตั้งค่าขีดจำกัดรายบุคคล">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
