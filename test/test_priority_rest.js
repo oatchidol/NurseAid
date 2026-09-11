@@ -33,15 +33,15 @@ test('status codes keep the values the firmware publishes', () => {
 });
 
 test('rest intervals mirror the firmware PRIORITY_* constants', () => {
-    // nurseaid_esp32.ino: PRIORITY_MEDIUM_INTERVAL_MS = 5 min, LOW = 10 min.
+    // nurseaid_esp32.ino: PRIORITY_MEDIUM_INTERVAL_MS = 1 min, LOW = 5 min.
     assert.equal(PRIORITY_REST_SECONDS.high, 0);
-    assert.equal(PRIORITY_REST_SECONDS.medium, 300);
-    assert.equal(PRIORITY_REST_SECONDS.low, 600);
+    assert.equal(PRIORITY_REST_SECONDS.medium, 60);
+    assert.equal(PRIORITY_REST_SECONDS.low, 300);
 });
 
 test('priorityRestSeconds is case and whitespace tolerant and defaults to high', () => {
-    assert.equal(priorityRestSeconds('LOW'), 600);
-    assert.equal(priorityRestSeconds('  Medium '), 300);
+    assert.equal(priorityRestSeconds('LOW'), 300);
+    assert.equal(priorityRestSeconds('  Medium '), 60);
     assert.equal(priorityRestSeconds('high'), 0);
     assert.equal(priorityRestSeconds(null), 0);
     assert.equal(priorityRestSeconds(undefined), 0);
@@ -62,13 +62,13 @@ test('high priority gets the same values back, as a copy not the shared object',
 
 test('medium and low widen the windows past their rest interval', () => {
     const medium = freshnessPolicyForPriority(BASE, 'medium');
-    assert.equal(medium.status, 480);     // 300 rest + 180 margin
-    assert.equal(medium.presence, 480);
+    assert.equal(medium.status, 240);     // 60 rest + 180 margin
+    assert.equal(medium.presence, 240);
     assert.equal(medium.clinical, 600);   // base already larger, keep it
     const low = freshnessPolicyForPriority(BASE, 'low');
-    assert.equal(low.status, 780);        // 600 rest + 180 margin
-    assert.equal(low.presence, 780);
-    assert.equal(low.clinical, 780);      // now exceeds the 600 base
+    assert.equal(low.status, 480);        // 300 rest + 180 margin
+    assert.equal(low.presence, 480);
+    assert.equal(low.clinical, 600);      // base still larger at this rest
 });
 
 test('widening never shortens a window and leaves battery and liveHr alone', () => {
@@ -83,8 +83,8 @@ test('widening never shortens a window and leaves battery and liveHr alone', () 
 test('offline threshold rises to cover a rest but never drops below the operator value', () => {
     const settings = { offline_threshold_minutes: 2 };
     assert.equal(offlineThresholdMinutesForPriority(settings, 'high'), 2);
-    assert.equal(offlineThresholdMinutesForPriority(settings, 'medium'), 8);  // ceil(480/60)
-    assert.equal(offlineThresholdMinutesForPriority(settings, 'low'), 13);    // ceil(780/60)
+    assert.equal(offlineThresholdMinutesForPriority(settings, 'medium'), 4);  // ceil(240/60)
+    assert.equal(offlineThresholdMinutesForPriority(settings, 'low'), 8);     // ceil(480/60)
     // An operator who deliberately set a longer threshold keeps it.
     assert.equal(offlineThresholdMinutesForPriority({ offline_threshold_minutes: 30 }, 'low'), 30);
     // And the helper still respects the 60 minute ceiling.
@@ -116,22 +116,43 @@ test('a real dropout still reads as off-wrist', () => {
     assert.equal(snap.hr, '--', 'zeroed vitals must not render as a reading');
 });
 
-test('a low priority watch slightly overdue is still current, where high priority is stale', () => {
-    // 11 minutes: past the 10 minute rest but inside the 3 minute margin, which
-    // is the window the margin exists to cover. The base clinical window is 600s,
-    // so this is also past what an unadjusted policy would accept.
+test('at the current rest intervals the base window already covers a whole rest', () => {
+    // 8 minutes = 480s, exactly the low rest floor (300 rest + 180 margin) and
+    // the worst case a scheduled rest can produce -- still inside the 600s base
+    // clinical window. At these intervals the floor never exceeds that base, so
+    // widening is a no-op for vitals: a resting watch is carried to the very end
+    // of its rest by the unadjusted window alone.
     const now = Date.now();
-    const elevenMinutesAgo = now - (11 * 60 * 1000);
+    const eightMinutesAgo = now - (8 * 60 * 1000);
     const sensor = {
-        status: { value: WEARABLE_STATUS_RESTING, timestampMs: elevenMinutesAgo },
-        heart: { value: 68, timestampMs: elevenMinutesAgo }
+        status: { value: WEARABLE_STATUS_RESTING, timestampMs: eightMinutesAgo },
+        heart: { value: 68, timestampMs: eightMinutesAgo }
     };
     const asLow = buildLiveSnapshot(sensor, now, freshnessPolicyForPriority(BASE, 'low'));
-    assert.equal(asLow.connected, true, 'still inside the widened 780s window');
+    assert.equal(asLow.connected, true, 'inside the 600s window');
     assert.equal(asLow.hr, 68);
 
     const asHigh = buildLiveSnapshot(sensor, now, BASE);
-    assert.equal(asHigh.connected, false, 'unchanged for high priority: stale past 600s');
+    assert.equal(asHigh.connected, true, 'same window, so high reads the same');
+});
+
+test('presence is the only window a rest still stretches at these intervals', () => {
+    // Lock in which dimension the widening actually moves, so a future change to
+    // PRIORITY_REST_SECONDS is forced through this test. clinical, quality and the
+    // effective status window (max(status, clinical)) are all pinned at the 600s
+    // base for every priority; only presence separates them. If a longer rest is
+    // restored, clinical starts widening again and the Influx query range below
+    // has to grow with it -- that coupling is the whole reason this file exists.
+    const low = freshnessPolicyForPriority(BASE, 'low');
+    const medium = freshnessPolicyForPriority(BASE, 'medium');
+    for (const policy of [medium, low]) {
+        assert.equal(policy.clinical, BASE.clinical, 'clinical must not widen at this rest');
+        assert.equal(policy.quality, BASE.quality, 'quality must not widen at this rest');
+        assert.equal(Math.max(policy.status, policy.clinical), 600, 'status window unchanged');
+    }
+    assert.equal(medium.presence, 240, 'medium stretches presence past the 90s base');
+    assert.equal(low.presence, 480, 'low stretches it further');
+    assert.ok(low.presence > medium.presence, 'a longer rest must stretch presence further');
 });
 
 test('the Influx query range must cover the widest priority window, not the default', () => {
@@ -154,10 +175,22 @@ test('the Influx query range must cover the widest priority window, not the defa
         `query window ${windowMinutes}min must exceed the widest freshness ${neededMinutes}min`
     );
 
-    // And the unwidened default must NOT be enough - proving this test bites.
-    const naive = calculateQueryWindowMinutes({
-        clinical: BASE.clinical, status: BASE.status,
-        quality: BASE.quality, presence: BASE.presence
-    });
-    assert.ok(naive < neededMinutes, 'the old default window was genuinely too short');
+    // The assertion above only bites while some freshness value exceeds the 600s
+    // clinical base. At the current 1/5 minute rests nothing does, so prove the
+    // mechanism itself still tracks a widening rather than asserting a premise
+    // that today's constants have made false: feed a rest long enough to push
+    // the floor past the base and check the window grows to cover it.
+    const longRestSeconds = 900;   // a 15 minute rest, as the 10 minute one used to be
+    const widened = {
+        clinical: Math.max(BASE.clinical, longRestSeconds),
+        status: Math.max(BASE.status, longRestSeconds),
+        quality: Math.max(BASE.quality, longRestSeconds),
+        presence: Math.max(BASE.presence, longRestSeconds)
+    };
+    const grownWindow = calculateQueryWindowMinutes(widened);
+    assert.ok(
+        grownWindow > longRestSeconds / 60,
+        `a ${longRestSeconds / 60}min rest must grow the query window past it, got ${grownWindow}min`
+    );
+    assert.ok(grownWindow > windowMinutes, 'a longer rest must widen the range, not leave it flat');
 });

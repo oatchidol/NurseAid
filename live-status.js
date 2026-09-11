@@ -26,7 +26,7 @@ const CLOCK_STEP_TOLERANCE_MS = 30 * 1000;
 // These MUST track PRIORITY_MEDIUM_INTERVAL_MS / PRIORITY_LOW_INTERVAL_MS in
 // the firmware; if they drift apart the server starts calling resting patients
 // offline again.
-const PRIORITY_REST_SECONDS = { high: 0, medium: 300, low: 600 };
+const PRIORITY_REST_SECONDS = { high: 0, medium: 60, low: 300 };
 
 // A measurement cycle plus reconnect backoff takes real time on top of the
 // rest itself, so the freshness window has to be the rest interval plus slack.

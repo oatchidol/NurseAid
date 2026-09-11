@@ -7711,10 +7711,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             <optgroup label="วัดต่อเนื่อง ไม่พัก">
                                 <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
                             </optgroup>
-                            <optgroup label="วัดทุก 5 นาที · ประหยัดแบตนาฬิกา">
+                            <optgroup label="วัดทุก 1 นาที · ประหยัดแบตนาฬิกา">
                                 <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
                             </optgroup>
-                            <optgroup label="วัดทุก 10 นาที · ประหยัดแบตมากสุด">
+                            <optgroup label="วัดทุก 5 นาที · ประหยัดแบตมากสุด">
                                 <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>
                             </optgroup>
                         </select>

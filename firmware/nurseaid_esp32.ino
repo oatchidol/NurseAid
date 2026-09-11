@@ -149,7 +149,7 @@ struct WifiCred {
 static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
-#define FW_VERSION       "2.2.1"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+#define FW_VERSION       "2.2.2"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
 
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
@@ -295,8 +295,8 @@ FIRMWARE_META = {
 //
 //   ⚠️ ค่าเริ่มต้นของทุกเรือนคือ high เสมอ (ดู RegDevice.priority ด้านล่าง)
 //      ถ้าแอปไม่เคยส่ง priority มาเลย ระบบจะทำงานเหมือนก่อนมี feature นี้ทุกประการ
-#define PRIORITY_MEDIUM_INTERVAL_MS    (5UL * 60UL * 1000UL)   // 5 นาที
-#define PRIORITY_LOW_INTERVAL_MS      (10UL * 60UL * 1000UL)   // 10 นาที
+#define PRIORITY_MEDIUM_INTERVAL_MS    (1UL * 60UL * 1000UL)   // 1 นาที
+#define PRIORITY_LOW_INTERVAL_MS       (5UL * 60UL * 1000UL)   // 5 นาที
 // สถานะ 2 = "ยังจับคู่อยู่ แค่พักตามรอบ priority" — ต่างจาก 0 ที่แปลว่าหลุด/ถอดออก
 #define WEARABLE_STATUS_RESTING        2
 
