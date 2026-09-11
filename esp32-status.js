@@ -35,21 +35,45 @@ function parseEsp32Topology(value, { sourceAgeSeconds = 0, sourceStaleSeconds = 
         if (!boardMac || !NODE_RE.test(nodeId) || !ipAddress || ipAddress.length > 64) continue;
 
         const watches = Array.isArray(rawNode.watches) ? rawNode.watches : [];
+        // The collector stamps every watch with 'connected' | 'disconnected' |
+        // 'unknown' (and forces 'unknown' when its own snapshot is stale), so the
+        // per-watch liveness signal is always present. Keep both views of it:
+        // jstyleMacs is the full roster this node knows about -- the patient
+        // lookup and the unclaimed-hardware hint both need every MAC -- while
+        // liveJstyleMacs is the subset anything user-facing may call connected.
+        // Only an explicit 'connected' counts: we never assert a radio link we
+        // have no positive evidence for.
         const jstyleMacs = [];
+        const claimedLive = new Set();
+        const seenDropped = new Set();
         for (const rawWatch of watches) {
             if (!rawWatch || typeof rawWatch !== 'object') continue;
             const watchMac = canonicalMac(rawWatch.watchId);
-            if (watchMac && !jstyleMacs.includes(watchMac)) jstyleMacs.push(watchMac);
+            if (!watchMac) continue;
+            if (!jstyleMacs.includes(watchMac)) jstyleMacs.push(watchMac);
+            if (rawWatch.status === 'connected') claimedLive.add(watchMac);
+            else seenDropped.add(watchMac);
         }
+        // A node can list the same watch twice with conflicting status -- the collector
+        // appends every entry it is handed and never dedupes -- so resolve the conflict
+        // rather than letting arrival order decide it. Evidence of a drop outweighs a
+        // claim of a link in both directions: asserting a link that is already gone is
+        // precisely the failure this field exists to prevent.
+        for (const mac of seenDropped) claimedLive.delete(mac);
 
         const rawStatus = VALID_STATUS.has(rawNode.status) ? rawNode.status : 'unknown';
         const status = sourceStale || !ready ? 'unknown' : rawStatus;
-        const reportedCount = Number.isInteger(rawNode.connectedJstyleCount) && rawNode.connectedJstyleCount >= 0
-            ? rawNode.connectedJstyleCount
-            : null;
-        const connectedJstyleCount = status === 'connected'
-            ? (reportedCount === null ? jstyleMacs.length : reportedCount)
-            : 0;
+        // A receiver that is down or unproven cannot be holding anything, whatever
+        // its last snapshot claimed about individual watches. filter() rather than
+        // spreading the Set so the order matches jstyleMacs.
+        const connectedJstyleMacs = status === 'connected'
+            ? jstyleMacs.filter(mac => claimedLive.has(mac))
+            : [];
+        // One source of truth. The board also self-reports a connectedJstyleCount, but
+        // the collector already rejects any snapshot where that disagrees with the
+        // connected watch entries, and deriving the count here means it can never
+        // contradict the list rendered next to it.
+        const connectedJstyleCount = connectedJstyleMacs.length;
 
         nodes.push({
             nodeId,
@@ -58,6 +82,7 @@ function parseEsp32Topology(value, { sourceAgeSeconds = 0, sourceStaleSeconds = 
             status,
             connectedJstyleCount,
             jstyleMacs,
+            connectedJstyleMacs,
             lastSeenAgeSeconds: safeAge(rawNode.lastSeenAgeSeconds)
         });
     }

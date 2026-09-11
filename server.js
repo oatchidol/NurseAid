@@ -8360,16 +8360,29 @@ async function esp32NodesForUi(req) {
         } else {
             status = 'connected';
         }
+        // Liveness is recomputed above from heartbeat freshness, which is
+        // authoritative and can disagree with the collector snapshot that
+        // esp32-status.js gated connectedJstyleMacs on -- so re-apply the gate
+        // here rather than trusting that field on its own.
+        const liveMacs = new Set(status === 'connected' ? (node.connectedJstyleMacs || []) : []);
         const jstyles = (node.jstyleMacs || []).map(mac => ({
             mac,
+            connected: liveMacs.has(mac),
             patient: patientByMac.get(mac) || null
         }));
+        const connectedJstyles = jstyles.filter(item => item.connected);
         return {
             ...node,
             status,
-            connectedJstyleCount: status === 'connected' ? jstyles.length : 0,
+            // Derived from the same list that feeds `patients`, so the card can
+            // never show the "1 patient / 0 JStyle" contradiction it used to.
+            connectedJstyleCount: connectedJstyles.length,
             jstyles,
-            patients: jstyles.map(item => item.patient).filter(Boolean),
+            // Only patients whose wearable this receiver is currently holding. A
+            // patient whose watch has dropped off is not silently lost: the alert
+            // engine's device_offline rule owns that, and this is a device-admin
+            // page, not the ward monitor.
+            patients: connectedJstyles.map(item => item.patient).filter(Boolean),
             description: String(meta.description || ''),
             descriptionUpdatedAt: meta.updated_at || null,
             fwVersion: health.fw_version || null,
@@ -8740,12 +8753,29 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             .receiver-page { max-width: 1280px; margin: 0 auto; }
             .receiver-header { padding: 1.25rem; border: 1px solid var(--border-card); border-radius: 1.25rem; background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card-hover) 100%); }
             .receiver-brand { width: 3.6rem; height: 3.6rem; border-radius: 1.15rem; display:flex; align-items:center; justify-content:center; flex:0 0 auto; color:var(--accent-primary-strong); background:var(--bg-badge); }
-            .receiver-summary { border:1px solid var(--border-card); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
-            .receiver-summary-label { font-size:.72rem; font-weight:800; color:var(--text-tertiary); }
-            .receiver-summary-value { font-size:1.65rem; line-height:1.1; font-weight:850; margin-top:.25rem; color:var(--text-heading); }
-            .receiver-summary-sub { font-size:.72rem; margin-top:.35rem; color:var(--text-tertiary); }
-            .receiver-card { overflow:hidden; border:1px solid var(--border-card); border-radius:1.35rem; background:var(--bg-card); box-shadow:var(--shadow-sm); }
-            .receiver-card.problem { border-color: color-mix(in srgb, var(--status-critical-text) 26%, var(--border-card)); }
+            .receiver-card { overflow:hidden; border:1px solid var(--border-card); border-radius:1.35rem; background:var(--bg-card); box-shadow:var(--shadow-sm); border-left:4px solid transparent; }
+            /* The status pill alone was too quiet to survive a scan down a column of
+               cards, which is how this page is actually read. A left edge bar carries
+               the same information structurally, so a board needing attention is
+               findable without reading any text. 'unknown' is amber rather than red:
+               we have no evidence it is down, only no evidence it is up. */
+            .receiver-card.problem { border-color: color-mix(in srgb, var(--status-critical-text) 26%, var(--border-card)); border-left-color: var(--status-critical-text); }
+            .receiver-card.pending { border-left-color: var(--status-warning-text); }
+            .receiver-verdict { display:flex; align-items:flex-start; gap:1rem; padding:1.15rem 1.25rem; border-radius:1.25rem; border:1px solid var(--border-card); background:var(--bg-card); }
+            .receiver-verdict.ok { border-color:color-mix(in srgb, var(--status-success-text) 28%, var(--border-card)); background:color-mix(in srgb, var(--status-success-text) 5%, var(--bg-card)); }
+            .receiver-verdict.alarm { border-color:color-mix(in srgb, var(--status-critical-text) 34%, var(--border-card)); background:color-mix(in srgb, var(--status-critical-text) 6%, var(--bg-card)); }
+            .receiver-verdict-mark { width:2.6rem; height:2.6rem; flex:0 0 auto; border-radius:.9rem; display:flex; align-items:center; justify-content:center; background:var(--bg-badge); color:var(--text-badge); }
+            .receiver-verdict.ok .receiver-verdict-mark { color:var(--status-success-text); background:color-mix(in srgb, var(--status-success-text) 12%, var(--bg-card)); }
+            .receiver-verdict.alarm .receiver-verdict-mark { color:var(--status-critical-text); background:color-mix(in srgb, var(--status-critical-text) 12%, var(--bg-card)); }
+            .receiver-verdict-headline { font-size:1.25rem; line-height:1.35; font-weight:850; color:var(--text-heading); }
+            .receiver-verdict.alarm .receiver-verdict-headline { color:var(--status-critical-text); }
+            .receiver-verdict-names { margin-top:.3rem; font-size:.82rem; line-height:1.6; color:var(--text-secondary); }
+            .receiver-verdict-stats { display:flex; flex-wrap:wrap; gap:.4rem 2.25rem; margin-top:.85rem; padding-top:.75rem; border-top:1px solid var(--border-light); }
+            .receiver-verdict-stat { font-size:.78rem; color:var(--text-tertiary); }
+            .receiver-verdict-stat b { font-weight:850; font-size:.95rem; color:var(--text-primary); margin-right:.35rem; }
+            /* The board id is the part someone acts on -- it is what they type into a
+               search or carry to the rack -- so it outweighs the sentence around it. */
+            .receiver-verdict-names b { font-weight:850; color:var(--text-heading); }
             .receiver-card-top { padding:1.15rem 1.2rem 1rem; display:flex; align-items:flex-start; gap:1rem; }
             .receiver-device-art { width:4.35rem; height:4.35rem; flex:0 0 auto; border-radius:1.3rem; display:flex; align-items:center; justify-content:center; background:var(--bg-input); color:var(--accent-primary-strong); border:1px solid var(--border-color); }
             .receiver-device-art.status-ok { color:var(--status-success-text); background:color-mix(in srgb, var(--status-success-text) 8%, var(--bg-card)); }
@@ -8774,11 +8804,6 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             .receiver-toast { position:fixed; right:1.25rem; bottom:1.25rem; z-index:2200; max-width:min(92vw,26rem); padding:.8rem 1rem; border-radius:1rem; border:1px solid var(--border-color); background:var(--bg-card); box-shadow:var(--shadow-lg); font-size:.8rem; font-weight:800; }
             .receiver-toast.success { color:var(--status-success-text); }
             .receiver-toast.error { color:var(--status-critical-text); }
-            .receiver-offline-strip { display:flex; align-items:center; gap:.75rem; padding:.85rem 1.1rem; border-radius:1rem; border:1px solid var(--border-card); background:var(--bg-card); }
-            .receiver-offline-strip.critical { border-color:color-mix(in srgb, var(--status-critical-text) 30%, var(--border-card)); background:color-mix(in srgb, var(--status-critical-text) 6%, var(--bg-card)); }
-            .receiver-offline-count { font-size:1.4rem; line-height:1.1; font-weight:850; color:var(--status-critical-text); }
-            .receiver-offline-label { font-size:.78rem; font-weight:800; color:var(--text-heading); }
-            .receiver-offline-sub { font-size:.68rem; color:var(--text-tertiary); margin-top:.15rem; }
             .receiver-unidentified { border:1px solid var(--border-color); border-radius:1rem; background:var(--bg-card); padding:1rem 1.1rem; }
             .receiver-unidentified-title { font-size:.82rem; font-weight:850; color:var(--text-heading); margin-bottom:.35rem; }
             .receiver-unidentified-desc { font-size:.72rem; color:var(--text-tertiary); margin-bottom:.75rem; }
@@ -8827,23 +8852,26 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                 </div>
             </section>
 
-            <section class="grid grid-cols-2 xl:grid-cols-4 gap-3" aria-label="สรุปสถานะตัวรับสัญญาณ">
-                <div class="receiver-summary"><div class="receiver-summary-label">ตัวรับทั้งหมด</div><div id="receiverTotal" class="receiver-summary-value">--</div><div class="receiver-summary-sub">ที่ NurseAid รู้จัก</div></div>
-                <div class="receiver-summary"><div class="receiver-summary-label">ทำงานปกติ</div><div id="receiverOnline" class="receiver-summary-value" style="color:var(--status-success-text);">--</div><div class="receiver-summary-sub">พร้อมรับสัญญาณ</div></div>
-                <div class="receiver-summary"><div class="receiver-summary-label">ต้องตรวจสอบ</div><div id="receiverProblem" class="receiver-summary-value" style="color:var(--status-critical-text);">--</div><div class="receiver-summary-sub">พยาบาลควรตรวจ</div></div>
-                <div class="receiver-summary"><div class="receiver-summary-label">ผู้ป่วยที่เชื่อมอยู่</div><div id="receiverPatients" class="receiver-summary-value">--</div><div class="receiver-summary-sub">ผ่านตัวรับทั้งหมด</div></div>
+            <!-- One verdict, not four numbers to add up. The page's whole job at a
+                 glance is "is a receiver down, and which one" — so that answer is the
+                 largest thing on it, in words, naming the boards to walk to. The
+                 counts underneath support that answer instead of competing with it.
+                 Everything here is derived from the same node list the cards below
+                 render, so the summary can never disagree with the cards. -->
+            <section id="receiverVerdict" class="receiver-verdict" role="status" aria-live="polite">
+                <div class="receiver-verdict-mark" id="receiverVerdictMark" aria-hidden="true">
+                    <span class="ic ic-info" style="width:1.4rem;height:1.4rem;"></span>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="receiver-verdict-headline" id="receiverVerdictHeadline">กำลังอ่านสถานะตัวรับสัญญาณ</div>
+                    <div class="receiver-verdict-names" id="receiverVerdictNames"></div>
+                    <div class="receiver-verdict-stats" id="receiverVerdictStats"></div>
+                </div>
             </section>
 
             <div id="receiverNotice" class="hidden card p-4" role="status"></div>
             <div id="receiverToast" class="receiver-toast hidden" role="status" aria-live="polite"></div>
             <!-- Offline receivers strip — the only notification channel for receiver outages. -->
-            <div id="receiverOfflineStrip" class="hidden receiver-offline-strip" role="alert" aria-live="assertive">
-                <span class="receiver-offline-count" id="receiverOfflineCount">0</span>
-                <div>
-                    <div class="receiver-offline-label">ตัวรับสัญญาณออฟไลน์</div>
-                    <div class="receiver-offline-sub">กรุณาตรวจสอบตัวรับสัญญาณที่หยุดทำงาน</div>
-                </div>
-            </div>
             <!-- Unidentified nodes — heartbeats seen on MQTT but board_mac unresolved. -->
             <div id="receiverUnidentifiedSection" class="hidden receiver-unidentified" role="region" aria-label="ตัวรับที่ยังระบุตัวตนไม่ได้">
                 <div class="receiver-unidentified-title">เห็นบน MQTT แต่ยังระบุตัวไม่ได้</div>
@@ -8906,6 +8934,11 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
         function renderReceiverPatients(node) {
             const patients = Array.isArray(node.patients) ? node.patients : [];
             const jstyles = Array.isArray(node.jstyles) ? node.jstyles : [];
+            // Genuinely unclaimed hardware = a watch this receiver is holding RIGHT
+            // NOW that nobody has paired. A watch that has dropped off does not
+            // qualify: it may well be paired, and calling it unpaired would send a
+            // nurse hunting for a pairing that already exists.
+            const unclaimed = jstyles.filter(item => item && item.connected && !item.patient);
             if (patients.length) {
                 return '<section class="receiver-patients" aria-label="ผู้ป่วยที่กำลังเชื่อมต่อ">' +
                     '<div class="receiver-patients-title"><span>ผู้ป่วยที่กำลังเกาะสัญญาณ</span><span style="color:var(--status-success-text);">' + patients.length + ' ราย</span></div>' +
@@ -8920,8 +8953,8 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                     }).join('') +
                 '</section>';
             }
-            if (jstyles.length) {
-                return '<section class="receiver-patients" aria-label="อุปกรณ์ผู้ป่วยที่ยังไม่จับคู่"><div class="receiver-empty"><span class="ic ic-warning" aria-hidden="true"></span><span>พบ JStyle ' + jstyles.length + ' ตัว แต่ยังไม่ได้จับคู่กับผู้ป่วยใน NurseAid</span></div></section>';
+            if (unclaimed.length) {
+                return '<section class="receiver-patients" aria-label="อุปกรณ์ผู้ป่วยที่ยังไม่จับคู่"><div class="receiver-empty"><span class="ic ic-warning" aria-hidden="true"></span><span>พบ JStyle ' + unclaimed.length + ' ตัว แต่ยังไม่ได้จับคู่กับผู้ป่วยใน NurseAid</span></div></section>';
             }
             return '<section class="receiver-patients" aria-label="ไม่มีผู้ป่วยเชื่อมต่อ"><div class="receiver-empty"><span class="ic ic-info" aria-hidden="true"></span><span>ยังไม่มีผู้ป่วยเชื่อมผ่านตัวรับสัญญาณนี้</span></div></section>';
         }
@@ -8930,7 +8963,10 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const status = receiverStatus(node.status);
             const description = String(node.description || '').trim();
             const locationText = description || 'ยังไม่ได้ระบุจุดติดตั้ง';
-            const problemClass = node.status === 'disconnected' ? ' problem' : '';
+            // 'unknown' is counted as needing attention in the verdict above, so it must
+            // not look healthy down here. Amber, not red: no evidence it is up is not
+            // the same claim as evidence it is down.
+            const problemClass = node.status === 'disconnected' ? ' problem' : (node.status === 'unknown' ? ' pending' : '');
             const editButton = canEditReceiverLocation
                 ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
                 : '';
@@ -8999,23 +9035,52 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
 
         function renderReceivers(data) {
             const summary = data.summary || {};
-            document.getElementById('receiverTotal').textContent = summary.total ?? 0;
-            document.getElementById('receiverOnline').textContent = summary.connected ?? 0;
-            document.getElementById('receiverProblem').textContent = (summary.disconnected ?? 0) + (summary.unknown ?? 0);
-            document.getElementById('receiverPatients').textContent = summary.patients ?? 0;
             receiverUpdated.textContent = 'อัปเดต ' + new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 
-            // Surface offline receivers prominently — this page is the only notification channel.
-            const offlineCount = summary.offlineCount ?? 0;
-            const offlineStrip = document.getElementById('receiverOfflineStrip');
-            if (offlineCount > 0) {
-                document.getElementById('receiverOfflineCount').textContent = offlineCount;
-                offlineStrip.classList.remove('hidden');
-                offlineStrip.classList.add('critical');
+            // The verdict is derived from the same node list the cards below render —
+            // deliberately NOT from summary.offlineCount, which comes from the liveness
+            // event log and can lag or disagree with live heartbeat freshness. This page
+            // is the only notification channel for a receiver outage, so it must not be
+            // able to tell the ward two different stories in one screen.
+            const allNodes = Array.isArray(data.nodes) ? data.nodes : [];
+            const needAttention = allNodes.filter(node => node.status !== 'connected');
+            const okCount = allNodes.length - needAttention.length;
+            const patientCount = allNodes.reduce((sum, node) => sum + (Array.isArray(node.patients) ? node.patients.length : 0), 0);
+            const verdict = document.getElementById('receiverVerdict');
+            const verdictMark = document.getElementById('receiverVerdictMark');
+            const verdictHeadline = document.getElementById('receiverVerdictHeadline');
+            const verdictNames = document.getElementById('receiverVerdictNames');
+
+            verdict.classList.remove('ok', 'alarm');
+            if (!allNodes.length) {
+                verdictMark.innerHTML = '<span class="ic ic-info" style="width:1.4rem;height:1.4rem;"></span>';
+                verdictHeadline.textContent = 'ยังไม่พบตัวรับสัญญาณ';
+                verdictNames.textContent = 'ตรวจสอบว่าบอร์ดเปิดอยู่ และต่อเครือข่ายเดียวกับ NurseAid';
+            } else if (needAttention.length) {
+                verdict.classList.add('alarm');
+                verdictMark.innerHTML = '<span class="ic ic-warning" style="width:1.4rem;height:1.4rem;"></span>';
+                verdictHeadline.textContent = 'ต้องตรวจสอบตัวรับสัญญาณ ' + needAttention.length + ' ตัว';
+                // Name the boards. A bare count still leaves whoever is on shift
+                // scrolling the list to work out which one to walk to.
+                verdictNames.innerHTML = needAttention.map(node => {
+                    const where = String(node.description || '').trim();
+                    const why = node.status === 'unknown' ? 'ยังไม่เคยส่งสัญญาณเข้ามา' : 'ขาดการติดต่อ';
+                    return '<div><b>' + escapeHTML(node.nodeId || 'ไม่ทราบรหัส') + '</b>' + (where ? ' ที่' + escapeHTML(where) : '') + ' ' + why + '</div>';
+                }).join('');
             } else {
-                offlineStrip.classList.add('hidden');
-                offlineStrip.classList.remove('critical');
+                verdict.classList.add('ok');
+                verdictMark.innerHTML = '<span class="ic ic-check" style="width:1.4rem;height:1.4rem;"></span>';
+                verdictHeadline.textContent = 'ตัวรับสัญญาณทำงานปกติทั้งหมด';
+                verdictNames.textContent = patientCount
+                    ? 'กำลังรับสัญญาณจากผู้ป่วย ' + patientCount + ' ราย'
+                    : 'ตอนนี้ยังไม่มีผู้ป่วยเกาะสัญญาณอยู่';
             }
+
+            document.getElementById('receiverVerdictStats').innerHTML =
+                '<span class="receiver-verdict-stat"><b>' + allNodes.length + '</b>ตัวรับทั้งหมด</span>' +
+                '<span class="receiver-verdict-stat"><b>' + okCount + '</b>ทำงานปกติ</span>' +
+                '<span class="receiver-verdict-stat"><b>' + patientCount + '</b>ผู้ป่วยเกาะสัญญาณ</span>' +
+                (summary.revokedCount ? '<span class="receiver-verdict-stat"><b>' + summary.revokedCount + '</b>ซ่อนไว้</span>' : '');
 
             // Show unidentified nodes only when there are some to report.
             const unidentified = Array.isArray(data.unidentifiedNodes) ? data.unidentifiedNodes : [];

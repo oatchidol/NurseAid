@@ -30,8 +30,149 @@ test('parses connected ESP32 and JStyle inventory', () => {
         status: 'connected',
         connectedJstyleCount: 1,
         jstyleMacs: ['21:02:02:06:9F:7F'],
+        connectedJstyleMacs: ['21:02:02:06:9F:7F'],
         lastSeenAgeSeconds: 7
     });
+});
+
+// Regression: the collector already reports per-watch liveness, but the parser
+// used to read only watchId and throw `status` away -- so /esp32-mgmt kept
+// rendering a patient whose wearable had dropped off as "เชื่อมอยู่", on a card
+// that simultaneously showed the receiver as offline. jstyleMacs stays the full
+// roster (the DB lookup and the "unpaired JStyle" hint both need it);
+// connectedJstyleMacs is the subset anything user-facing may call connected.
+test('a disconnected watch stays in jstyleMacs but is excluded from connectedJstyleMacs', () => {
+    const result = parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            'F0:F5:BD:A1:C5:8C': {
+                status: 'connected',
+                nodeId: 'na1c58c',
+                ipAddress: '172.16.251.32',
+                connectedJstyleCount: 1,
+                watches: [
+                    { watchId: '21:02:02:06:9F:7F', status: 'connected' },
+                    { watchId: '21:02:02:06:AA:01', status: 'disconnected' }
+                ]
+            }
+        }
+    }, { sourceAgeSeconds: 2 });
+
+    assert.deepEqual(result.nodes[0].jstyleMacs, ['21:02:02:06:9F:7F', '21:02:02:06:AA:01']);
+    assert.deepEqual(result.nodes[0].connectedJstyleMacs, ['21:02:02:06:9F:7F']);
+});
+
+test('a watch with unknown status is never counted as connected', () => {
+    const result = parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            'F0:F5:BD:A1:C5:8C': {
+                status: 'connected',
+                nodeId: 'na1c58c',
+                ipAddress: '172.16.251.32',
+                connectedJstyleCount: 0,
+                watches: [
+                    { watchId: '21:02:02:06:9F:7F', status: 'unknown' },
+                    { watchId: '21:02:02:06:AA:01' }
+                ]
+            }
+        }
+    }, { sourceAgeSeconds: 2 });
+
+    assert.equal(result.nodes[0].jstyleMacs.length, 2);
+    assert.deepEqual(result.nodes[0].connectedJstyleMacs, []);
+});
+
+// The exact shape of the live nb789c4 card that prompted this fix: the receiver
+// itself is down, so nothing hanging off it may claim to be connected -- even
+// if a stale watch entry still says 'connected'.
+test('an offline receiver reports no connected watches at all', () => {
+    const result = parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            '48:27:E2:B7:89:C4': {
+                status: 'disconnected',
+                nodeId: 'nb789c4',
+                ipAddress: '172.16.251.37',
+                connectedJstyleCount: 0,
+                lastSeenAgeSeconds: null,
+                watches: [{ watchId: '21:02:02:06:9F:7F', status: 'connected' }]
+            }
+        }
+    }, { sourceAgeSeconds: 2 });
+
+    assert.equal(result.nodes[0].status, 'disconnected');
+    assert.deepEqual(result.nodes[0].jstyleMacs, ['21:02:02:06:9F:7F']);
+    assert.deepEqual(result.nodes[0].connectedJstyleMacs, []);
+});
+
+// A node may list the same watch twice with conflicting status -- the collector
+// appends every watch entry it is given and never dedupes. Disconnect evidence has
+// to win regardless of which entry arrives first: claiming a link we have been told
+// is down is the exact failure this whole change exists to remove.
+test('conflicting duplicate watch entries resolve to disconnected, whichever comes first', () => {
+    const build = watches => parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            'F0:F5:BD:A1:C5:8C': {
+                status: 'connected', nodeId: 'na1c58c', ipAddress: '172.16.251.32', watches
+            }
+        }
+    }, { sourceAgeSeconds: 2 });
+
+    const connectedFirst = build([
+        { watchId: '21:02:02:06:9F:7F', status: 'connected' },
+        { watchId: '21:02:02:06:9F:7F', status: 'disconnected' }
+    ]);
+    const disconnectedFirst = build([
+        { watchId: '21:02:02:06:9F:7F', status: 'disconnected' },
+        { watchId: '21:02:02:06:9F:7F', status: 'connected' }
+    ]);
+
+    assert.deepEqual(connectedFirst.nodes[0].jstyleMacs, ['21:02:02:06:9F:7F']);
+    assert.deepEqual(connectedFirst.nodes[0].connectedJstyleMacs, []);
+    assert.deepEqual(disconnectedFirst.nodes[0].connectedJstyleMacs, []);
+});
+
+// connectedJstyleCount used to come from the firmware's self-reported number while
+// connectedJstyleMacs came from the watch list, so the two could disagree and the
+// card could print "1 patient / 0 JStyle" again. One source of truth instead.
+test('connectedJstyleCount always equals connectedJstyleMacs.length', () => {
+    const result = parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            'F0:F5:BD:A1:C5:8C': {
+                status: 'connected',
+                nodeId: 'na1c58c',
+                ipAddress: '172.16.251.32',
+                connectedJstyleCount: 7, // firmware disagrees with what it actually listed
+                watches: [
+                    { watchId: '21:02:02:06:9F:7F', status: 'connected' },
+                    { watchId: '21:02:02:06:AA:01', status: 'disconnected' }
+                ]
+            }
+        }
+    }, { sourceAgeSeconds: 2 });
+
+    assert.equal(result.nodes[0].connectedJstyleMacs.length, 1);
+    assert.equal(result.nodes[0].connectedJstyleCount, 1);
+});
+
+test('a stale source reports no connected watches even for a connected node', () => {
+    const result = parseEsp32Topology({
+        topologyReady: true,
+        sensors: {
+            'F0:F5:BD:A1:C5:8C': {
+                status: 'connected',
+                nodeId: 'na1c58c',
+                ipAddress: '172.16.251.32',
+                watches: [{ watchId: '21:02:02:06:9F:7F', status: 'connected' }]
+            }
+        }
+    }, { sourceAgeSeconds: 30, sourceStaleSeconds: 15 });
+
+    assert.equal(result.nodes[0].status, 'unknown');
+    assert.deepEqual(result.nodes[0].connectedJstyleMacs, []);
 });
 
 test('stale source never presents nodes as connected', () => {
