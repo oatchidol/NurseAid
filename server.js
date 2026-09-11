@@ -9083,7 +9083,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                     '<div><label for="wifiSsid" class="block text-sm font-bold mb-2">ชื่อเครือข่าย (SSID)</label><input id="wifiSsid" maxlength="79" autocomplete="off" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);" placeholder="เช่น SS-Device"></div>' +
                     '<div id="wifiUserWrap" class="hidden"><label for="wifiUser" class="block text-sm font-bold mb-2">ชื่อผู้ใช้</label><input id="wifiUser" maxlength="79" autocomplete="off" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);"></div>' +
                     '<div id="wifiPassWrap"><label for="wifiPass" class="block text-sm font-bold mb-2">รหัสผ่าน</label><input id="wifiPass" type="password" maxlength="79" autocomplete="new-password" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);"></div>' +
-                    '<div class="p-3 rounded-xl text-xs" style="background:var(--bg-card-hover);color:var(--text-secondary);"><strong>ห้ามมีช่องว่าง</strong> ทั้งชื่อเครือข่ายและรหัสผ่าน เพราะเฟิร์มแวร์ใช้ช่องว่างเป็นตัวแบ่ง และแต่ละช่องยาวได้ไม่เกิน 79 ไบต์<br>เครือข่ายนี้จะถูก <strong>เพิ่มเข้ารายการ</strong> ไม่ได้สลับทันที บอร์ดจะใช้ก็ต่อเมื่อเครือข่ายปัจจุบันใช้ไม่ได้</div>' +
+                    '<div class="p-3 rounded-xl text-xs" style="background:var(--bg-card-hover);color:var(--text-secondary);"><strong>ห้ามมีช่องว่าง</strong> ทั้งชื่อเครือข่ายและรหัสผ่าน เพราะเฟิร์มแวร์ใช้ช่องว่างเป็นตัวแบ่ง และแต่ละช่องยาวได้ไม่เกิน 79 ไบต์<br>การเชื่อมต่อ<strong>ตอนนี้ไม่ถูกตัด</strong> แต่เครือข่ายนี้จะขึ้น<strong>หัวรายการ</strong> บอร์ดจะลองตัวนี้<strong>ก่อน</strong>ในการบูตครั้งถัดไป ถ้าต่อไม่ได้จึงไล่ลงไปตัวถัดไป — ตรวจชื่อและรหัสให้ดีก่อนส่ง</div>' +
                 '</div>',
                 async () => {
                     const auth = String(document.getElementById('wifiAuth')?.value || 'psk');
@@ -9098,7 +9098,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                     for (const [key, label] of [['ssid', 'ชื่อเครือข่าย'], ['username', 'ชื่อผู้ใช้'], ['password', 'รหัสผ่าน']]) {
                         if (payload[key] === undefined) continue;
                         if (!payload[key]) { showReceiverToast(label + ' ต้องไม่ว่าง', 'error'); return; }
-                        if (/\s/.test(payload[key])) { showReceiverToast(label + ' ต้องไม่มีช่องว่าง', 'error'); return; }
+                        if (/\\s/.test(payload[key])) { showReceiverToast(label + ' ต้องไม่มีช่องว่าง', 'error'); return; }
                     }
                     const submit = document.getElementById('modalSubmit');
                     setModalBusy(true);
