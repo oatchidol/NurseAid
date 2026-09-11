@@ -87,3 +87,6 @@ skills-lock.json
 
 # Locally built ESP32 firmware images - build artefacts, not source.
 nurseaid_esp32_*.bin
+
+# Local WiFi credentials for firmware builds — never commit a ward password
+firmware/wifi_credentials.h

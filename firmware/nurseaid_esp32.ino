@@ -78,8 +78,18 @@ struct __attribute__((packed)) FirmwareMetadata {
 //
 //   ⚠️ ค่า 2 ตัวนี้เป็นแค่ "ค่าสำรองตอนบูตครั้งแรก" เท่านั้น
 //      ถ้าต่อไม่ได้จะเปิดหน้าเว็บให้ตั้งค่าเอง
-#define WIFI_SSID        "ksr_comp3"
-#define WIFI_PASS        "1111100000"
+// Real values live in wifi_credentials.h, which is gitignored: a ward password
+// committed once cannot be taken back out of the history, and this file is
+// committed. Copy wifi_credentials.h.example to create it.
+//   ⚠️ ถ้าไม่มีไฟล์นั้น sketch จะ build ได้ตามปกติแต่ไม่มีค่าเริ่มต้น — บอร์ดใหม่
+//      จะเข้าโหมดตั้งค่าผ่านหน้าเว็บแทน ซึ่งเป็นพฤติกรรมที่ตั้งใจไว้อยู่แล้ว
+#if __has_include("wifi_credentials.h")
+  #include "wifi_credentials.h"
+#endif
+#ifndef WIFI_SSID
+  #define WIFI_SSID      ""
+  #define WIFI_PASS      ""
+#endif
 
 // --- โหมดตั้งค่า WiFi ผ่านหน้าเว็บ ---
 #define WM_AP_PASSWORD   "naidsetup"   // รหัสเข้า WiFi ตอนตั้งค่า (อย่างน้อย 8 ตัว)
@@ -855,7 +865,12 @@ static bool isUsableBrokerAddr(const String& s) {
 
 // คำสั่งเป็นข้อความธรรมดา ส่งด้วย mosquitto_pub ได้ตรง ๆ ไม่ต้องมี GUI
 static void handleCommand(const char* cmd) {
-    nlog("[CMD] รับคำสั่ง: %s", cmd);
+    // wifi-add carries a password in the payload and nlog republishes whatever it
+    // is handed to ble/node/<id>/log, on a broker that listens on plain 1883 -- so
+    // echoing the raw line would hand the ward WiFi key to anyone who can subscribe.
+    // Commands whose arguments are secret get their name logged and nothing else.
+    if (strncmp(cmd, "wifi-add ", 9) == 0) nlog("[CMD] wifi-add (arguments withheld)");
+    else                                   nlog("[CMD] รับคำสั่ง: %s", cmd);
 
     if (strncmp(cmd, "name ", 5) == 0) {
         // ตั้งชื่อที่จำง่ายแทนชื่อจาก MAC เช่น  name ward-a-1
@@ -926,6 +941,10 @@ static void handleCommand(const char* cmd) {
             WiFiManager wm;
             wm.resetSettings();
         }
+        // Both stores, or neither: boot tries naid/wifi_list before it ever reaches
+        // WiFiManager, so clearing only WiFiManager left the saved list intact and the
+        // node came back on the same network. The BOOT-button path already clears both.
+        wifiListSave("");
         pendingRebootAt = millis() + 2000;
 
     } else if (strcmp(cmd, "reboot") == 0) {

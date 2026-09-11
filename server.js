@@ -8575,7 +8575,11 @@ function validateWifiField(value, label) {
     if (!text) return { error: `${label} ต้องไม่ว่าง` };
     if (/[\s]/.test(text)) return { error: `${label} ต้องไม่มีช่องว่าง (เฟิร์มแวร์ใช้ช่องว่างเป็นตัวแบ่ง)` };
     // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001f\u007f]/.test(text)) return { error: `${label} มีอักขระควบคุมที่ส่งไม่ได้` };
+    if (/[\u0000-\u001f\u007f\u0080-\u009f]/.test(text)) return { error: `${label} มีอักขระควบคุมที่ส่งไม่ได้` };
+    // A lone surrogate is not encodable: Buffer turns it into U+FFFD, so the board
+    // would save a credential different from the one that was typed and nothing
+    // anywhere would report the change.
+    if (/[\ud800-\udfff]/.test(text)) return { error: `${label} มีอักขระที่เข้ารหัสไม่ได้` };
     if (Buffer.byteLength(text, 'utf8') > 79) return { error: `${label} ยาวเกิน 79 ไบต์` };
     return { value: text };
 }
