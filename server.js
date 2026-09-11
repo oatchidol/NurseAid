@@ -8547,6 +8547,80 @@ app.post('/api/esp32-nodes/:mac/revoke', requireCapability('devices:write'), asy
     }
 });
 
+// Hand a board another WiFi network to remember. The firmware's `wifi-add` APPENDS to
+// its saved list rather than switching, so this cannot knock a working node off the air:
+// the new entry is only tried when the current one stops working. That is the whole
+// reason this is safe to expose and `broker` is not.
+//
+// Guarded by devices:firmware:write (super_admin only), not devices:write. A wrong
+// credential does not strand a board today -- but paired with a later wifi-reset it
+// decides whether the node ever comes back, and that is the same blast radius as OTA.
+//
+// The credential travels to the node as plain text over MQTT on port 1883. That is a
+// known and accepted limitation of this deployment, not an oversight; it is why the
+// firmware no longer echoes the command back to ble/node/<id>/log (see handleCommand).
+const WIFI_AUTH_MODES = Object.freeze({
+    open: [],                          // wifi-add open <ssid>
+    psk:  ['password'],                // wifi-add psk  <ssid> <password>
+    peap: ['username', 'password'],    // wifi-add peap <ssid> <username> <password>
+    ttls: ['username', 'password']     // wifi-add ttls <ssid> <username> <password>
+});
+
+// The firmware splits the command on spaces and supports no quoting or escaping, and
+// truncates each field at 79 bytes. A field containing a space would be silently cut in
+// half and the board would fail to associate with no explanation anywhere, so reject it
+// here rather than send something that cannot work.
+function validateWifiField(value, label) {
+    const text = String(value === undefined || value === null ? '' : value);
+    if (!text) return { error: `${label} ต้องไม่ว่าง` };
+    if (/[\s]/.test(text)) return { error: `${label} ต้องไม่มีช่องว่าง (เฟิร์มแวร์ใช้ช่องว่างเป็นตัวแบ่ง)` };
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/.test(text)) return { error: `${label} มีอักขระควบคุมที่ส่งไม่ได้` };
+    if (Buffer.byteLength(text, 'utf8') > 79) return { error: `${label} ยาวเกิน 79 ไบต์` };
+    return { value: text };
+}
+
+app.post('/api/esp32-nodes/:mac/wifi', requireCapability('devices:firmware:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+
+    const auth = String(req.body.auth || '').trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(WIFI_AUTH_MODES, auth)) {
+        return res.status(400).json({ error: 'INVALID_AUTH', message: 'auth ต้องเป็น open, psk, peap หรือ ttls' });
+    }
+
+    const parts = ['wifi-add', auth];
+    const ssid = validateWifiField(req.body.ssid, 'SSID');
+    if (ssid.error) return res.status(400).json({ error: 'INVALID_SSID', message: ssid.error });
+    parts.push(ssid.value);
+
+    const LABELS = { username: 'ชื่อผู้ใช้', password: 'รหัสผ่าน' };
+    for (const field of WIFI_AUTH_MODES[auth]) {
+        const checked = validateWifiField(req.body[field], LABELS[field]);
+        if (checked.error) return res.status(400).json({ error: 'INVALID_FIELD', message: checked.error });
+        parts.push(checked.value);
+    }
+
+    try {
+        const topology = await esp32NodesForUi(req);
+        const nodeId = resolveNodeIdForMac(topology.nodes, boardMac);
+        if (!nodeId) return res.status(404).json({ error: 'NODE_NOT_FOUND' });
+        if (!mqttClient || !mqttClient.connected) return res.status(503).json({ error: 'MQTT_UNAVAILABLE' });
+
+        mqttClient.publish(`ble/node/${nodeId}/cmd`, parts.join(' '), { qos: 1 });
+        // Never the credential: the audit row records which network was pushed to which
+        // board by whom, which is what an investigation needs, and nothing an attacker
+        // reading the audit log could use.
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { wifi_add: ssid.value, auth }).catch(console.error);
+        // No confirmation is possible -- wifi-add does not reply, and the board only
+        // reveals the new entry through wifi-list. Say what was sent, not that it worked.
+        res.json({ success: true, sent: true, ssid: ssid.value, auth, nodeId });
+    } catch (error) {
+        console.error('[ESP32 WiFi]', error.message);
+        res.status(500).json({ error: 'Unable to send WiFi credentials' });
+    }
+});
+
 // Restore a previously hidden board. Clears revoke markers and tombstones and records a
 // restored event. The UI will not expose this yet, but the endpoint exists so an
 // operator can un-hide a board without direct DB access (e.g. after a mistaken
@@ -8648,6 +8722,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
     // staff_nurse deliberately does not hold — the same capability that guards
     // the rest of device administration.
     const canManageReceivers = roleHasCapability(req.user?.role, 'devices:write');
+    // Pushing a network to a board is held to the firmware capability, not devices:write:
+    // ward_admin holds the latter, and this is the same class of action as an OTA.
+    const canDeployFirmware = roleHasCapability(req.user?.role, 'devices:firmware:write');
     res.send(ui(req.user, 'esp32', `
         <style>
             .receiver-page { max-width: 1280px; margin: 0 auto; }
@@ -8778,6 +8855,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
         const receiverToast = document.getElementById('receiverToast');
         const canEditReceiverLocation = ${canEditLocation ? 'true' : 'false'};
         const canManageReceivers = ${canManageReceivers ? 'true' : 'false'};
+        const canDeployFirmware = ${canDeployFirmware ? 'true' : 'false'};
         let receiverTimer = null;
         let receiverLoading = false;
         let receiverToastTimer = null;
@@ -8853,6 +8931,12 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             const hideButton = canManageReceivers
                 ? '<button type="button" data-revoke-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-node="' + escapeHTML(node.nodeId || '') + '" class="receiver-edit-btn" aria-label="ซ่อนตัวรับสัญญาณ ' + escapeHTML(node.nodeId) + '">ซ่อน</button>'
                 : '';
+            // Same capability as firmware deploy: this writes to the board's saved
+            // network list, and a board that cannot find a network is a board someone
+            // has to walk to.
+            const wifiButton = canDeployFirmware
+                ? '<button type="button" data-wifi-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-node="' + escapeHTML(node.nodeId || '') + '" class="receiver-edit-btn" aria-label="เพิ่ม WiFi ให้ ' + escapeHTML(node.nodeId) + '">เพิ่ม WiFi</button>'
+                : '';
             const jstyleCount = Number.isFinite(Number(node.connectedJstyleCount)) ? Number(node.connectedJstyleCount) : 0;
             return '<article class="receiver-card' + problemClass + '">' +
                 '<div class="receiver-card-top">' +
@@ -8869,7 +8953,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                                 '<div class="receiver-location break-words">' + escapeHTML(locationText) + '</div>' +
                                 '<div class="receiver-node-meta">ตัวรับ ' + escapeHTML(node.nodeId) + '</div>' +
                             '</div>' +
-                            '<div class="shrink-0 flex items-center gap-2">' + editButton + hideButton + '</div>' +
+                            '<div class="shrink-0 flex items-center gap-2">' + editButton + wifiButton + hideButton + '</div>' +
                         '</div>' +
                     '</div>' +
                 '</div>' +
@@ -8959,6 +9043,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             receiverGrid.querySelectorAll('[data-revoke-receiver]').forEach(button => {
                 button.addEventListener('click', () => revokeReceiver(button.dataset.mac, button.dataset.node || ''));
             });
+            receiverGrid.querySelectorAll('[data-wifi-receiver]').forEach(button => {
+                button.addEventListener('click', () => addReceiverWifi(button.dataset.mac, button.dataset.node || ''));
+            });
         }
 
         async function loadReceivers() {
@@ -8976,6 +9063,72 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                 receiverLoading = false;
             }
         }
+
+        // The firmware appends this network to the board's list instead of switching to
+        // it, so there is nothing to undo and no way to knock the node offline with a
+        // typo -- which is why this is a plain form and not a danger confirmation.
+        window.addReceiverWifi = (mac, nodeId) => {
+            const safeMac = String(mac || '').trim();
+            const authRow = (value, label) =>
+                '<option value="' + value + '">' + label + '</option>';
+            openModal('เพิ่มเครือข่าย WiFi ให้ตัวรับสัญญาณ',
+                '<div class="space-y-4">' +
+                    '<div class="p-3 rounded-xl" style="background:var(--bg-card-hover);"><div class="text-xs font-bold" style="color:var(--text-tertiary);">ตัวรับสัญญาณ</div><div class="font-mono text-sm mt-1">' + escapeHTML(nodeId || safeMac) + '</div></div>' +
+                    '<div><label for="wifiAuth" class="block text-sm font-bold mb-2">ประเภทการเข้ารหัส</label><select id="wifiAuth" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);">' +
+                        authRow('psk', 'WPA/WPA2 (รหัสผ่านอย่างเดียว)') +
+                        authRow('open', 'เปิด (ไม่มีรหัสผ่าน)') +
+                        authRow('peap', 'WPA2-Enterprise · PEAP') +
+                        authRow('ttls', 'WPA2-Enterprise · TTLS') +
+                    '</select></div>' +
+                    '<div><label for="wifiSsid" class="block text-sm font-bold mb-2">ชื่อเครือข่าย (SSID)</label><input id="wifiSsid" maxlength="79" autocomplete="off" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);" placeholder="เช่น SS-Device"></div>' +
+                    '<div id="wifiUserWrap" class="hidden"><label for="wifiUser" class="block text-sm font-bold mb-2">ชื่อผู้ใช้</label><input id="wifiUser" maxlength="79" autocomplete="off" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);"></div>' +
+                    '<div id="wifiPassWrap"><label for="wifiPass" class="block text-sm font-bold mb-2">รหัสผ่าน</label><input id="wifiPass" type="password" maxlength="79" autocomplete="new-password" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);"></div>' +
+                    '<div class="p-3 rounded-xl text-xs" style="background:var(--bg-card-hover);color:var(--text-secondary);"><strong>ห้ามมีช่องว่าง</strong> ทั้งชื่อเครือข่ายและรหัสผ่าน เพราะเฟิร์มแวร์ใช้ช่องว่างเป็นตัวแบ่ง และแต่ละช่องยาวได้ไม่เกิน 79 ไบต์<br>เครือข่ายนี้จะถูก <strong>เพิ่มเข้ารายการ</strong> ไม่ได้สลับทันที บอร์ดจะใช้ก็ต่อเมื่อเครือข่ายปัจจุบันใช้ไม่ได้</div>' +
+                '</div>',
+                async () => {
+                    const auth = String(document.getElementById('wifiAuth')?.value || 'psk');
+                    const payload = {
+                        auth,
+                        ssid: String(document.getElementById('wifiSsid')?.value || '').trim()
+                    };
+                    if (auth === 'peap' || auth === 'ttls') payload.username = String(document.getElementById('wifiUser')?.value || '').trim();
+                    if (auth !== 'open') payload.password = String(document.getElementById('wifiPass')?.value || '');
+                    // Catch the space here as well as on the server: the operator can fix it
+                    // while the dialog is still open and the value is still on screen.
+                    for (const [key, label] of [['ssid', 'ชื่อเครือข่าย'], ['username', 'ชื่อผู้ใช้'], ['password', 'รหัสผ่าน']]) {
+                        if (payload[key] === undefined) continue;
+                        if (!payload[key]) { showReceiverToast(label + ' ต้องไม่ว่าง', 'error'); return; }
+                        if (/\s/.test(payload[key])) { showReceiverToast(label + ' ต้องไม่มีช่องว่าง', 'error'); return; }
+                    }
+                    const submit = document.getElementById('modalSubmit');
+                    setModalBusy(true);
+                    submit.textContent = 'กำลังส่ง…';
+                    try {
+                        const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/wifi', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!response.ok) throw new Error(await apiErrorMessage(response, 'ส่งค่า WiFi ไม่สำเร็จ'));
+                        closeModal(true, true);
+                        // "ส่งแล้ว", not "สำเร็จ": wifi-add does not answer back, so the only
+                        // honest claim is that the command left the server.
+                        showReceiverToast('ส่งเครือข่าย ' + payload.ssid + ' ไปที่บอร์ดแล้ว', 'success');
+                    } catch (error) {
+                        closeModal(false, true);
+                        showReceiverToast(error.message || 'ส่งค่า WiFi ไม่สำเร็จ', 'error');
+                    }
+                });
+            const authSelect = document.getElementById('wifiAuth');
+            const syncWifiFields = () => {
+                const mode = String(authSelect?.value || 'psk');
+                document.getElementById('wifiUserWrap')?.classList.toggle('hidden', mode !== 'peap' && mode !== 'ttls');
+                document.getElementById('wifiPassWrap')?.classList.toggle('hidden', mode === 'open');
+            };
+            authSelect?.addEventListener('change', syncWifiFields);
+            syncWifiFields();
+            document.getElementById('wifiSsid')?.focus();
+        };
 
         window.editReceiverLocation = (mac, currentDescription) => {
             const safeMac = String(mac || '').trim();
