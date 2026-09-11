@@ -13413,7 +13413,11 @@ function brokerAddrProblem(value) {
     const parts = v.split('.');
     if (parts.length !== 4) return 'ต้องเป็นเลข 4 ชุดคั่นด้วยจุด เช่น 172.16.251.50';
     for (const part of parts) {
-        if (!/^\d{1,3}$/.test(part)) return 'ใช้ได้เฉพาะตัวเลขกับจุด';
+        // Backslashes are doubled because this function is delivered to the browser
+        // inside a template literal, which eats a lone one -- a single-backslash digit
+        // class would arrive as a bare letter d and reject every digit. Guarded by
+        // test/test_template_regex_escapes.js.
+        if (!/^\\d{1,3}$/.test(part)) return 'ใช้ได้เฉพาะตัวเลขกับจุด';
         if (part.length > 1 && part.charAt(0) === '0') return 'ห้ามมีเลข 0 นำหน้า เช่น 01';
         if (Number(part) > 255) return 'แต่ละชุดต้องไม่เกิน 255';
     }
@@ -13560,7 +13564,7 @@ async function renderFirmwareDeployPanel(versionId) {
     // window.location.hostname is only a sensible default when the app is reached
     // by IP. On a hostname or domain it would fail validation the moment it was
     // submitted, so offer nothing rather than something wrong.
-    const hostIsIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(window.location.hostname);
+    const hostIsIpv4 = /^\\d{1,3}(\\.\\d{1,3}){3}$/.test(window.location.hostname);
 
     const brokerCard = document.createElement('div');
     brokerCard.className = 'mb-4 rounded-xl text-xs overflow-hidden';
