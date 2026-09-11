@@ -12,7 +12,7 @@ NurseAid is a hospital patient monitoring system running on a Raspberry Pi 5. It
 # Syntax check only (fast, no DB/MQTT required)
 node --check server.js
 
-# Run every JS unit test that doesn't need a live server (83 tests)
+# Run every JS unit test that doesn't need a live server (110 tests)
 npm run test:offline
 
 # Or a single focused file
@@ -108,7 +108,7 @@ The function uses keyword heuristics; there is a deliberate trade-off documented
 - Tests that `require('../server.js')` need `SESSION_SECRET` set to ≥32 characters, or server.js throws at load time. The package.json scripts set this automatically; run them via `npm run test:*` rather than invoking `node --test` directly on those files.
 - `test/test_or_patients.js` is a pure unit test — no env vars needed.
 - `test/test_ai_chat_logic.js` and `test/test_esp32_node_status.js` import server.js for exported helpers only; they need `SESSION_SECRET` but do not start the DB/MQTT stack (the `require.main === module` guard prevents `startServer()`).
-- `npm run test:offline` runs every test file in `test/` in a single `node --test` invocation with `SESSION_SECRET` set — 83 tests. Prefer it over the per-file `test:*` scripts when you want full coverage; the per-file scripts remain for fast focused runs.
+- `npm run test:offline` runs a single `node --test` invocation with `SESSION_SECRET` set — 110 tests. It names each file **explicitly**; it is not a glob over `test/`, so a new test file that is not added to that list never runs and the suite still reports green. Add the file to `test:offline` in the same commit that creates it. Prefer it over the per-file `test:*` scripts when you want full coverage; the per-file scripts remain for fast focused runs.
 - `npm test` = `test:offline` followed by `test:integration`. The integration step covers `test_wards_mgmt.js`, `test_monitor_ai_chat.js` and `mqtt-bridge/test_mqtt_bridge.py`, which connect to a live database and need the Docker Compose stack. **Those three files are gitignored** (`.gitignore:38-40`) and are absent from a fresh clone, so `test:integration` prints an explicit `SKIP integration: ...` line and exits 0 rather than failing. A silent pass there means the file was missing, not that it passed — check for the SKIP lines.
 - Never invoke `node --test` directly on a file under `test/` without `SESSION_SECRET`: server.js throws at load time, the file never loads, and the run still reports a green summary for whatever else did load.
 

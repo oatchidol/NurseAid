@@ -15,6 +15,13 @@ const WEARABLE_STATUS_OFF_WRIST = 0;
 const WEARABLE_STATUS_WORN = 1;
 const WEARABLE_STATUS_RESTING = 2;
 
+// How far a reading may sit in the future before it counts as corrupt rather
+// than as normal clock correction. nurseaid-httpstime only steps the clock when
+// it is more than 2s out, and the first real correction was 4.5s, so this has
+// to clear a sync step comfortably while still catching a clock that has jumped
+// days.
+const CLOCK_STEP_TOLERANCE_MS = 30 * 1000;
+
 // How long the node leaves a watch alone between measurements, per priority.
 // These MUST track PRIORITY_MEDIUM_INTERVAL_MS / PRIORITY_LOW_INTERVAL_MS in
 // the firmware; if they drift apart the server starts calling resting patients
@@ -115,18 +122,34 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
             presence: Number(freshness?.presence) || 90,
             liveHr: Number(freshness?.liveHr) || 30
         };
+    // The status entry is what says whether the watch is on a wrist, so the
+    // vitals are only meaningful while that answer is still current. When it
+    // expired first the system forgot the answer but kept the readings, and
+    // then inferred "worn" from the very data whose trustworthiness was in
+    // question. The gap was the difference between the two windows: 420s on
+    // high priority, which is the group that can least afford a bed that looks
+    // monitored and is not. Left out of freshnessPolicyForPriority on purpose,
+    // so that stays a pure widening function.
+    const statusWindow = Math.max(policy.status, policy.clinical);
     const freshnessFor = key => {
         if (['heart', 'spo2', 'temp'].includes(key)) return policy.clinical;
         if (key === 'battery') return policy.battery;
         if (key === 'spo2Quality') return policy.quality;
         if (key === 'rssi') return policy.presence;
-        return policy.status;
+        return statusWindow;
     };
     const fresh = key => {
         const entry = sensor?.[key];
-        return entry && Number.isFinite(entry.timestampMs) && nowMs - entry.timestampMs <= freshnessFor(key) * 1000
-            ? entry
-            : null;
+        if (!entry || !Number.isFinite(entry.timestampMs)) return null;
+        const ageMs = nowMs - entry.timestampMs;
+        // A reading cannot be newer than now. This host has no RTC battery and
+        // udp/123 is firewalled, so its clock is set by hand or stepped by
+        // nurseaid-httpstime, and an unbounded "age <= window" test reads a
+        // negative age as the freshest data there is -- the trap 8e9c61c closed
+        // for the topology cache. Absorb a correction-sized step; past that the
+        // clock has genuinely moved and the entry cannot be trusted.
+        if (ageMs < -CLOCK_STEP_TOLERANCE_MS) return null;
+        return ageMs <= freshnessFor(key) * 1000 ? entry : null;
     };
     const current = fresh;
 
