@@ -469,12 +469,15 @@ async function publishPairedDeviceList() {
     if (!mqttClient || !mqttClient.connected) return;
     try {
         // LEFT JOIN patients so a device whose patient has no priority row/value
-        // still publishes (defaults to 'high' below) — a device must never be
+        // still publishes (defaults to 'medium' below) — a device must never be
         // silently dropped from ble/mac just because priority is unset.
+        // 'medium' is the ward default: a 1-minute rest costs ~12-16% less battery
+        // and still refreshes vitals well inside the 10-minute clinical window.
+        // Patients who need continuous monitoring must be set to 'high' explicitly.
         const result = await pool.query(
             `SELECT n.mac, n.device_no, n.hm_number, n.name, n.bed_no,
                     COALESCE(n.device_type, 'jstyle') AS device_type,
-                    COALESCE(p.priority, 'high') AS priority
+                    COALESCE(p.priority, 'medium') AS priority
              FROM nurseaid n
              LEFT JOIN patients p ON LOWER(p.hn_number) = LOWER(n.hm_number)
              WHERE n.mac IS NOT NULL AND n.mac <> ''
@@ -1356,6 +1359,13 @@ async function initDatabase() {
     // Runtime migrations for existing installations
     try {
         await pool.query("ALTER TABLE nurseaid ADD COLUMN IF NOT EXISTS device_type VARCHAR(20) DEFAULT 'jstyle'");
+        // New patients default to 'medium'.
+        await pool.query("ALTER TABLE patients ALTER COLUMN priority SET DEFAULT 'medium'");
+        // Backfill rows that predate that default so 'unset' stops being a third
+        // state the UI, the poll timer and the AI brief each guess at differently.
+        // ONLY NULL is touched: a patient already set to 'high' was set that way by
+        // a nurse, and a migration must never quietly slow down their monitoring.
+        await pool.query("UPDATE patients SET priority='medium' WHERE priority IS NULL");
         await pool.query("UPDATE nurseaid SET device_type='jstyle' WHERE device_type IS NULL OR device_type='' ");
         await pool.query(`
             ALTER TABLE alert_settings ADD COLUMN IF NOT EXISTS hr_warning_min INTEGER;
@@ -7617,8 +7627,11 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     ? 'text-gray-500 hover:text-gray-600'
                     : (isDark ? 'text-gray-600 hover:text-blue-400' : 'text-slate-500 hover:text-blue-600');
                 // Whitelist rather than trust the row: only these three ever reach a CSS
-                // selector or the DOM, whatever the column happens to hold.
-                const priorityKey = PRIORITY_LABELS[p.priority] ? p.priority : '';
+                // selector or the DOM, whatever the column happens to hold. An unset
+                // priority falls back to 'medium', the same ward default the server
+                // publishes to the board, so the badge cannot disagree with the
+                // dropdown below it about what the patient is actually set to.
+                const priorityKey = PRIORITY_LABELS[p.priority] ? p.priority : 'medium';
                 const priorityBadge = priorityKey
                     ? '<span class="priority-readonly shrink-0" data-priority="' + priorityKey
                       + '" title="ความสำคัญ: ' + PRIORITY_LABELS[priorityKey] + '">'
@@ -7708,10 +7721,10 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
                             <optgroup label="วัดต่อเนื่อง · เปลืองแบตมากสุด">
-                                <option value="high" \${p.priority !== 'medium' && p.priority !== 'low' ? 'selected' : ''}>สูง</option>
+                                <option value="high" \${p.priority === 'high' ? 'selected' : ''}>สูง</option>
                             </optgroup>
                             <optgroup label="พักรอบละ 1 นาที · ประหยัดแบต">
-                                <option value="medium" \${p.priority === 'medium' ? 'selected' : ''}>กลาง</option>
+                                <option value="medium" \${p.priority !== 'high' && p.priority !== 'low' ? 'selected' : ''}>กลาง</option>
                             </optgroup>
                             <optgroup label="พักรอบละ 5 นาที · ประหยัดแบตมากสุด">
                                 <option value="low" \${p.priority === 'low' ? 'selected' : ''}>ต่ำ</option>

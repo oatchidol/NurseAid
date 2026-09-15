@@ -33,14 +33,15 @@ const PRIORITY_REST_SECONDS = { high: 0, medium: 60, low: 300 };
 const PRIORITY_REST_MARGIN_SECONDS = 180;
 
 function priorityRestSeconds(priority) {
-    const key = String(priority || 'high').trim().toLowerCase();
+    const key = String(priority || 'medium').trim().toLowerCase();
     return PRIORITY_REST_SECONDS[key] || 0;
 }
 
 // Widen the freshness windows so a patient on medium/low priority is not
 // reported stale or offline during a rest the system itself scheduled.
-// `high` is returned untouched, so a fleet that never sets priority behaves
-// exactly as it did before this existed.
+// `high` is returned untouched. An unset priority means 'medium' (the ward
+// default set in postgres-init/01-init.sql), so it is widened like any other
+// resting patient — otherwise the server would call a resting watch offline.
 function freshnessPolicyForPriority(basePolicy, priority) {
     const restSeconds = priorityRestSeconds(priority);
     // Always hand back a fresh object, never the caller's own policy: the

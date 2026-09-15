@@ -39,19 +39,20 @@ test('rest intervals mirror the firmware PRIORITY_* constants', () => {
     assert.equal(PRIORITY_REST_SECONDS.low, 300);
 });
 
-test('priorityRestSeconds is case and whitespace tolerant and defaults to high', () => {
+test('priorityRestSeconds is case and whitespace tolerant and defaults to medium', () => {
     assert.equal(priorityRestSeconds('LOW'), 300);
     assert.equal(priorityRestSeconds('  Medium '), 60);
     assert.equal(priorityRestSeconds('high'), 0);
-    assert.equal(priorityRestSeconds(null), 0);
-    assert.equal(priorityRestSeconds(undefined), 0);
+    assert.equal(priorityRestSeconds(null), 60);
+    assert.equal(priorityRestSeconds(undefined), 60);
+    // An unrecognised value is corruption, not a preference: fall back to high.
     assert.equal(priorityRestSeconds('nonsense'), 0);
 });
 
 test('high priority gets the same values back, as a copy not the shared object', () => {
-    // A fleet that never sets priority must behave exactly as before...
+    // An explicit 'high' must behave exactly as before (an UNSET priority is
+    // now 'medium' and is widened — see the defaults-to-medium test above)...
     assert.deepEqual(freshnessPolicyForPriority(BASE, 'high'), BASE);
-    assert.deepEqual(freshnessPolicyForPriority(BASE, null), BASE);
     // ...but the caller must never be handed the shared global policy itself,
     // or a mutation downstream would retune staleness for every patient.
     assert.notStrictEqual(freshnessPolicyForPriority(BASE, 'high'), BASE);
