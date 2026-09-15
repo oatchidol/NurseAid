@@ -113,7 +113,43 @@ other machines. `git push --tags` also works if you have other unpushed
 tags you want to include, but prefer pushing the one tag explicitly so you
 don't accidentally push something half-finished.
 
-### 7. Deploy this machine too
+### 7. Create the GitHub Release
+
+```sh
+# the release body is this version's CHANGELOG section, verbatim
+awk '/^## \[X\.Y\.Z\]/{f=1;next} /^## /{f=0} f' CHANGELOG.md > /tmp/vX.Y.Z-notes.md
+
+gh release create vX.Y.Z \
+  --repo oatchidol/NurseAid \
+  --title "vX.Y.Z" \
+  --notes-file /tmp/vX.Y.Z-notes.md \
+  --verify-tag
+```
+
+**A GitHub Release is not a git object.** Step 6 already sent everything
+git knows how to send: a tag object is a pointer, a tagger, and one
+message — there is no field in it for a release title, a body, or an
+attachment. The Releases page is a record in GitHub's own database, so it
+stays empty until something calls GitHub's API. That is exactly why
+`v2.20.0` through `v2.22.0` ended up with tags on GitHub and nothing on
+the Releases page: this step was not in this checklist, so everyone who
+followed the checklist skipped it.
+
+`--verify-tag` makes the command fail if the tag is not on the remote yet,
+instead of quietly creating a new one pointing at your current HEAD.
+
+Take the body from `CHANGELOG.md` rather than writing it again. It is the
+same text `update-check` shows inside the app (it fetches the raw
+`CHANGELOG.md` at this tag), so sourcing both from one file is what keeps
+the Releases page and the in-app release notes from disagreeing. The awk
+above uses the same rule the app's parser does: start after this version's
+heading, stop at the next `## `.
+
+Without `gh`, POST the same body to
+`https://api.github.com/repos/oatchidol/NurseAid/releases` with a PAT
+(`repo` scope) as `{"tag_name","name","body"}`.
+
+### 8. Deploy this machine too
 
 The machine you just pushed from will **never** see its own release as
 "available" via Check for Updates — it's already the source. Deploy it the
@@ -152,9 +188,13 @@ docker compose up -d --build nurseaid compose-collector
 ```
 
 Or use `scripts/updategit.sh` for the backup+update+rebuild-in-one-go
-version (also backs up `.env`; note it does **not** back up
-`nginx/certs/` — regenerate with `scripts/generate-certs.sh` if you're
-relying on `git clean -fdx` behavior after a restore).
+version. It keeps everything `.gitignore` lists — `.env`, `nginx/certs/`,
+`firmware/wifi_credentials.h`, `docker-compose.override.yml`, locally built
+`.bin` images — because it cleans with `git clean -fd`, never `-fdx`, and it
+regenerates the TLS certificates if it finds them missing. It refuses to run
+against a tree with uncommitted changes to tracked files (`NURSEAID_FORCE=1`
+overrides), and exits non-zero with the rollback commands if the new version
+does not report ready on `/health/ready`.
 
 ## Common ways this goes wrong
 
@@ -172,6 +212,11 @@ relying on `git clean -fdx` behavior after a restore).
   `.claude/plans/auto-update.md`). The admin running it needs to `git
   status` on that machine, and either commit/stash the change or discard
   it, before retrying.
+- **Forgot to create the GitHub Release.** The tag is on GitHub and Check
+  for Updates works everywhere — the app reads the tags API and the raw
+  `CHANGELOG.md`, never the Releases API — so nothing is broken for any
+  ward machine. What you get is a hole in the human-facing Releases page.
+  Fix: run step 7 for each version that is missing one.
 - **Tag doesn't match `^v?\d+\.\d+\.\d+$`.** Pre-release suffixes like
   `v2.19.0-rc1` won't be picked up by `update-check`'s tag parser — it
   silently skips anything that doesn't parse as a clean three-part
