@@ -182,6 +182,32 @@ APP_PORT=$(get_env PORT)
 VERIFY_PORT="${NURSEAID_HOST_PORT:-$APP_PORT}"
 
 # -----------------------------------------------------------------------------
+# 3b. TLS certificates for nginx.
+#     nginx/nginx.conf names /etc/nginx/certs/nurseaid.{crt,key} directly, so a
+#     machine without them starts nginx into a crash loop and nothing answers
+#     on :443. nginx is not in SERVICES, so the health wait below would report
+#     a clean bring-up anyway and the operator would find out from a browser.
+#     generate-certs.sh prompts before overwriting certificates that already
+#     exist, so it is only ever invoked when they are absent — this script has
+#     to stay non-interactive.
+# -----------------------------------------------------------------------------
+if [ -f nginx/certs/nurseaid.crt ] && [ -f nginx/certs/nurseaid.key ]; then
+    info "TLS certificates already present; leaving them untouched."
+elif [ -x scripts/generate-certs.sh ]; then
+    step "Generating self-signed TLS certificates for nginx"
+    if scripts/generate-certs.sh; then
+        info "TLS certificates generated."
+    else
+        # The app itself is served on PORT over plain HTTP and DEPLOY.md treats
+        # HTTPS as optional, so a cert failure must not abort an otherwise good
+        # install — it has to be loud, not fatal.
+        info "WARNING: certificate generation failed; nginx will not serve :443."
+    fi
+else
+    info "WARNING: nginx/certs/ is missing and scripts/generate-certs.sh is not executable; :443 will not work."
+fi
+
+# -----------------------------------------------------------------------------
 # 4. Build and start.
 # -----------------------------------------------------------------------------
 step "Building and starting the stack"
