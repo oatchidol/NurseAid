@@ -1,6 +1,6 @@
 {
   "name": "nurseaid",
-  "version": "2.21.0",
+  "version": "2.22.0",
   "main": "server.js",
   "scripts": {
     "test": "npm run test:offline && npm run test:integration",
