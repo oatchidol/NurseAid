@@ -14605,7 +14605,15 @@ function isValidOtaUrl(url) {
 // Older firmware parses everything after `ota ` as the URL, so appending a broker
 // would corrupt the download URL and the node would fail the update outright.
 // Nodes below this version are sent the plain single-token command instead.
-const OTA_BROKER_ARG_MIN_FW = '2.1.0';
+//
+// Not 2.1.0, even though the commit that added the firmware-side parser still
+// said FW_VERSION "2.1.0": that commit shipped without bumping the version, so
+// two different builds report "2.1.0" and only one of them can split the broker
+// off. 2.2.0 is the first version that unambiguously has the parser. Lowering
+// this back to 2.1.0 sends the two-token form to the older build, which then
+// requests "<url> <broker>" as one URL and gets a 400 from the HTTP parser —
+// surfacing on the node as the misleading "code=-104 Wrong HTTP Code".
+const OTA_BROKER_ARG_MIN_FW = '2.2.0';
 
 // States a node reports on ble/node/<id>/ota that describe the BROKER migration
 // rather than the firmware image. They arrive minutes after the deployment row

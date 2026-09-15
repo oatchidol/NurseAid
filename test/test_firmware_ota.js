@@ -118,16 +118,18 @@ test('isUsableBrokerAddr rejects non-string values', () => {
     assert.equal(isUsableBrokerAddr([]), false);
 });
 
-test('nodeSupportsBrokerArg supports firmware versions at or above 2.1.0', () => {
-    assert.equal(nodeSupportsBrokerArg('2.1.0'), true);
-    assert.equal(nodeSupportsBrokerArg('2.1.1'), true);
+test('nodeSupportsBrokerArg supports firmware versions at or above 2.2.0', () => {
     assert.equal(nodeSupportsBrokerArg('2.2.0'), true);
+    assert.equal(nodeSupportsBrokerArg('2.2.3'), true);
     assert.equal(nodeSupportsBrokerArg('3.0.0'), true);
     assert.equal(nodeSupportsBrokerArg('10.0.0'), true);
 });
 
-test('nodeSupportsBrokerArg rejects firmware versions below 2.1.0', () => {
-    assert.equal(nodeSupportsBrokerArg('2.0.9'), false);
+// 2.1.0 is the version two different builds shipped under — only the later one
+// can split the broker off, so the whole version is treated as unsupported.
+test('nodeSupportsBrokerArg rejects firmware versions below 2.2.0', () => {
+    assert.equal(nodeSupportsBrokerArg('2.1.0'), false);
+    assert.equal(nodeSupportsBrokerArg('2.1.1'), false);
     assert.equal(nodeSupportsBrokerArg('2.0.0'), false);
     assert.equal(nodeSupportsBrokerArg('1.9.9'), false);
 });
