@@ -86,7 +86,12 @@ skills-lock.json
 /firmware/plugin.json
 
 # Locally built ESP32 firmware images - build artefacts, not source.
-nurseaid_esp32_*.bin
+nurseaid_esp32*.bin
+# arduino-cli names its output after the sketch: nurseaid_esp32.ino.bin — a dot,
+# not the underscore the pattern above was written for. Spelled out separately so
+# a rename of the sketch cannot silently un-ignore a 1.5MB build artefact again.
+firmware/*.ino.bin
+firmware/build/
 
 # Local WiFi credentials for firmware builds — never commit a ward password
 firmware/wifi_credentials.h
