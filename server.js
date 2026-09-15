@@ -15088,7 +15088,21 @@ app.post('/api/firmware/deploy', requireCapability('devices:firmware:write'), as
         const gate = canDeployToTargets(existingDeployments.rows, targets.length);
         if (!gate.allowed) return res.status(400).json({ error: 'CANARY_REQUIRED', message: gate.reason });
 
-        const origin = FIRMWARE_OTA_BASE_URL || `http://${req.hostname}:${PORT}`;
+        // A hostname/domain from the admin's own Host header may not resolve
+        // or be reachable from the ESP32's network segment at all — the board
+        // needs a dialable IPv4 it can reach directly, so fall back to one
+        // only when req.hostname already is one, same usability rules as an
+        // MQTT broker address (see isUsableBrokerAddr above).
+        let origin = FIRMWARE_OTA_BASE_URL;
+        if (!origin) {
+            if (!isUsableBrokerAddr(req.hostname)) {
+                return res.status(400).json({
+                    error: 'HOSTNAME_NOT_IP',
+                    message: 'ไม่สามารถสร้าง URL สำหรับ OTA จาก hostname ได้ กรุณาเข้าเว็บด้วย IP ของเครื่องนี้ หรือกำหนดค่า FIRMWARE_OTA_BASE_URL'
+                });
+            }
+            origin = `http://${req.hostname}:${PORT}`;
+        }
         const url = `${origin}/fw/${download_token}/firmware.bin`;
         if (!isValidOtaUrl(url)) return res.status(500).json({ error: 'INVALID_URL' });
 
