@@ -103,6 +103,33 @@ const parsedLiveFallback = Number.parseInt(process.env.LIVE_STATUS_FALLBACK_SECO
 const LIVE_STATUS_FALLBACK_MS = (Number.isFinite(parsedLiveFallback) && parsedLiveFallback > 0
     ? parsedLiveFallback
     : 300) * 1000;
+function strictEnvNumber(name, fallback) {
+    const raw = process.env[name];
+    if (raw === undefined || String(raw).trim() === '') return Number(fallback);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+const parsedAlertDeescalateDwellMs = strictEnvNumber('ALERT_DEESCALATE_DWELL_MS', 120000);
+const ALERT_DEESCALATE_DWELL_MS = Number.isFinite(parsedAlertDeescalateDwellMs)
+    && parsedAlertDeescalateDwellMs >= 0 && parsedAlertDeescalateDwellMs <= 30 * 60 * 1000
+    ? parsedAlertDeescalateDwellMs
+    : 120000;
+const parsedAlertHysteresisHrBpm = strictEnvNumber('ALERT_HYSTERESIS_HR_BPM', 2);
+const ALERT_HYSTERESIS_HR_BPM = Number.isFinite(parsedAlertHysteresisHrBpm)
+    && parsedAlertHysteresisHrBpm >= 0 && parsedAlertHysteresisHrBpm <= 20
+    ? parsedAlertHysteresisHrBpm
+    : 2;
+const parsedAlertHysteresisSpo2Pct = strictEnvNumber('ALERT_HYSTERESIS_SPO2_PCT', 1);
+const ALERT_HYSTERESIS_SPO2_PCT = Number.isFinite(parsedAlertHysteresisSpo2Pct)
+    && parsedAlertHysteresisSpo2Pct >= 0 && parsedAlertHysteresisSpo2Pct <= 5
+    ? parsedAlertHysteresisSpo2Pct
+    : 1;
+const parsedAlertHysteresisTempC = strictEnvNumber('ALERT_HYSTERESIS_TEMP_C', 0.2);
+const ALERT_HYSTERESIS_TEMP_C = Number.isFinite(parsedAlertHysteresisTempC)
+    && parsedAlertHysteresisTempC >= 0 && parsedAlertHysteresisTempC <= 1
+    ? parsedAlertHysteresisTempC
+    : 0.2;
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const APP_ORIGIN = process.env.APP_ORIGIN || '';
 const SESSION_COOKIE = 'nurseaid_session';
@@ -1143,6 +1170,7 @@ app.use(async (req, res, next) => {
 const LINE_TOKEN = process.env.LINE_TOKEN || '';
 const GROUP_ID = process.env.LINE_GROUP_ID || '';
 const deviceAlertState = {};
+const vitalAlertHysteresisState = new Map();
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Bangkok';
 const ALERT_ENGINE_INTERVAL_MS = Math.max(5000, Number.parseInt(process.env.ALERT_ENGINE_INTERVAL_MS || '15000', 10) || 15000);
 const LINE_RATE_LIMIT_BACKOFF_MS = Math.max(
@@ -1645,6 +1673,35 @@ function toFiniteNumber(value) {
     return Number.isFinite(num) ? num : null;
 }
 
+function batteryLowThreshold(settings = {}) {
+    const configured = Number(settings?.battery_low_threshold);
+    // Alert settings are normally present on a live-status row. Keep the
+    // existing schema default as a safe fallback for callers without it.
+    return Number.isFinite(configured) && configured >= 0 && configured <= 100
+        ? configured
+        : 20;
+}
+
+function shouldRaiseBatteryLowAlert(status, deviceSettings = {}, hasOpenAlert = false) {
+    // buildLiveSnapshot represents a stale/missing battery as '--'. Requiring
+    // the snapshot's number type prevents a display placeholder (or other
+    // coercible string) from being treated as a real, fresh reading.
+    if (hasOpenAlert || !status || typeof status.battery !== 'number' || !Number.isFinite(status.battery)) {
+        return false;
+    }
+    return status.battery <= batteryLowThreshold(deviceSettings);
+}
+
+function shouldResolveBatteryLowAlert(status, deviceSettings = {}) {
+    // A numeric snapshot battery is necessarily fresh: buildLiveSnapshot
+    // renders stale or missing battery data as '--'. Do not resolve from a
+    // placeholder, because that would erase a real warning on telemetry loss.
+    return Boolean(status)
+        && typeof status.battery === 'number'
+        && Number.isFinite(status.battery)
+        && status.battery > batteryLowThreshold(deviceSettings);
+}
+
 function escapeFluxString(value) {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -1719,6 +1776,128 @@ function higherAlertLevel(current, next) {
     if (current === 'critical' || next === 'critical') return 'critical';
     if (current === 'warning' || next === 'warning') return 'warning';
     return 'normal';
+}
+
+function alertLevelRank(level) {
+    return level === 'critical' ? 2 : level === 'warning' ? 1 : 0;
+}
+
+function lowerAlertLevel(left, right) {
+    return alertLevelRank(left) <= alertLevelRank(right) ? left : right;
+}
+
+function classifySpo2Level(value, criticalMin, warningMin) {
+    if (!Number.isFinite(Number(value))) return 'normal';
+    const number = Number(value);
+    if (number <= criticalMin) return 'critical';
+    if (number < warningMin) return 'warning';
+    return 'normal';
+}
+
+function boundedHysteresisMargin(margin, warningMin, warningMax) {
+    const requested = Number(margin);
+    const warningWidth = Number(warningMax) - Number(warningMin);
+    if (!Number.isFinite(requested) || requested < 0 || !Number.isFinite(warningWidth) || warningWidth <= 0) {
+        return 0;
+    }
+    return Math.min(requested, warningWidth / 2);
+}
+
+function returnVitalRangeWithHysteresis(value, criticalMin, warningMin, warningMax, criticalMax, margin) {
+    const boundedMargin = boundedHysteresisMargin(margin, warningMin, warningMax);
+    const returnCriticalMin = criticalMin + boundedMargin;
+    const returnWarningMin = warningMin + boundedMargin;
+    const returnWarningMax = warningMax - boundedMargin;
+    const returnCriticalMax = criticalMax - boundedMargin;
+    // A narrow custom range can make the return band cross over. That must
+    // never manufacture critical values or permanently hold an alert; retain
+    // the raw level for return decisions when a valid strict ordering is not
+    // possible.
+    if (!(returnCriticalMin < returnWarningMin
+        && returnWarningMin < returnWarningMax
+        && returnWarningMax < returnCriticalMax)) {
+        return classifyVitalRange(value, criticalMin, warningMin, warningMax, criticalMax);
+    }
+    return classifyVitalRange(value, returnCriticalMin, returnWarningMin, returnWarningMax, returnCriticalMax);
+}
+
+function returnSpo2LevelWithHysteresis(value, criticalMin, warningMin, margin) {
+    const boundedMargin = boundedHysteresisMargin(margin, criticalMin, warningMin);
+    const returnCriticalMin = criticalMin + boundedMargin;
+    const returnWarningMin = warningMin + boundedMargin;
+    if (!(returnCriticalMin < returnWarningMin)) {
+        return classifySpo2Level(value, criticalMin, warningMin);
+    }
+    return classifySpo2Level(value, returnCriticalMin, returnWarningMin);
+}
+
+// Escalation uses raw limits immediately. A lower level must first clear the
+// stricter return-side margin, then remain there for the wall-clock dwell.
+function applyVitalAlertHysteresis(mac, metrics, options = {}) {
+    const stateByMac = options.stateByMac || vitalAlertHysteresisState;
+    const connected = options.connected === undefined ? true : options.connected;
+    const worn = options.worn === undefined ? true : options.worn;
+    const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+    const dwellMs = Number.isFinite(options.dwellMs) && options.dwellMs >= 0
+        ? options.dwellMs : ALERT_DEESCALATE_DWELL_MS;
+    if (!mac || !connected || !worn) {
+        stateByMac.delete(mac);
+        return { alertLevel: 'normal', alertCauses: [] };
+    }
+
+    const state = stateByMac.get(mac) || { metrics: {} };
+    const seenKeys = new Set();
+    const causes = [];
+    let alertLevel = 'normal';
+    for (const metric of metrics) {
+        seenKeys.add(metric.key);
+        if (!metric.available) {
+            delete state.metrics[metric.key];
+            continue;
+        }
+        const rawLevel = metric.rawLevel || 'normal';
+        const returnLevel = metric.returnLevel || rawLevel;
+        const previous = state.metrics[metric.key] || { heldLevel: 'normal', dwellStartedAtMs: null, pendingLevel: null };
+        let heldLevel = previous.heldLevel;
+        if (alertLevelRank(rawLevel) > alertLevelRank(heldLevel)) {
+            heldLevel = rawLevel;
+            previous.dwellStartedAtMs = null;
+            previous.pendingLevel = null;
+        } else if (alertLevelRank(rawLevel) === alertLevelRank(heldLevel)) {
+            previous.dwellStartedAtMs = null;
+            previous.pendingLevel = null;
+        } else {
+            // The return level can never manufacture a new escalation.
+            const candidate = lowerAlertLevel(returnLevel, heldLevel);
+            if (alertLevelRank(candidate) >= alertLevelRank(heldLevel)) {
+                previous.dwellStartedAtMs = null;
+                previous.pendingLevel = null;
+            } else if (previous.pendingLevel !== candidate) {
+                previous.pendingLevel = candidate;
+                previous.dwellStartedAtMs = nowMs;
+            } else if (nowMs - previous.dwellStartedAtMs >= dwellMs) {
+                heldLevel = candidate;
+                previous.dwellStartedAtMs = null;
+                previous.pendingLevel = null;
+            }
+        }
+        previous.heldLevel = heldLevel;
+        state.metrics[metric.key] = previous;
+        alertLevel = higherAlertLevel(alertLevel, heldLevel);
+        if (heldLevel !== 'normal') causes.push(`${metric.cause} (${heldLevel === 'critical' ? 'Critical' : 'Warning'})`);
+    }
+    for (const key of Object.keys(state.metrics)) {
+        if (!seenKeys.has(key)) delete state.metrics[key];
+    }
+    if (Object.keys(state.metrics).length === 0) stateByMac.delete(mac);
+    else stateByMac.set(mac, state);
+    return { alertLevel, alertCauses: causes };
+}
+
+function pruneVitalAlertHysteresisState(activeMacs, stateByMac = vitalAlertHysteresisState) {
+    for (const mac of stateByMac.keys()) {
+        if (!activeMacs.has(mac)) stateByMac.delete(mac);
+    }
 }
 
 function parseExportDate(value) {
@@ -1948,6 +2127,42 @@ async function triggerAlert(mac, bed, name, level, category, msg, deviceSettings
     const alert = await replaceActiveAlert(mac, bed, name, level, category, msg);
     await dispatchAlertNotifications(alert, deviceSettings).catch(error => console.error('[Alert Dispatch]', error.message));
     return alert;
+}
+
+async function triggerBatteryLowAlert(status, deviceSettings) {
+    // uq_alert_logs_one_active_mac is the concurrency guard. A single insert
+    // avoids a transaction, advisory lock, and SELECT on every 15-second tick;
+    // it also leaves an existing vital/offline alert untouched.
+    const threshold = batteryLowThreshold(deviceSettings);
+    const inserted = await pool.query(
+        `INSERT INTO alert_logs (mac, bed_no, patient_name, level, category, message, ward_id)
+         VALUES (CAST($1 AS VARCHAR), $2, $3, 'warning', 'battery_low', $4,
+             (SELECT ward_id FROM nurseaid WHERE CAST(LOWER(mac) AS VARCHAR)=LOWER(CAST($1 AS VARCHAR)) LIMIT 1))
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+            status.mac,
+            status.bed_no,
+            status.name,
+            `แบตเตอรี่อุปกรณ์ต่ำ เหลือ ${status.battery}% (เกณฑ์แจ้งเตือน ${threshold}%) โปรดชาร์จแบตเตอรี่และตรวจสอบการสวมใส่อุปกรณ์`
+        ]
+    );
+    const alert = inserted.rows[0];
+    if (!alert) return null;
+    await dispatchAlertNotifications(alert, deviceSettings)
+        .catch(error => console.error('[Battery Alert Dispatch]', error.message));
+    return alert;
+}
+
+async function resolveBatteryLowAlert(status, deviceSettings) {
+    if (!shouldResolveBatteryLowAlert(status, deviceSettings)) return null;
+    // Category is deliberately constrained: recovery must never resolve a
+    // vital or offline alert for the same MAC.
+    return pool.query(
+        `UPDATE alert_logs SET resolved=true, resolved_at=NOW()
+         WHERE LOWER(mac)=LOWER($1) AND category='battery_low' AND resolved=false`,
+        [status.mac]
+    );
 }
 
 async function triggerOfflineAlert(status, deviceSettings, thresholdMinutes) {
@@ -6128,7 +6343,10 @@ async function queryLiveStatuses() {
                     ORDER BY p.sort_order ASC NULLS LAST, n.device_no ASC`),
         pool.query('SELECT * FROM alert_settings')
     ]);
-    if (devicesResult.rows.length === 0) return [];
+    if (devicesResult.rows.length === 0) {
+        pruneVitalAlertHysteresisState(new Set());
+        return [];
+    }
 
     const defaultSettings = settingsResult.rows.find(row => row.mac === '*') || {
         hr_min: 50, hr_max: 120, hr_warning_min: 60, hr_warning_max: 110,
@@ -6182,7 +6400,7 @@ async function queryLiveStatuses() {
     }
 
     const nowMs = Date.now();
-    return devicesResult.rows.map(device => {
+    const statuses = devicesResult.rows.map(device => {
         const mac = normalizeMac(device.mac);
         const sensor = influxData.get(mac);
         const settings = { ...defaultSettings, ...(settingByMac.get(mac) || {}), mac: device.mac };
@@ -6208,27 +6426,33 @@ async function queryLiveStatuses() {
             temp = '--';
             spo2 = '--';
         }
-        const causes = [];
-        let alertLevel = 'normal';
-        // Retain recent values while an explicitly off-wrist device is still
-        // communicating, but never use those retained values for alerts.
-        if (snapshot.connected && snapshot.worn) {
-            if (snapshot.hrLive && hr !== '--') {
-                const level = classifyVitalRange(hr, limits.hrMin, limits.hrWarningMin, limits.hrWarningMax, limits.hrMax);
-                alertLevel = higherAlertLevel(alertLevel, level);
-                if (level !== 'normal') causes.push(`HR=${hr} bpm (${level === 'critical' ? 'Critical' : 'Warning'})`);
+        const hrAvailable = snapshot.connected && snapshot.worn && snapshot.hrLive && hr !== '--';
+        const tempAvailable = snapshot.connected && snapshot.worn && temp !== '--';
+        const spo2Available = snapshot.connected && snapshot.worn && spo2 !== '--';
+        const vitalMetrics = [
+            {
+                key: 'hr', available: hrAvailable, cause: `HR=${hr} bpm`,
+                rawLevel: classifyVitalRange(hr, limits.hrMin, limits.hrWarningMin, limits.hrWarningMax, limits.hrMax),
+                returnLevel: returnVitalRangeWithHysteresis(hr, limits.hrMin, limits.hrWarningMin,
+                    limits.hrWarningMax, limits.hrMax, ALERT_HYSTERESIS_HR_BPM)
+            },
+            {
+                key: 'temp', available: tempAvailable, cause: `Temp=${temp}°C`,
+                rawLevel: classifyVitalRange(temp, limits.tempMin, limits.tempWarningMin, limits.tempWarningMax, limits.tempMax),
+                returnLevel: returnVitalRangeWithHysteresis(temp, limits.tempMin, limits.tempWarningMin,
+                    limits.tempWarningMax, limits.tempMax, ALERT_HYSTERESIS_TEMP_C)
+            },
+            {
+                key: 'spo2', available: spo2Available, cause: `SpO2=${spo2}%`,
+                rawLevel: classifySpo2Level(spo2, limits.spo2CriticalMin, limits.spo2WarningMin),
+                returnLevel: returnSpo2LevelWithHysteresis(spo2, limits.spo2CriticalMin,
+                    limits.spo2WarningMin, ALERT_HYSTERESIS_SPO2_PCT)
             }
-            if (temp !== '--') {
-                const level = classifyVitalRange(temp, limits.tempMin, limits.tempWarningMin, limits.tempWarningMax, limits.tempMax);
-                alertLevel = higherAlertLevel(alertLevel, level);
-                if (level !== 'normal') causes.push(`Temp=${temp}°C (${level === 'critical' ? 'Critical' : 'Warning'})`);
-            }
-            if (spo2 !== '--' && spo2 < limits.spo2WarningMin) {
-                const level = spo2 <= limits.spo2CriticalMin ? 'critical' : 'warning';
-                alertLevel = higherAlertLevel(alertLevel, level);
-                causes.push(`SpO2=${spo2}% (${level === 'critical' ? 'Critical' : 'Warning'})`);
-            }
-        }
+        ];
+        const { alertLevel, alertCauses: causes } = applyVitalAlertHysteresis(mac, vitalMetrics, {
+            connected: snapshot.connected,
+            worn: snapshot.worn
+        });
         const missingMetrics = [['HR', hr], ['SpO2', spo2], ['Temp', temp]].filter(([, value]) => value === '--').map(([name]) => name);
         const wearState = snapshot.explicitOffWrist ? false : (snapshot.worn ? true : null);
         const dataQuality = snapshot.recoveryPending
@@ -6272,10 +6496,15 @@ async function queryLiveStatuses() {
             dataQuality, dataMessage, diagnosticCode: dataQuality,
             missingMetrics, lastSeenAt: snapshot.lastSeenMs ? new Date(snapshot.lastSeenMs).toISOString() : null,
             lastSeenSeconds: snapshot.lastSeenMs ? Math.max(0, Math.floor((nowMs - snapshot.lastSeenMs) / 1000)) : null,
+            connectivityLastSeenSeconds: snapshot.connectivityLastSeenMs
+                ? Math.max(0, Math.floor((nowMs - snapshot.connectivityLastSeenMs) / 1000))
+                : null,
             vitalLastSeenSeconds: snapshot.vitalLastSeenMs ? Math.max(0, Math.floor((nowMs - snapshot.vitalLastSeenMs) / 1000)) : null,
             _alertSettings: settings
         };
     });
+    pruneVitalAlertHysteresisState(new Set(statuses.map(status => normalizeMac(status.mac))));
+    return statuses;
 }
 
 const readLiveStatuses = createResilientSingleFlightCache(
@@ -6340,6 +6569,18 @@ async function runAlertEngine() {
                     await triggerAlert(status.mac, status.bed_no, status.name, current, 'vital', status.alertCauses.join(', '), deviceSettings);
                 }
                 deviceAlertState[mac] = current;
+            }
+
+            // Battery alerts are supplementary. Their DB/notification failure
+            // must not skip the remaining patients' vital/offline evaluation.
+            try {
+                if (shouldResolveBatteryLowAlert(status, deviceSettings)) {
+                    await resolveBatteryLowAlert(status, deviceSettings);
+                } else if (shouldRaiseBatteryLowAlert(status, deviceSettings)) {
+                    await triggerBatteryLowAlert(status, deviceSettings);
+                }
+            } catch (error) {
+                console.error(`[Battery Alert] mac=${status.mac}:`, error.message);
             }
         }
     } catch (error) {
@@ -6649,6 +6890,9 @@ function aiFindStatusByBed(statuses, bed) {
 
 function aiBedBrief(status) {
     const battery = Number(status.battery);
+    // AI receives internal live-status rows, including _alertSettings. Other
+    // callers may not, so batteryLow falls back to the schema default (20%).
+    const batteryThreshold = batteryLowThreshold(status._alertSettings);
     return {
         bed: aiBedLabel(status),
         patient: status.name ? cleanAiText(status.name, 80) : null,
@@ -6659,7 +6903,7 @@ function aiBedBrief(status) {
         spo2: clinicalValue(status.spo2, '%'),
         temperature: clinicalValue(status.temp, ' °C'),
         battery: clinicalValue(status.battery, '%'),
-        batteryLow: Number.isFinite(battery) && battery <= 20,
+        batteryLow: Number.isFinite(battery) && battery <= batteryThreshold,
         deviceStatus: String(status.status || 'Unknown'),
         isWorn: status.isWorn === true ? 'yes' : (status.isWorn === false ? 'no' : 'unknown'),
         dataQuality: String(status.dataQuality || 'unknown'),
@@ -15276,7 +15520,8 @@ async function startServer() {
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_logs_one_active_mac
                       ON alert_logs(LOWER(mac)) WHERE resolved=false`);
     const activeStates = await pool.query(`SELECT DISTINCT ON (LOWER(mac)) mac,level FROM alert_logs
-                                           WHERE resolved=false ORDER BY LOWER(mac),created_at DESC`);
+                                           WHERE resolved=false AND category='vital'
+                                           ORDER BY LOWER(mac),created_at DESC`);
     activeStates.rows.forEach(row => { deviceAlertState[normalizeMac(row.mac)] = row.level; });
     await runAlertEngine();
     setInterval(runAlertEngine, ALERT_ENGINE_INTERVAL_MS);
@@ -15308,7 +15553,17 @@ module.exports = {
     extractUserReportedVitals,
     parseHeartRateFromText,
     cleanAiText,
+    batteryLowThreshold,
+    shouldRaiseBatteryLowAlert,
+    shouldResolveBatteryLowAlert,
     classifyVitalRange,
+    higherAlertLevel,
+    classifySpo2Level,
+    boundedHysteresisMargin,
+    returnVitalRangeWithHysteresis,
+    returnSpo2LevelWithHysteresis,
+    applyVitalAlertHysteresis,
+    pruneVitalAlertHysteresisState,
     parseSemver,
     compareSemver,
     highestVersion,

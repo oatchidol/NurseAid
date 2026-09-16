@@ -95,11 +95,26 @@ function shouldRaiseOfflineAlert(status, settings = {}, uptimeSeconds = Infinity
     }
 
     const thresholdSeconds = offlineThresholdMinutes(settings) * 60;
+    // Connectivity deliberately excludes battery: a battery-only packet must
+    // not postpone an offline alert while the dashboard already says Offline.
+    // A present connectivity field is authoritative, including null. Null
+    // means this query returned no connectivity packet, not that battery (or
+    // another non-connectivity value) may supply a replacement timestamp.
+    // Keep the legacy lastSeenSeconds behaviour only for callers which predate
+    // the field altogether.
+    const hasConnectivityLastSeen = 'connectivityLastSeenSeconds' in status;
+    const connectivityLastSeen = Number(status.connectivityLastSeenSeconds);
+    const hasUsableConnectivityLastSeen = status.connectivityLastSeenSeconds !== null
+        && status.connectivityLastSeenSeconds !== undefined
+        && status.connectivityLastSeenSeconds !== ''
+        && Number.isFinite(connectivityLastSeen);
     const hasLastSeen = status.lastSeenSeconds !== null
         && status.lastSeenSeconds !== undefined
         && status.lastSeenSeconds !== '';
-    const lastSeenSeconds = Number(status.lastSeenSeconds);
-    if (hasLastSeen && Number.isFinite(lastSeenSeconds) && lastSeenSeconds >= 0) {
+    const lastSeenSeconds = hasConnectivityLastSeen
+        ? (hasUsableConnectivityLastSeen ? connectivityLastSeen : NaN)
+        : (hasLastSeen ? Number(status.lastSeenSeconds) : NaN);
+    if (Number.isFinite(lastSeenSeconds) && lastSeenSeconds >= 0) {
         return lastSeenSeconds >= thresholdSeconds;
     }
 
@@ -161,6 +176,16 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
     const connectivityEntries = ['heart', 'spo2', 'temp', 'status', 'spo2Quality', 'rssi']
         .map(fresh)
         .filter(Boolean);
+    // Unlike `connected`, the last-connectivity timestamp answers "when did
+    // we last see it?", rather than "is it fresh right now?". Its age must
+    // therefore survive the freshness window; otherwise an old connectivity
+    // packet disappears and an unrelated fresh battery value can delay the
+    // offline decision through the legacy lastSeen fallback. Retain the same
+    // bounded future-clock tolerance used by fresh().
+    const rawConnectivityEntries = ['heart', 'spo2', 'temp', 'status', 'spo2Quality', 'rssi']
+        .map(key => sensor?.[key])
+        .filter(entry => Number.isFinite(entry?.timestampMs)
+            && nowMs - entry.timestampMs >= -CLOCK_STEP_TOLERANCE_MS);
     const statusEntry = current('status');
     const statusValue = statusEntry ? Number(statusEntry.value) : null;
     const connected = connectivityEntries.length > 0;
@@ -182,6 +207,7 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
         return integer ? Math.round(number) : number;
     };
     const timestamps = freshEntries.map(entry => entry.timestampMs);
+    const connectivityTimestamps = rawConnectivityEntries.map(entry => entry.timestampMs);
     const vitalTimestamps = vitalEntries.map(entry => entry.timestampMs);
 
     return {
@@ -234,6 +260,7 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
             return Math.max(0, Math.floor((nowMs - allTs) / 1000));
         })(),
         lastSeenMs: timestamps.length ? Math.max(...timestamps) : null,
+        connectivityLastSeenMs: connectivityTimestamps.length ? Math.max(...connectivityTimestamps) : null,
         vitalLastSeenMs: vitalTimestamps.length ? Math.max(...vitalTimestamps) : null
     };
 }
