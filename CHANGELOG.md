@@ -6,8 +6,21 @@
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-09-19
+
+### Added
+- **กราฟสุขภาพอุปกรณ์ย้อนหลังในหน้ามอนิเตอร์ผู้ป่วย** — เพิ่มแท็บ `อุปกรณ์` ใน side panel เดิม แสดงกราฟ Battery Level (%) และ BLE Signal (RSSI, dBm) โดยใช้ช่วงเวลาเดียวกับกราฟสัญญาณชีพ (1 ชม. / 6 ชม. / 12 ชม. / 24 ชม. / 3 วัน / 7 วัน) และรองรับค่าจริงของ RSSI ที่เป็นเลขติดลบ รวมถึงแบตเตอรี่ 0% โดยไม่ถูกกรองทิ้ง
+- **ส่ง Battery/RSSI ของนาฬิกาไปกับ topology และ Central heartbeat** — MQTT bridge เก็บค่าล่าสุดจาก `ble/batt`, `ble/rssi` และ battery ใน `ble/vitals` ตาม MAC ของนาฬิกา แล้วเติมเป็น `batteryPercent` / `rssiDbm` ใน `mqtt-sensors.json` เพื่อให้ collector ส่งต่อไป NurseAid Central พร้อมข้อมูล sensor topology
+- **รองรับประวัติ Battery ใน fallback ของกราฟ** — endpoint trend ใช้ InfluxDB เป็นแหล่งหลักสำหรับ Battery/RSSI และใช้ `vital_signs_logs` ใน PostgreSQL เป็น fallback สำหรับ Battery หาก InfluxDB ใช้งานไม่ได้
+
+### Changed
+- ปรับ side panel แนวโน้มให้แยกเป็น 2 โหมดชัดเจน: **สัญญาณชีพ** (HR / SpO₂ / Temperature) และ **อุปกรณ์** (Battery / RSSI) เพื่อไม่ให้กราฟ 5 ตัวแน่นเกินไป โดยเฉพาะบนหน้าจอขนาดเล็ก
+- อัปเดต environment example ให้ระบุเวอร์ชันแอปเป็น `2.23.0` ให้ตรงกับ `package.json` และ release ปัจจุบัน
+
 ### Fixed
-- **บอร์ด ESP32 รีเซ็ตกลางคันตอนอัปเดตเฟิร์มแวร์ (OTA) ผ่าน WiFi ช้า** — ไฟล์ `.bin` ~1.5MB บน WiFi ช้าใช้เวลาโหลด ~40 วิ แต่ watchdog เดิมตั้งไว้ 30 วิสำหรับ loop() ปกติเท่านั้น ทำให้ชิปโดนรีเซ็ตกลางการอัปเดตทั้งฝั่ง push (ArduinoOTA) และ pull (httpUpdate) ตอนนี้ขยายเพดาน watchdog เป็น 90 วิชั่วคราวเฉพาะช่วง OTA แล้วคืนค่าปกติทันทีไม่ว่าผลจะสำเร็จหรือล้มเหลว — ยังคงจุดตัดสุดท้ายไว้เผื่อดาวน์โหลดค้างสนิท (โหนดพวกนี้ไม่มี USB ให้กู้คืนหน้างาน) และเพิ่ม TCP timeout 15 วิให้ฝั่ง pull ไม่รอค้างไม่มีที่สิ้นสุด
+- **บอร์ด ESP32 รีเซ็ตกลางคันตอนอัปเดตเฟิร์มแวร์ (OTA) ผ่าน WiFi ช้า** — ไฟล์ `.bin` ~1.5MB บน WiFi ช้าใช้เวลาโหลด ~40 วิ แต่ watchdog เดิมตั้งไว้ 30 วิสำหรับ loop() ปกติเท่านั้น ทำให้ชิปโดนรีเซ็ตกลางการอัปเดตทั้งฝั่ง push (ArduinoOTA) และ pull (httpUpdate) ตอนนี้ขยายเพดาน watchdog เป็น 90 วิชั่วคราวเฉพาะช่วง OTA แล้วคืนค่าปกติทันทีไม่ว่าผลจะสำเร็จหรือล้มเหลว — ยังคงจุดตัดสุดท้ายไว้เผื่อดาวน์โหลดค้างสนิท และเพิ่ม TCP timeout 15 วิให้ฝั่ง pull
+- แก้เส้นทาง trend API ที่ query `ble_batt` / `ble_rssi` อยู่แล้วแต่ไม่ได้ map สอง measurement นี้เข้า response ทำให้ frontend ไม่มีข้อมูลสำหรับวาดกราฟ
+- เพิ่ม validation และ regression tests เพื่อให้ telemetry Battery/RSSI ไม่หายเมื่อ watch ย้าย ownership ระหว่าง ESP32 หลายตัว และ collector forward ค่าเหล่านี้โดยไม่ตัดทิ้ง
 
 ## [2.22.0] - 2026-09-15
 
