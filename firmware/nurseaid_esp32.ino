@@ -159,7 +159,7 @@ struct WifiCred {
 static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
-#define FW_VERSION       "2.2.2"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+#define FW_VERSION       "2.2.3"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
 
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
@@ -173,6 +173,11 @@ static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตห�
 //   ⚠️ ต้องตั้งมากกว่าเวลา block นานสุดใน loop หนึ่งรอบ ไม่งั้นจะรีเซ็ตทั้งที่ปกติ
 //      วัดแล้วกรณีแย่สุด ~12 วิ (connect 8 + discovery 3 + อื่น ๆ) จึงตั้ง 30 วิ
 #define WDT_TIMEOUT_SEC              30
+// ระหว่าง OTA (push/pull) ขยายเพดานนี้ชั่วคราวแทนการลบ watchdog ทิ้งเฉยๆ —
+// ไฟล์ ~1.5MB ที่ WiFi ช้าใช้เวลา ~40 วิ ต้องการเพดานสูงกว่านั้นพอสมควร แต่ถ้า
+// ดาวน์โหลดค้างสนิทจริง (TCP ค้างไม่มี RST/FIN, ไม่มี onError ให้เรียก) ยังต้องมี
+// จุดตัดให้ชิปรีเซ็ตตัวเองกลับมาได้ — โหนดพวกนี้ไม่มี USB ให้กู้คืนหน้างาน
+#define OTA_WDT_TIMEOUT_SEC          90
 #define BROKER_TRY_MAX_BOOTS         2       // ลองรวมกี่บูต ถ้าไม่ติด → กลับ broker เดิม
 #define BROKER_CONFIRM_MS            120000  // ต้องต่อติดต่อเนื่องกี่ ms ก่อนยืนยันเป็นตัวหลัก
 #define BROKER_TRIAL_DEADLINE_MS     900000  // ทดลองได้ไม่เกิน 15 นาที ไม่ผ่าน = ถอยกลับ
@@ -806,6 +811,23 @@ static void publishOtaStatus(const char* state, const char* detail) {
 
 static void slotCleanupFwd(DeviceSlot& s, bool graceful, bool planned = false);   // นิยามจริงอยู่ด้านล่าง
 
+// ขยาย/คืนเพดานเวลา watchdog — ใช้ทั้งฝั่ง OTA push (ArduinoOTA) และ pull (httpUpdate)
+// เพื่อไม่ให้ต้องจำแก้สองที่ (เคยเป็นแบบนั้นมาก่อนจนคอมเมนต์ต้องอ้างถึงกันเอง)
+static void otaWatchdogWiden(uint32_t seconds) {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    esp_task_wdt_config_t cfg = {
+        .timeout_ms     = seconds * 1000U,
+        .idle_core_mask = 0,
+        .trigger_panic  = true,
+    };
+    esp_task_wdt_reconfigure(&cfg);
+#else
+    esp_task_wdt_init(seconds, true);
+#endif
+    esp_task_wdt_reset();
+}
+static void otaWatchdogRestore() { otaWatchdogWiden(WDT_TIMEOUT_SEC); }
+
 static void doHttpOta(const char* url) {
     nlog("[OTA] เริ่มอัปเดตจาก %s", url);
     publishOtaStatus("start", url);
@@ -817,10 +839,21 @@ static void doHttpOta(const char* url) {
     for (auto& s : slots) if (s.inUse) slotCleanupFwd(s, true);
     delay(300);
 
+    // ขยายเพดาน watchdog ชั่วคราวแทนการลบทิ้ง (เหตุผลเดียวกับฝั่ง push)
+    //    httpUpdate.update() เป็น blocking call เดียวครอบคลุมทั้งการโหลดไฟล์
+    //    ไฟล์ ~1.5MB ที่ WiFi ช้าจะเกิน WDT 30 วิ → ถูกรีเซ็ตกลางคัน แต่ถ้า "ลบ" ทิ้ง
+    //    เฉยๆ แล้วดาวน์โหลดค้างสนิท (ไม่มี onError ให้เรียก) จะไม่มีอะไรช่วยรีเซ็ตชิป
+    //    กลับมาเลย ต้องไปถอดปลั๊กเอง — จึงขยายเวลาแทน ยังมีจุดตัดสุดท้ายเผื่อไว้
+    otaWatchdogWiden(OTA_WDT_TIMEOUT_SEC);
+
     WiFiClient client;
+    client.setTimeout(15000);              // กัน TCP ค้างสนิทไม่ให้รอไม่มีที่สิ้นสุด
     httpUpdate.rebootOnUpdate(false);      // จะรีบูตเองหลังแจ้งผลแล้ว
     httpUpdate.setLedPin(-1);
     t_httpUpdate_return ret = httpUpdate.update(client, url);
+
+    // กลับสู่ timeout ปกติทันที ไม่ว่าผลจะเป็นอย่างไร (ก่อน switch ที่แยกผลลัพธ์)
+    otaWatchdogRestore();
 
     switch (ret) {
         case HTTP_UPDATE_OK:
@@ -1044,16 +1077,32 @@ static void setupArduinoOTA() {
         NimBLEDevice::getScan()->stop();
         scanRunning = false;
         for (auto& s : slots) if (s.inUse) slotCleanupFwd(s, true);
-        Serial.println("[OTA] เริ่มรับเฟิร์มแวร์ (push)");
+
+        // ขยายเพดาน watchdog ชั่วคราว (ไม่ลบทิ้ง — เหตุผลเดียวกับฝั่ง pull ใน doHttpOta)
+        //    ArduinoOTA::_runUpdate() มี while(...) วนรับไฟล์ทั้งก้อนอยู่ข้างใน
+        //    ไม่เคยกลับมาที่ loop() เลยจนกว่าจะเสร็จ → ไม่มีใครป้อนอาหาร watchdog
+        //    ไฟล์ ~1.5MB ที่ WiFi ~40KB/s ใช้เวลา ~40 วิ > WDT 30 วิ
+        //    → ชิปถูกรีเซ็ตกลางคัน ฝั่ง Pi เห็นเป็น "Connection reset by peer" ที่ ~75%
+        //    แต่ถ้าลบ watchdog ทิ้งเฉยๆ แล้ว TCP ค้างสนิทแบบไม่มี onError ให้เรียก
+        //    ชิปจะไม่มีอะไรช่วยรีเซ็ตกลับมาเลย (โหนดพวกนี้ไม่มี USB กู้คืนหน้างาน)
+        //    จึงขยายเวลาแทน ยังมีจุดตัดสุดท้ายเผื่อไว้ (ใช้ helper ร่วมกับฝั่ง pull)
+        otaWatchdogWiden(OTA_WDT_TIMEOUT_SEC);
+        Serial.println("[OTA] เริ่มรับเฟิร์มแวร์ (push) — ขยายเพดาน watchdog ชั่วคราว");
     });
     ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
         static int last = -1;
         int pct = t ? (int)(p * 100 / t) : 0;
         if (pct / 10 != last) { last = pct / 10; Serial.printf("[OTA] %d%%\n", pct); }
     });
-    ArduinoOTA.onEnd([]()   { Serial.println("[OTA] ✅ สำเร็จ — รีบูต"); });
+    ArduinoOTA.onEnd([]() {
+        // สำเร็จ → ArduinoOTA จะรีบูตเองทันที แต่คืนเพดานปกติไว้เผื่อจังหวะคาบเกี่ยว
+        otaWatchdogRestore();
+        Serial.println("[OTA] ✅ สำเร็จ — รีบูต");
+    });
     ArduinoOTA.onError([](ota_error_t e) {
-        Serial.printf("[OTA] ❌ error %u\n", e);
+        // ล้มเหลว → ต้องคืนเพดานปกติเสมอ ไม่งั้นเพดานกว้างค้างอยู่ถาวร
+        otaWatchdogRestore();
+        Serial.printf("[OTA] ❌ error %u (เฟิร์มแวร์เดิมยังอยู่ครบ)\n", e);
         otaBusy = false;
     });
     ArduinoOTA.begin();
