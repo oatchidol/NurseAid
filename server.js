@@ -3818,6 +3818,35 @@ ${ICON_SET}
             border: 1px solid var(--border-color);
         }
 
+        #sidePanel .trend-mode-control {
+            display: inline-flex;
+            align-self: flex-start;
+            flex: 0 0 auto;
+            gap: 0.2rem;
+            margin: 0 0 0.65rem;
+            padding: 0.22rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--r-pill);
+            background: var(--bg-badge);
+        }
+
+        #sidePanel .trend-mode-btn {
+            border: 0;
+            border-radius: var(--r-pill);
+            padding: 0.38rem 0.85rem;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: var(--fs-label);
+            font-weight: 700;
+            transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+        }
+
+        #sidePanel .trend-mode-btn.active {
+            background: var(--bg-card);
+            color: var(--text-heading);
+            box-shadow: var(--shadow-sm);
+        }
+
         #sidePanel .trend-grid {
             position: relative;
             display: grid !important;
@@ -3826,6 +3855,14 @@ ${ICON_SET}
             grid-template-columns: minmax(0, 1fr) !important;
             grid-template-rows: repeat(3, minmax(0, 1fr));
             gap: 0.7rem !important;
+        }
+
+        #sidePanel .trend-grid.trend-grid--device {
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+        }
+
+        #sidePanel .trend-grid.hidden {
+            display: none !important;
         }
 
         #sidePanel .trend-card {
@@ -3850,6 +3887,8 @@ ${ICON_SET}
         #sidePanel .trend-card--hr { --trend-color: #ef4444; }
         #sidePanel .trend-card--spo2 { --trend-color: #3b82f6; }
         #sidePanel .trend-card--temp { --trend-color: #f97316; }
+        #sidePanel .trend-card--battery { --trend-color: #22c55e; }
+        #sidePanel .trend-card--rssi { --trend-color: #8b5cf6; }
 
         #sidePanel .trend-card:hover {
             border-color: color-mix(in srgb, var(--trend-color) 38%, var(--border-color));
@@ -4814,8 +4853,12 @@ ${ICON_SET}
                 </button>
             </div>
         </div>
-        <div class="trend-grid grid grid-cols-1 gap-3">
-            <div id="panel-trend-status" class="hidden" role="status" aria-live="polite"></div>
+        <div class="trend-mode-control" role="tablist" aria-label="เลือกประเภทกราฟ">
+            <button id="trend-mode-vitals" class="trend-mode-btn active" type="button" role="tab" aria-selected="true" aria-controls="trend-vitals-grid" onclick="setTrendPanelMode('vitals')">สัญญาณชีพ</button>
+            <button id="trend-mode-device" class="trend-mode-btn" type="button" role="tab" aria-selected="false" aria-controls="trend-device-grid" onclick="setTrendPanelMode('device')">อุปกรณ์</button>
+        </div>
+        <div id="panel-trend-status" class="hidden" role="status" aria-live="polite"></div>
+        <div id="trend-vitals-grid" class="trend-grid grid grid-cols-1 gap-3" role="tabpanel" aria-labelledby="trend-mode-vitals">
             <div class="trend-card trend-card--hr card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
                 <div class="trend-card-head flex justify-between items-center mb-2">
                     <div class="trend-title-group">
@@ -4856,6 +4899,36 @@ ${ICON_SET}
                     <span id="avg-temp" class="trend-summary text-2xs font-mono"></span>
                 </div>
                 <div class="trend-chart h-[145px]"><canvas id="chartTEMP_Panel"></canvas></div>
+            </div>
+        </div>
+
+        <div id="trend-device-grid" class="trend-grid trend-grid--device grid grid-cols-1 gap-3 hidden" role="tabpanel" aria-labelledby="trend-mode-device">
+            <div class="trend-card trend-card--battery card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
+                <div class="trend-card-head flex justify-between items-center mb-2">
+                    <div class="trend-title-group">
+                        <span class="trend-icon" aria-hidden="true"><span class="ic ic-battery" aria-hidden="true"></span></span>
+                        <div>
+                            <p class="text-xs font-bold uppercase" style="color: var(--accent-green);">Battery Level</p>
+                            <span class="trend-card-subtitle">สุขภาพแบตเตอรี่ · %</span>
+                        </div>
+                    </div>
+                    <span id="avg-battery" class="trend-summary text-2xs font-mono"></span>
+                </div>
+                <div class="trend-chart h-[145px]"><canvas id="chartBATT_Panel"></canvas></div>
+            </div>
+
+            <div class="trend-card trend-card--rssi card p-4 shadow-sm" style="background: var(--bg-vital); border: 1px solid var(--border-color);">
+                <div class="trend-card-head flex justify-between items-center mb-2">
+                    <div class="trend-title-group">
+                        <span class="trend-icon" aria-hidden="true"><span class="ic ic-signal" aria-hidden="true"></span></span>
+                        <div>
+                            <p class="text-xs font-bold uppercase" style="color: var(--text-heading);">BLE Signal</p>
+                            <span class="trend-card-subtitle">ความแรงสัญญาณ · dBm (ยิ่งใกล้ 0 ยิ่งดี)</span>
+                        </div>
+                    </div>
+                    <span id="avg-rssi" class="trend-summary text-2xs font-mono"></span>
+                </div>
+                <div class="trend-chart h-[145px]"><canvas id="chartRSSI_Panel"></canvas></div>
             </div>
         </div>
     </div>
@@ -5355,7 +5428,7 @@ ${ICON_SET}
         let panelPulseDots = {};
         let panelTrendRequest = null;
         let panelTrendState = {
-            hn: '', name: '', hours: 24,
+            hn: '', name: '', hours: 24, mode: 'vitals',
             thresholds: {
                 hrMin: 50, hrWarningMin: 60, hrWarningMax: 110, hrMax: 120,
                 spo2CriticalMin: 91, spo2WarningMin: 95,
@@ -5559,7 +5632,7 @@ ${ICON_SET}
                 if (panelPulseDots[id]) panelPulseDots[id].remove();
             });
             panelPulseDots = {};
-            ['avg-hr', 'avg-spo2', 'avg-temp'].forEach(function(id) {
+            ['avg-hr', 'avg-spo2', 'avg-temp', 'avg-battery', 'avg-rssi'].forEach(function(id) {
                 const node = document.getElementById(id);
                 if (node) node.textContent = '';
             });
@@ -5569,9 +5642,18 @@ ${ICON_SET}
             const recordedPoints = [];
 
             data.forEach(function(row) {
-                const value = Number(row[key]);
+                const rawValue = row[key];
+                if (rawValue === null || rawValue === undefined || rawValue === '') return;
+                const value = Number(rawValue);
                 const timestamp = new Date(row._time).getTime();
-                if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(timestamp)) return;
+                if (!Number.isFinite(value) || !Number.isFinite(timestamp)) return;
+                if (key === 'ble_batt') {
+                    if (value < 0 || value > 100) return;
+                } else if (key === 'ble_rssi') {
+                    if (value < -120 || value > 0) return;
+                } else if (value <= 0) {
+                    return;
+                }
                 recordedPoints.push({ x: timestamp, y: value });
             });
 
@@ -5799,6 +5881,7 @@ ${ICON_SET}
                 hn: hn,
                 name: name,
                 hours: 24,
+                mode: 'vitals',
                 thresholds: {
                     hrMin: panelThresholdNumber(hrMin, 50),
                     hrWarningMin: panelThresholdNumber(hrWarningMin, 60),
@@ -5820,7 +5903,32 @@ ${ICON_SET}
             document.body.classList.add('trend-panel-open');
             updatePanelThresholdLabels();
             updatePanelTrendRange();
+            setTrendPanelMode('vitals');
             await loadPanelTrend();
+        }
+
+        function setTrendPanelMode(mode) {
+            const next = mode === 'device' ? 'device' : 'vitals';
+            panelTrendState.mode = next;
+            const vitals = document.getElementById('trend-vitals-grid');
+            const device = document.getElementById('trend-device-grid');
+            const vitalsButton = document.getElementById('trend-mode-vitals');
+            const deviceButton = document.getElementById('trend-mode-device');
+            if (vitals) vitals.classList.toggle('hidden', next !== 'vitals');
+            if (device) device.classList.toggle('hidden', next !== 'device');
+            if (vitalsButton) {
+                vitalsButton.classList.toggle('active', next === 'vitals');
+                vitalsButton.setAttribute('aria-selected', next === 'vitals' ? 'true' : 'false');
+            }
+            if (deviceButton) {
+                deviceButton.classList.toggle('active', next === 'device');
+                deviceButton.setAttribute('aria-selected', next === 'device' ? 'true' : 'false');
+            }
+            requestAnimationFrame(function() {
+                Object.values(panelCharts).forEach(function(chart) {
+                    if (chart && typeof chart.resize === 'function') chart.resize();
+                });
+            });
         }
 
         function changeTrendRange(value) {
@@ -6008,6 +6116,14 @@ ${ICON_SET}
                     warningMax: state.thresholds.tempWarningMax, criticalMax: state.thresholds.tempMax,
                     referenceBounds: true
                 }, 'avg-temp');
+                render('chartBATT_Panel', 'Battery', '#22c55e', 'ble_batt', {
+                    absoluteMin: 0, absoluteMax: 100, minSpan: 20, decimals: 0,
+                    fallbackMin: 0, fallbackMax: 100, fallbackStep: 20, unit: '%'
+                }, 'avg-battery');
+                render('chartRSSI_Panel', 'RSSI', '#8b5cf6', 'ble_rssi', {
+                    absoluteMin: -120, absoluteMax: 0, minSpan: 20, decimals: 0,
+                    fallbackMin: -100, fallbackMax: -40, fallbackStep: 10, unit: 'dBm'
+                }, 'avg-rssi');
 
                 setPanelTrendStatus('', false);
 
@@ -7153,7 +7269,9 @@ async function patientTrendHandler(req, res) {
                 |> filter(fn: (r) =>
                     r._measurement == "ble_heart" or
                     r._measurement == "ble_spo2" or
-                    r._measurement == "ble_temp"
+                    r._measurement == "ble_temp" or
+                    r._measurement == "ble_batt" or
+                    r._measurement == "ble_rssi"
                 )
                 |> filter(fn: (r) => exists r.mac and strings.toLower(v: r.mac) == "${escapeFluxString(macNormalized)}")
                 |> aggregateWindow(every: ${trendWindow.aggregateWindow}, fn: mean, createEmpty: false)
@@ -7172,23 +7290,26 @@ async function patientTrendHandler(req, res) {
                     const timeStr = new Date(row._time).toISOString();
                     const key = timeStr;
                     if (!grouped[key]) {
-                        grouped[key] = { _time: key, ble_heart: null, ble_spo2: null, ble_temp: null };
+                        grouped[key] = { _time: key, ble_heart: null, ble_spo2: null, ble_temp: null, ble_batt: null, ble_rssi: null };
                     }
                     if (row._measurement === 'ble_heart') grouped[key].ble_heart = Math.round(value);
                     if (row._measurement === 'ble_spo2') grouped[key].ble_spo2 = Math.round(value * 10) / 10;
                     if (row._measurement === 'ble_temp') grouped[key].ble_temp = Math.round(value * 100) / 100;
+                    if (row._measurement === 'ble_batt') grouped[key].ble_batt = Math.round(value * 10) / 10;
+                    if (row._measurement === 'ble_rssi') grouped[key].ble_rssi = Math.round(value * 10) / 10;
                 });
                 const result = Object.values(grouped).sort((a, b) => new Date(a._time) - new Date(b._time));
-                const hasVitalValues = result.some(row =>
-                    row.ble_heart !== null || row.ble_spo2 !== null || row.ble_temp !== null
+                const hasTrendValues = result.some(row =>
+                    row.ble_heart !== null || row.ble_spo2 !== null || row.ble_temp !== null ||
+                    row.ble_batt !== null || row.ble_rssi !== null
                 );
 
-                if (hasVitalValues) {
+                if (hasTrendValues) {
                     console.log(`[Trend] HN=${hn} MAC=${mac} InfluxDB returned ${result.length} rows`);
                     return res.json(result);
                 }
 
-                console.warn(`[Trend] HN=${hn} MAC=${mac} InfluxDB rows had no vital values, falling back to Postgres`);
+                console.warn(`[Trend] HN=${hn} MAC=${mac} InfluxDB rows had no trend values, falling back to Postgres`);
             }
         } catch (influxErr) {
             console.warn(`[Trend] InfluxDB query failed for MAC=${mac}, falling back to Postgres:`, influxErr.message);
@@ -7201,14 +7322,17 @@ async function patientTrendHandler(req, res) {
                     (CAST(extract(minute from recorded_at) AS integer) % $2::integer) * interval '1 minute' as _time,
                 ROUND(AVG(heart_rate)) as ble_heart,
                 ROUND(AVG(spo2), 1) as ble_spo2,
-                ROUND(AVG(temperature), 2) as ble_temp
+                ROUND(AVG(temperature), 2) as ble_temp,
+                ROUND(AVG(battery), 1) as ble_batt,
+                NULL::numeric as ble_rssi
             FROM vital_signs_logs
             WHERE hm_number = $1
             AND recorded_at > NOW() - ($3::integer * interval '1 hour')
             AND (
                 COALESCE(heart_rate, 0) > 0 OR
                 COALESCE(spo2, 0) > 0 OR
-                COALESCE(temperature, 0) > 0
+                COALESCE(temperature, 0) > 0 OR
+                battery IS NOT NULL
             )
             GROUP BY 1
             ORDER BY 1 ASC

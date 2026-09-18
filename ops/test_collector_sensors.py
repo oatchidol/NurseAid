@@ -42,12 +42,18 @@ class SensorSnapshotTests(unittest.TestCase):
 
     def test_fresh_snapshot_adjusts_packet_age(self):
         value = {"topologyReady": True, "sensors": {"ESP32-A": {
-            "status": "connected", "watches": [{"watchId": "A12", "status": "connected", "lastPacketAgeSeconds": 5}]
+            "status": "connected", "watches": [{
+                "watchId": "A12", "status": "connected", "batteryPercent": 82,
+                "rssiDbm": -58, "lastPacketAgeSeconds": 5,
+            }]
         }}}
         now = self.write(value, age=3)
         result = MODULE.sensor_snapshot(now)
         self.assertEqual(result["ESP32-A"]["status"], "connected")
-        self.assertEqual(result["ESP32-A"]["watches"][0]["lastPacketAgeSeconds"], 8)
+        watch = result["ESP32-A"]["watches"][0]
+        self.assertEqual(watch["batteryPercent"], 82)
+        self.assertEqual(watch["rssiDbm"], -58)
+        self.assertEqual(watch["lastPacketAgeSeconds"], 8)
 
     def test_board_metadata_and_connected_jstyle_count_are_forwarded(self):
         value = {"topologyReady": True, "sensors": {"ESP32-A": {

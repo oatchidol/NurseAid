@@ -270,6 +270,8 @@ def _on_message(client, userdata, msg):
                             data_buffer[combined_topic][mac] = buffered_fields(
                                 {"value": float_val}, data_json
                             )
+                            if field == "batt" and 0 <= float_val <= 100:
+                                esp32_topology.update_watch_metric(mac, "batteryPercent", float_val)
                             if field == "status" and data_json.get("activity"):
                                 data_buffer[combined_topic][mac]["activity"] = data_json.get("activity")
                             if VERBOSE_SENSOR_LOGS:
@@ -311,9 +313,14 @@ def _on_message(client, userdata, msg):
                     if VERBOSE_SENSOR_LOGS:
                         print(f"   🗑️ Ignored legacy zero placeholder: MAC={mac}, Type={topic}")
                     return
+                metric_value = float(data_json.get("value", 0))
                 data_buffer[topic][mac] = buffered_fields(
-                    {"value": float(data_json.get("value", 0))}, data_json
+                    {"value": metric_value}, data_json
                 )
+                if topic == "ble/batt" and 0 <= metric_value <= 100:
+                    esp32_topology.update_watch_metric(mac, "batteryPercent", metric_value)
+                elif topic == "ble/rssi" and -120 <= metric_value <= 0:
+                    esp32_topology.update_watch_metric(mac, "rssiDbm", metric_value)
                 if VERBOSE_SENSOR_LOGS:
                     print(f"   📡 Sensor: MAC={mac}, Type={topic}, Value={data_json.get('value')}")
 

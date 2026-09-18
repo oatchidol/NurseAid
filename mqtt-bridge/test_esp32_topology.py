@@ -58,6 +58,25 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(board["connectedJstyleCount"], 0)
             self.assertEqual(board["watches"][0]["status"], "disconnected")
 
+    def test_watch_battery_and_rssi_are_included_in_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = Esp32TopologyRegistry(Path(directory) / "mqtt-sensors.json", stale_seconds=90, settle_seconds=1)
+            registry.apply(REAL_PAYLOAD, now_monotonic=100)
+            registry.update_watch_metric("21:02:02:06:9F:7F", "batteryPercent", 82, now_monotonic=110)
+            registry.update_watch_metric("21:02:02:06:9F:7F", "rssiDbm", -58, now_monotonic=112)
+            watch = registry.snapshot(now_monotonic=120)["sensors"]["E0:E5:BD:A1:C5:8C"]["watches"][0]
+            self.assertEqual(watch["batteryPercent"], 82.0)
+            self.assertEqual(watch["rssiDbm"], -58.0)
+            self.assertEqual(watch["lastPacketAgeSeconds"], 8)
+
+    def test_watch_metric_validation_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = Esp32TopologyRegistry(Path(directory) / "mqtt-sensors.json", stale_seconds=90, settle_seconds=1)
+            with self.assertRaisesRegex(ValueError, "batteryPercent out of range"):
+                registry.update_watch_metric("21:02:02:06:9F:7F", "batteryPercent", 101)
+            with self.assertRaisesRegex(ValueError, "rssiDbm out of range"):
+                registry.update_watch_metric("21:02:02:06:9F:7F", "rssiDbm", -127)
+
     def test_cache_preserves_unseen_board_until_reconciled(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "mqtt-sensors.json"
@@ -126,6 +145,19 @@ class CrossNodeDedupeTests(unittest.TestCase):
             snapshot = registry.snapshot(now_monotonic=120)
             self.assertEqual(watch_ids(snapshot, BOARD_A), [WATCH_X])
             self.assertEqual(watch_ids(snapshot, BOARD_B), [WATCH_W])
+
+    def test_watch_telemetry_follows_latest_board_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = self._registry(directory)
+            registry.apply(inventory("na1c58c", BOARD_A, "172.16.251.32", [WATCH_W]), now_monotonic=100)
+            registry.update_watch_metric(WATCH_W, "batteryPercent", 64, now_monotonic=105)
+            registry.update_watch_metric(WATCH_W, "rssiDbm", -61, now_monotonic=106)
+            registry.apply(inventory("node2", BOARD_B, "172.16.251.33", [WATCH_W]), now_monotonic=110)
+            snapshot = registry.snapshot(now_monotonic=120)
+            self.assertEqual(watch_ids(snapshot, BOARD_A), [])
+            watch = snapshot["sensors"][BOARD_B]["watches"][0]
+            self.assertEqual(watch["batteryPercent"], 64.0)
+            self.assertEqual(watch["rssiDbm"], -61.0)
 
     def test_a_board_reclaims_a_watch_when_it_reports_again(self):
         with tempfile.TemporaryDirectory() as directory:

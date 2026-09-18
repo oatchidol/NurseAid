@@ -85,12 +85,20 @@ class BoardState:
     observed_since_start: bool = False
 
 
+@dataclass
+class WatchTelemetry:
+    battery_percent: float | None = None
+    rssi_dbm: float | None = None
+    last_packet_monotonic: float | None = None
+
+
 class Esp32TopologyRegistry:
     def __init__(self, path: Path, stale_seconds: int = 90, settle_seconds: int = 30):
         self.path = Path(path)
         self.stale_seconds = max(5, int(stale_seconds))
         self.settle_seconds = max(1, int(settle_seconds))
         self.boards: dict[str, BoardState] = {}
+        self.watch_telemetry: dict[str, WatchTelemetry] = {}
         self.expected_from_cache: set[str] = set()
         self.first_message_monotonic: float | None = None
         self.lock = threading.RLock()
@@ -153,6 +161,35 @@ class Esp32TopologyRegistry:
                     if other_mac != board_mac:
                         board.devices = tuple(device for device in board.devices if device not in reported_devices)
 
+    def update_watch_metric(
+        self,
+        watch_mac: object,
+        metric: str,
+        value: object,
+        now_monotonic: float | None = None,
+    ) -> None:
+        mac = canonical_mac(watch_mac)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("watch metric must be numeric")
+        numeric = float(value)
+        if metric == "batteryPercent":
+            if not 0 <= numeric <= 100:
+                raise ValueError("batteryPercent out of range")
+        elif metric == "rssiDbm":
+            if not -120 <= numeric <= 0:
+                raise ValueError("rssiDbm out of range")
+        else:
+            raise ValueError("unsupported watch metric")
+
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        with self.lock:
+            telemetry = self.watch_telemetry.setdefault(mac, WatchTelemetry())
+            if metric == "batteryPercent":
+                telemetry.battery_percent = numeric
+            else:
+                telemetry.rssi_dbm = numeric
+            telemetry.last_packet_monotonic = now
+
     def topology_ready(self, now_monotonic: float | None = None) -> bool:
         with self.lock:
             if self.first_message_monotonic is None:
@@ -172,7 +209,20 @@ class Esp32TopologyRegistry:
                 board = self.boards[board_mac]
                 fresh = board.last_seen_monotonic is not None and now - board.last_seen_monotonic <= self.stale_seconds
                 status = "connected" if fresh else "disconnected"
-                watches = [{"watchId": mac, "status": status} for mac in board.devices]
+                watches = []
+                for mac in board.devices:
+                    watch = {"watchId": mac, "status": status}
+                    telemetry = self.watch_telemetry.get(mac)
+                    if telemetry is not None:
+                        if telemetry.battery_percent is not None:
+                            watch["batteryPercent"] = telemetry.battery_percent
+                        if telemetry.rssi_dbm is not None:
+                            watch["rssiDbm"] = telemetry.rssi_dbm
+                        if telemetry.last_packet_monotonic is not None:
+                            watch["lastPacketAgeSeconds"] = max(
+                                0, round(now - telemetry.last_packet_monotonic)
+                            )
+                    watches.append(watch)
                 last_seen_age = None
                 if board.last_seen_monotonic is not None:
                     last_seen_age = max(0, round(now - board.last_seen_monotonic))
