@@ -13620,9 +13620,18 @@ app.get('/system-mgmt', adminOnly, async (req, res) => {
                             return;
                         }
                         if (result.healthy) {
-                            showStatus('<span class="ic ic-check" aria-hidden="true"></span> อัปเดตสำเร็จ v' + escapeHTML(lastUpdateCheckData && lastUpdateCheckData.latestVersion ? lastUpdateCheckData.latestVersion : ''), 'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800');
-                            btn.disabled = false;
-                            checkForUpdates();
+                            const deployedVersion = result.version || result.targetVersion ||
+                                (lastUpdateCheckData && lastUpdateCheckData.latestVersion) || '';
+                            showStatus(
+                                '<span class="ic ic-check" aria-hidden="true"></span> อัปเดตสำเร็จ' +
+                                (deployedVersion ? ' v' + escapeHTML(deployedVersion) : '') +
+                                ' · กำลังโหลดระบบเวอร์ชันใหม่…',
+                                'rounded-xl border border-green-300 bg-green-50 p-3 text-sm font-semibold text-green-800'
+                            );
+                            // This page was rendered by the old container, so its static
+                            // "current version" label cannot change in-place. Reload after
+                            // the new container has answered the successful status poll.
+                            setTimeout(() => location.reload(), 1200);
                             return;
                         }
                         showStatus('<span class="ic ic-critical" aria-hidden="true"></span> อัปเดตล้มเหลว' + (result.reason ? ' — ' + escapeHTML(result.reason) : ''), 'rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700');

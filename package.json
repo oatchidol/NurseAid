@@ -1,9 +1,10 @@
 {
   "name": "nurseaid",
-  "version": "2.23.0",
+  "version": "2.23.1",
   "main": "server.js",
   "scripts": {
-    "test": "npm run test:offline && npm run test:integration",
+    "test": "npm run test:offline && npm run test:collector && npm run test:integration",
+    "test:collector": "python3 -m unittest ops/test_collector_update.py ops/test_collector_sensors.py",
     "test:offline": "node --check server.js && node --check or-patients.js && SESSION_SECRET=test-secret-please-change-me-32chars node --test --test-force-exit test/test_or_patients.js test/test_ai_chat_logic.js test/test_esp32_node_status.js test/test_esp32_revoke.js test/test_esp32_status.js test/test_firmware_ota.js test/test_priority_rest.js test/test_live_status_freshness.js test/test_template_regex_escapes.js test/test_alert_hysteresis.js",
     "test:integration": "sh -c 'ok=1; for f in test_wards_mgmt.js test_monitor_ai_chat.js; do [ -f \"$f\" ] || { echo \"SKIP integration: $f not present (gitignored, live-stack only)\"; ok=0; }; done; [ \"$ok\" = 1 ] && SESSION_SECRET=test-secret-please-change-me-32chars node --test --test-force-exit test_wards_mgmt.js test_monitor_ai_chat.js; if [ -x mqtt-bridge/.venv/bin/python ] && [ -f mqtt-bridge/test_mqtt_bridge.py ]; then cd mqtt-bridge && ./.venv/bin/python -m unittest test_mqtt_bridge; else echo \"SKIP integration: mqtt-bridge venv or test_mqtt_bridge.py not present\"; fi'",
     "test:or-patients": "node --check server.js && node --check or-patients.js && node --test test/test_or_patients.js",

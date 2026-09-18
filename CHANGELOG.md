@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [2.23.1] - 2026-09-19
+
+### Fixed
+- **ตัวอัปเดตรายงานว่า “สำเร็จ” แต่หน้าเว็บยังค้างเวอร์ชันเก่า** — หลัง container ใหม่ผ่าน health-check แล้ว หน้า `/system-mgmt` จะ reload อัตโนมัติเพื่อให้หัวข้อ “เวอร์ชันปัจจุบัน” มาจาก process ใหม่แทน HTML ที่ render ไว้ก่อนเริ่มอัปเดต
+- **ป้องกัน false-success เมื่อ repo ใหม่กว่า container ที่กำลังรัน** — updater ไม่ใช้แค่ `git HEAD` ตัดสินว่า “already up to date” อีกต่อไป แต่เทียบเวอร์ชันจริงจาก `/app/package.json` ใน container กับ `package.json` ใน repo; ถ้า repo เป็นเวอร์ชันใหม่แต่ container ยังเก่า ระบบจะ rebuild/recreate ต่อทันที
+- **ตรวจยืนยันเวอร์ชันหลัง deploy ก่อนประกาศสำเร็จ** — แม้ health-check ผ่าน ระบบจะถือว่าอัปเดตสำเร็จก็ต่อเมื่อเวอร์ชันใน container ตรงกับ target version เท่านั้น มิฉะนั้นจะเข้าสู่ rollback พร้อมบันทึกเหตุผล
+- **ให้ updater ฝั่ง collector โหลดโค้ดรุ่นใหม่หลัง release ได้เอง** — collector รุ่น 2.23.1 จะ prefer source จาก repo mount และ restart ตัวเองหลังมี git update จริง ทำให้การแก้ updater ใน release ถัดไปมีผลโดยไม่ต้อง rebuild collector ทุกครั้ง (เครื่องที่อัปเกรดมาจาก collector รุ่นเก่าต้อง recreate `compose-collector` หนึ่งครั้งเพื่อ bootstrap กลไกนี้)
+
 ## [2.23.0] - 2026-09-19
 
 ### Added

@@ -461,6 +461,22 @@ def wait_for_service(service, timeout=90, interval=2):
     return latest
 
 
+def running_app_version(service="nurseaid"):
+    """Return the version actually running inside the service container."""
+    ids = container_ids(service)
+    if not ids:
+        return None
+    try:
+        value = command(
+            "docker", "exec", ids[0], "node", "-p",
+            "require('/app/package.json').version",
+            timeout=10,
+        ).strip()
+        return value or None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
 def restart_self(container_id):
     subprocess.Popen(
         ("docker", "restart", container_id),
@@ -663,9 +679,20 @@ def run_apply_update(action_id):
         repo_command("git", "fetch", timeout=60)
         repo_command("git", "pull", timeout=60)
         new_sha = repo_command("git", "rev-parse", "HEAD").strip()
+        target_version = read_app_version()
+        running_version_before = running_app_version("nurseaid")
 
-        if new_sha == old_sha:
-            result = {"fromSha": old_sha, "toSha": new_sha, "healthy": True, "message": "already up to date"}
+        # HEAD equality alone does not prove the running container matches the
+        # checkout. An operator may have pulled the repo without rebuilding,
+        # leaving (for example) repo=2.23.0 while the container still runs
+        # 2.22.0. In that case we must rebuild/recreate instead of returning a
+        # false-success "already up to date".
+        if new_sha == old_sha and running_version_before == target_version:
+            result = {
+                "fromSha": old_sha, "toSha": new_sha, "healthy": True,
+                "version": running_version_before, "targetVersion": target_version,
+                "message": "already up to date",
+            }
             append_apply_update_history({"actionId": action_id, **result})
             return result
 
@@ -706,15 +733,28 @@ def run_apply_update(action_id):
             raise RuntimeError("failed to recreate the container on the new build; working tree restored — verify the running container manually, it may still be the old version")
         report_phase(action_id, "health_check")
         runtime = wait_for_service("nurseaid", timeout=90)
+        running_version_after = running_app_version("nurseaid")
 
-        if runtime.get("status") == "healthy":
-            result = {"fromSha": old_sha, "toSha": new_sha, "healthy": True}
+        if runtime.get("status") == "healthy" and running_version_after == target_version:
+            result = {
+                "fromSha": old_sha, "toSha": new_sha, "healthy": True,
+                "version": running_version_after, "targetVersion": target_version,
+            }
+            if new_sha == old_sha and running_version_before != target_version:
+                result["message"] = "running container was stale and has been rebuilt"
             append_apply_update_history({"actionId": action_id, **result})
             return result
+
+        if runtime.get("status") == "healthy" and running_version_after != target_version:
+            runtime["reason"] = (
+                f"version verification failed: expected {target_version}, "
+                f"running {running_version_after or 'unknown'}"
+            )
 
         # Automatic rollback.
         result = {
             "fromSha": old_sha, "toSha": new_sha, "healthy": False, "rolledBack": True,
+            "targetVersion": target_version, "runningVersion": running_version_after,
             "reason": runtime.get("reason") or "new version failed health check",
         }
         report_phase(action_id, "rolling_back")
@@ -771,6 +811,16 @@ def process_apply_update_requests(now=None):
                 request_path.unlink(missing_ok=True); continue
             result = run_apply_update(action_id)
             atomic_response(response_path, {"actionId": action_id, "status": "succeeded", "result": result}, chown_gid=APPLY_UPDATE_APP_GID)
+
+            # The response is durable in the shared spool before restarting
+            # ourselves, so the newly recreated web app can still read the
+            # completed result. After a real git update, restart the collector
+            # so collector-entrypoint.sh reloads updater logic from /repo.
+            if result.get("fromSha") != result.get("toSha"):
+                ids = container_ids("compose-collector")
+                if ids:
+                    restart_self(ids[0])
+                    return
         except Exception as error:
             atomic_response(response_path, {"actionId": action_id, "status": "failed", "error": str(error)[:500] or type(error).__name__}, chown_gid=APPLY_UPDATE_APP_GID)
 
