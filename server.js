@@ -7708,6 +7708,12 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
     document.getElementById('ai-chat-launcher').addEventListener('click', openAiChat);
     document.getElementById('ai-chat-new').addEventListener('click', clearAiConversation);
+    document.getElementById('ai-chat-patient').addEventListener('change', () => {
+        // A stale conversation still carries the OLD patient into the model's
+        // context via message history even after FOCUSED_BED points at the new
+        // one -- reset so a follow-up question cannot bleed into the wrong patient.
+        if (aiConversationToken) clearAiConversation();
+    });
     document.getElementById('ai-chat-close').addEventListener('click', closeAiChat);
     document.getElementById('ai-chat-backdrop').addEventListener('click', closeAiChat);
     document.getElementById('ai-chat-messages').addEventListener('scroll', updateAiScrollButton, { passive: true });
