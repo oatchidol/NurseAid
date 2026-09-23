@@ -8336,8 +8336,8 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                         <span class="text-2xs font-bold">\${safe.batteryLabel}</span>
                                     </div>
                                 </div>
-                                <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold text-left break-words" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
-                                <div class="text-2xs" style="color:var(--text-tertiary);opacity:.8;">ตำแหน่งโดยประมาณ ไม่ใช่ตำแหน่งจริง</div>
+                                <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold text-left block" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
+                                <div class="text-2xs" style="color:var(--text-tertiary);opacity:.8;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">(ตำแหน่งโดยประมาณ)</div>
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
