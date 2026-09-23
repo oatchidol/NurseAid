@@ -44,6 +44,7 @@ const {
     summariseEsp32Uptime,
     summariseEsp32Reboots
 } = require('./esp32-status');
+const { resolveCurrentZone, zoneMatchState } = require('./patient-location');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
 // forwards X-Forwarded-Proto/X-Forwarded-For) so req.protocol reflects the real
@@ -615,17 +616,17 @@ const ROLES = Object.freeze(['super_admin', 'ward_admin', 'staff_nurse', 'viewer
 
 const ROLE_CAPABILITIES = {
     super_admin: new Set([
-        'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
+        'patients:read','patients:location:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:all','wards:manage','settings:global','audit:read:all','export:read','devices:firmware:write'
     ]),
     ward_admin: new Set([
-        'patients:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
+        'patients:read','patients:location:read','patients:write','patients:priority:write','patients:note:write','devices:read','devices:write','devices:location:write','pairing:write',
         'alerts:read','alerts:ack','alerts:settings:write',
         'users:manage:ward','audit:read:ward','export:read'
     ]),
-    staff_nurse: new Set(['patients:read','patients:priority:write','patients:note:write','devices:read','devices:location:write','alerts:read','alerts:ack','export:read']),
-    viewer: new Set(['patients:read','devices:read','alerts:read'])
+    staff_nurse: new Set(['patients:read','patients:location:read','patients:priority:write','patients:note:write','devices:read','devices:location:write','alerts:read','alerts:ack','export:read']),
+    viewer: new Set(['patients:read','patients:location:read','devices:read','alerts:read'])
 };
 
 function roleHasCapability(role, cap) { return ROLE_CAPABILITIES[role]?.has(cap) === true; }
@@ -1171,6 +1172,15 @@ const LINE_TOKEN = process.env.LINE_TOKEN || '';
 const GROUP_ID = process.env.LINE_GROUP_ID || '';
 const deviceAlertState = {};
 const vitalAlertHysteresisState = new Map();
+// mac -> epoch ms when a zone mismatch was first observed (unbroken). Cleared
+// the moment the mac is no longer mismatched. Topology reads are noisy, so a
+// mismatch must persist for LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS before it is
+// allowed to alert — see runAlertEngine.
+const zoneMismatchSince = {};
+const LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS = Math.max(
+    0,
+    Number.parseInt(process.env.LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS || '60', 10) || 60
+);
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Bangkok';
 const ALERT_ENGINE_INTERVAL_MS = Math.max(5000, Number.parseInt(process.env.ALERT_ENGINE_INTERVAL_MS || '15000', 10) || 15000);
 const LINE_RATE_LIMIT_BACKOFF_MS = Math.max(
@@ -1474,6 +1484,9 @@ async function initDatabase() {
             ALTER TABLE nurseaid ADD COLUMN IF NOT EXISTS ward_id INTEGER REFERENCES wards(id);
             CREATE INDEX IF NOT EXISTS idx_patients_ward_id ON patients(ward_id);
             CREATE INDEX IF NOT EXISTS idx_nurseaid_ward_id ON nurseaid(ward_id);
+
+            ALTER TABLE esp32_node_metadata ADD COLUMN IF NOT EXISTS zone_label VARCHAR(100);
+            ALTER TABLE esp32_node_metadata ADD COLUMN IF NOT EXISTS ward_id INTEGER REFERENCES wards(id) ON DELETE SET NULL;
 
             ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45);
             ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_role VARCHAR(20);
@@ -2161,6 +2174,35 @@ async function resolveBatteryLowAlert(status, deviceSettings) {
     return pool.query(
         `UPDATE alert_logs SET resolved=true, resolved_at=NOW()
          WHERE LOWER(mac)=LOWER($1) AND category='battery_low' AND resolved=false`,
+        [status.mac]
+    );
+}
+
+// Same non-clobbering shape as triggerBatteryLowAlert/resolveBatteryLowAlert:
+// a coarse, RSSI-derived "wrong zone" signal must never win over an active
+// vital or offline alert on the same mac. uq_alert_logs_one_active_mac makes
+// the INSERT a no-op whenever any other alert is already active for this mac.
+async function triggerZoneMismatchAlert(status, deviceSettings, zoneLabel) {
+    const message = `พบสัญญาณอุปกรณ์นอกเขตที่กำหนด (${zoneLabel || 'ไม่ทราบชื่อโซน'}) โปรดตรวจสอบตำแหน่งผู้ป่วย`;
+    const inserted = await pool.query(
+        `INSERT INTO alert_logs (mac, bed_no, patient_name, level, category, message, ward_id)
+         VALUES (CAST($1 AS VARCHAR), $2, $3, 'warning', 'zone_mismatch', $4,
+             (SELECT ward_id FROM nurseaid WHERE CAST(LOWER(mac) AS VARCHAR)=LOWER(CAST($1 AS VARCHAR)) LIMIT 1))
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [status.mac, status.bed_no, status.name, message]
+    );
+    const alert = inserted.rows[0];
+    if (!alert) return null;
+    await dispatchAlertNotifications(alert, deviceSettings)
+        .catch(error => console.error('[Zone Mismatch Alert Dispatch]', error.message));
+    return alert;
+}
+
+async function resolveZoneMismatchAlert(status) {
+    return pool.query(
+        `UPDATE alert_logs SET resolved=true, resolved_at=NOW()
+         WHERE LOWER(mac)=LOWER($1) AND category='zone_mismatch' AND resolved=false`,
         [status.mac]
     );
 }
@@ -4952,17 +4994,17 @@ ${ICON_SET}
         function _roleLabel(r) { return _ROLE_LABELS[r] || (r || 'viewer'); }
         const _ROLE_CAPS = {
             super_admin: new Set([
-                'patients:read', 'patients:write', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
+                'patients:read', 'patients:location:read', 'patients:write', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:all', 'users:manage:ward', 'wards:manage', 'settings:global', 'audit:read:all', 'audit:read:ward', 'export:read'
             ]),
             ward_admin: new Set([
-                'patients:read', 'patients:write', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
+                'patients:read', 'patients:location:read', 'patients:write', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:write', 'devices:location:write', 'pairing:write',
                 'alerts:read', 'alerts:ack', 'alerts:settings:write',
                 'users:manage:ward', 'audit:read:ward', 'export:read'
             ]),
-            staff_nurse: new Set(['patients:read', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:location:write', 'alerts:read', 'alerts:ack', 'export:read']),
-            viewer: new Set(['patients:read', 'devices:read', 'alerts:read'])
+            staff_nurse: new Set(['patients:read', 'patients:location:read', 'patients:priority:write', 'patients:note:write', 'devices:read', 'devices:location:write', 'alerts:read', 'alerts:ack', 'export:read']),
+            viewer: new Set(['patients:read', 'patients:location:read', 'devices:read', 'alerts:read'])
         };
         function _userCapabilities(r) { return _ROLE_CAPS[r] || new Set(); }
 
@@ -6647,6 +6689,29 @@ async function runAlertEngine() {
             openOfflineResult.rows.map(alert => [normalizeMac(alert.mac), alert])
         );
         const uptimeSeconds = Math.max(0, Math.floor((Date.now() - SERVER_STARTED_AT_MS) / 1000));
+
+        // Zone mismatch is coarse and additive (see patient-location.js): it never
+        // takes priority over vital/offline alerts (enforced by
+        // uq_alert_logs_one_active_mac inside triggerZoneMismatchAlert) and only
+        // fires once a mismatch has persisted past LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS.
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        const nodeZoneByBoardMac = new Map();
+        try {
+            const nodeZones = await pool.query(
+                'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata WHERE ward_id IS NOT NULL'
+            );
+            nodeZones.rows.forEach(row => nodeZoneByBoardMac.set(row.board_mac, { wardId: row.ward_id, zoneLabel: row.zone_label }));
+        } catch (error) {
+            console.error('[Zone Mismatch] failed to load node ward assignments:', error.message);
+        }
+        const patientWardByMac = new Map();
+        try {
+            const patientWards = await pool.query('SELECT UPPER(mac) AS mac, ward_id FROM nurseaid');
+            patientWards.rows.forEach(row => patientWardByMac.set(row.mac, row.ward_id));
+        } catch (error) {
+            console.error('[Zone Mismatch] failed to load patient ward assignments:', error.message);
+        }
+
         for (const status of statuses) {
             const mac = normalizeMac(status.mac);
             const deviceSettings = status._alertSettings || {};
@@ -6697,6 +6762,27 @@ async function runAlertEngine() {
                 }
             } catch (error) {
                 console.error(`[Battery Alert] mac=${status.mac}:`, error.message);
+            }
+
+            // Zone mismatch is supplementary, same reasoning as battery alerts above.
+            try {
+                const currentNode = resolveCurrentZone(topology.nodes, status.mac);
+                const nodeZone = currentNode ? nodeZoneByBoardMac.get(String(currentNode.boardMac || '').toUpperCase()) : undefined;
+                const patientWardId = patientWardByMac.get(mac);
+                const matchState = zoneMatchState(patientWardId, nodeZone?.wardId);
+
+                if (matchState !== 'mismatch') {
+                    delete zoneMismatchSince[mac];
+                    await resolveZoneMismatchAlert(status);
+                } else {
+                    if (!zoneMismatchSince[mac]) zoneMismatchSince[mac] = Date.now();
+                    const persistedSeconds = (Date.now() - zoneMismatchSince[mac]) / 1000;
+                    if (persistedSeconds >= LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS) {
+                        await triggerZoneMismatchAlert(status, deviceSettings, nodeZone?.zoneLabel || currentNode?.nodeId || null);
+                    }
+                }
+            } catch (error) {
+                console.error(`[Zone Mismatch Alert] mac=${status.mac}:`, error.message);
             }
         }
     } catch (error) {
@@ -7824,6 +7910,20 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
 
     let dashboardPollTimer = null;
     let dashboardRequestInFlight = false;
+    // Coarse "last heard by which gateway" per patient (patient-location.js).
+    // Failure here must never break the vitals dashboard, so this always
+    // resolves — to an empty map on any error, never a rejected promise.
+    async function fetchPatientLocationsQuietly() {
+        try {
+            const r = await fetch('/api/patient-locations');
+            if (!r.ok) return new Map();
+            const data = await r.json();
+            const rows = Array.isArray(data.locations) ? data.locations : [];
+            return new Map(rows.map(row => [String(row.mac || '').toUpperCase(), row]));
+        } catch (e) {
+            return new Map();
+        }
+    }
     // Priority is a statement about how closely a patient is being watched, so it has to buy
     // something real and not just a colour: it sets how often the ward snapshot is re-read.
     // /api/live-status returns the whole ward in a single request (three Influx queries behind
@@ -7912,6 +8012,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
             const data = await r.json();
             if (!r.ok) throw new Error(data.message || 'Live status request failed');
             if (!Array.isArray(data)) throw new Error('Live status response is invalid');
+            const locationByMac = await fetchPatientLocationsQuietly();
             latestPatients = data;
             dashboardPollMs = pollIntervalForPriorities(data);
             syncAiPatientOptions();
@@ -8045,6 +8146,16 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 const tempNumColor = isInactive ? grayTextColor : (isTempCrit ? 'var(--accent-red)' : (isTempWarn ? 'var(--accent-yellow)' : normalVitalNumColor));
 
                 const key = String(p.mac || p.device_no || p.hm_number);
+                // Coarse proximity, not position — see patient-location.js. A
+                // mismatch is only ever a hint to go check, never a claim of fact.
+                const location = locationByMac.get(String(p.mac || '').toUpperCase()) || null;
+                const zoneMatch = location?.zone_match || 'unknown';
+                const zoneBadgeText = zoneMatch === 'mismatch'
+                    ? '⚠ อาจอยู่นอกเขต: ' + (location.current_zone_label || 'ไม่ทราบโซน')
+                    : (zoneMatch === 'expected'
+                        ? 'ล่าสุดใกล้: ' + (location.current_zone_label || 'ไม่ทราบโซน')
+                        : 'ไม่ทราบตำแหน่งล่าสุด');
+                const zoneBadgeColor = zoneMatch === 'mismatch' ? 'var(--status-warning-text)' : 'var(--text-tertiary)';
                 const {
                     metricAges: _metricAges,
                     lastSeenAt: _lastSeenAt,
@@ -8055,7 +8166,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     ...stablePatient
                 } = p;
                 const signature = JSON.stringify({
-                    theme, p: stablePatient,
+                    theme, p: stablePatient, zoneMatch, zoneLabel: location?.current_zone_label || null,
                     statusLabel, isHrCrit, isHrWarn, isSpo2Crit, isSpo2Warn, isTempCrit, isTempWarn
                 });
                 const safe = {
@@ -8067,7 +8178,8 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     spo2: escapeHTML(spo2Display),
                     temp: escapeHTML(p.temp),
                     batteryLabel: escapeHTML(battLabel),
-                    spo2Quality: escapeHTML(p.spo2Quality || 'unavailable')
+                    spo2Quality: escapeHTML(p.spo2Quality || 'unavailable'),
+                    zoneBadgeText: escapeHTML(zoneBadgeText)
                 };
                 const html = \`
                 <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
@@ -8089,6 +8201,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                         <span class="text-2xs font-bold">\${safe.batteryLabel}</span>
                                     </div>
                                 </div>
+                                <span class="text-2xs" style="color: \${zoneBadgeColor};" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</span>
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
@@ -8628,7 +8741,7 @@ async function esp32NodesForUi(req) {
         sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS
     });
     const metadata = await pool.query(
-        'SELECT board_mac, description, updated_at FROM esp32_node_metadata'
+        'SELECT board_mac, description, zone_label, ward_id, updated_at FROM esp32_node_metadata'
     );
     const metadataByMac = new Map(metadata.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const healthStatus = await pool.query(
@@ -8772,6 +8885,8 @@ async function esp32NodesForUi(req) {
             patients: connectedJstyles.map(item => item.patient).filter(Boolean),
             description: String(meta.description || ''),
             descriptionUpdatedAt: meta.updated_at || null,
+            zoneLabel: meta.zone_label || null,
+            wardId: meta.ward_id ?? null,
             fwVersion: health.fw_version || null,
             uptimeSec: health.uptime_sec ?? null,
             wifiRssi: health.wifi_rssi ?? null,
@@ -8853,6 +8968,14 @@ async function esp32NodesForUi(req) {
     // hid three real receiver boards from the system entirely.
     const unidentifiedNodes = listUnidentifiedEsp32Nodes();
 
+    // Wards this user may assign a gateway to (for the zone-edit dropdown),
+    // same scoping rule already used in /patients-mgmt: all active wards for
+    // super_admin, only their own assigned ward(s) otherwise.
+    const assignableWardsResult = req.user?.role === 'super_admin'
+        ? await pool.query('SELECT id, code, name FROM wards WHERE is_active = true ORDER BY code')
+        : await pool.query('SELECT id, code, name FROM wards WHERE is_active = true AND id = ANY($1) ORDER BY code', [req.user?.wardIds || []]);
+    const wards = assignableWardsResult.rows.map(row => ({ id: row.id, code: row.code, name: row.name }));
+
     return {
         ...topology,
         sourceStatus: topology.sourceStatus,
@@ -8860,6 +8983,7 @@ async function esp32NodesForUi(req) {
         nodes,
         unidentifiedNodes,
         revokedNodes,
+        wards,
         summary: {
             total: nodes.length,
             connected: nodes.filter(node => node.status === 'connected').length,
@@ -8913,6 +9037,93 @@ app.put('/api/esp32-nodes/:mac/description', requireCapability('devices:location
     } catch (error) {
         console.error('[ESP32 Description]', error.message);
         res.status(500).json({ error: 'Unable to save ESP32 description' });
+    }
+});
+
+// Assigns a gateway to a named zone + ward, used by the coarse patient-location
+// feature (see patient-location.js). Deliberately separate from /description:
+// this is structured data other code reads programmatically, not a free-text note.
+app.put('/api/esp32-nodes/:mac/zone', requireCapability('devices:location:write'), async (req, res) => {
+    const boardMac = canonicalEsp32Mac(req.params.mac);
+    const zoneLabel = req.body.zone_label === null || req.body.zone_label === undefined
+        ? null
+        : String(req.body.zone_label).trim();
+    const wardIdRaw = req.body.ward_id;
+    const wardId = wardIdRaw === null || wardIdRaw === undefined || wardIdRaw === ''
+        ? null
+        : Number.parseInt(wardIdRaw, 10);
+    if (!boardMac) return res.status(400).json({ error: 'Invalid ESP32 MAC address' });
+    if (zoneLabel && zoneLabel.length > 100) return res.status(400).json({ error: 'Zone label must not exceed 100 characters' });
+    if (wardIdRaw !== null && wardIdRaw !== undefined && wardIdRaw !== '' && !Number.isInteger(wardId)) {
+        return res.status(400).json({ error: 'Invalid ward_id' });
+    }
+
+    try {
+        if (wardId !== null) {
+            const wardExists = await pool.query('SELECT 1 FROM wards WHERE id=$1', [wardId]);
+            if (!wardExists.rows.length) return res.status(400).json({ error: 'Unknown ward_id' });
+        }
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, {
+            sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS
+        });
+        const knownLiveNode = topology.nodes.some(node => node.boardMac === boardMac);
+        const existing = await pool.query('SELECT 1 FROM esp32_node_metadata WHERE board_mac=$1', [boardMac]);
+        if (!knownLiveNode && !existing.rows.length) {
+            return res.status(404).json({ error: 'ESP32 node not found' });
+        }
+        const result = await pool.query(
+            `INSERT INTO esp32_node_metadata (board_mac, description, zone_label, ward_id, updated_by, updated_at)
+             VALUES ($1, '', $2, $3, $4, NOW())
+             ON CONFLICT (board_mac) DO UPDATE SET
+                 zone_label=EXCLUDED.zone_label,
+                 ward_id=EXCLUDED.ward_id,
+                 updated_by=EXCLUDED.updated_by,
+                 updated_at=NOW()
+             RETURNING board_mac, zone_label, ward_id, updated_at`,
+            [boardMac, zoneLabel, wardId, req.user.id]
+        );
+        logAudit(req, 'UPDATE', 'esp32_node', boardMac, { zone_label: zoneLabel, ward_id: wardId }).catch(console.error);
+        res.json({ success: true, node: result.rows[0] });
+    } catch (error) {
+        console.error('[ESP32 Zone]', error.message);
+        res.status(500).json({ error: 'Unable to save ESP32 zone' });
+    }
+});
+
+// Coarse "which gateway last heard this patient's wearable" view for the
+// dashboard badge (see patient-location.js). Proximity, not position: the
+// response is deliberately named current_zone_label, never a coordinate.
+app.get('/api/patient-locations', requireCapability('patients:location:read'), async (req, res) => {
+    try {
+        const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
+        const nodeZones = await pool.query(
+            'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata WHERE ward_id IS NOT NULL'
+        );
+        const nodeZoneByBoardMac = new Map(
+            nodeZones.rows.map(row => [row.board_mac, { wardId: row.ward_id, zoneLabel: row.zone_label }])
+        );
+        const scope = await wardScopeSql(req, 'ward_id', 1);
+        const patients = await pool.query(
+            `SELECT UPPER(mac) AS mac, ward_id
+             FROM nurseaid
+             WHERE NULLIF(BTRIM(hm_number), '') IS NOT NULL
+               ${scope.clause ? `AND ${scope.clause}` : ''}`,
+            scope.params
+        );
+        const locations = patients.rows.map(row => {
+            const node = resolveCurrentZone(topology.nodes, row.mac);
+            const nodeZone = node ? nodeZoneByBoardMac.get(String(node.boardMac || '').toUpperCase()) : undefined;
+            return {
+                mac: row.mac,
+                current_zone_label: nodeZone?.zoneLabel || null,
+                current_board_mac: node ? node.boardMac : null,
+                zone_match: zoneMatchState(row.ward_id, nodeZone?.wardId)
+            };
+        });
+        res.json({ locations });
+    } catch (error) {
+        console.error('[Patient Locations]', error.message);
+        res.status(500).json({ error: 'Unable to read patient locations' });
     }
 });
 
@@ -9277,6 +9488,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
         const receiverGrid = document.getElementById('receiverGrid');
         const receiverNotice = document.getElementById('receiverNotice');
         const receiverUpdated = document.getElementById('receiverUpdated');
+        // Refreshed on every loadReceivers() so the zone-edit modal's ward
+        // dropdown always reflects the wards this user may assign to.
+        let availableWardsForZoneModal = [];
         const receiverToast = document.getElementById('receiverToast');
         const canEditReceiverLocation = ${canEditLocation ? 'true' : 'false'};
         const canManageReceivers = ${canManageReceivers ? 'true' : 'false'};
@@ -9354,8 +9568,9 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             // not look healthy down here. Amber, not red: no evidence it is up is not
             // the same claim as evidence it is down.
             const problemClass = node.status === 'disconnected' ? ' problem' : (node.status === 'unknown' ? ' pending' : '');
+            const zoneLabel = String(node.zoneLabel || '').trim();
             const editButton = canEditReceiverLocation
-                ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
+                ? '<button type="button" data-edit-receiver="1" data-mac="' + escapeHTML(node.boardMac) + '" data-description="' + escapeHTML(description) + '" data-zone-label="' + escapeHTML(zoneLabel) + '" data-ward-id="' + escapeHTML(node.wardId === null || node.wardId === undefined ? '' : String(node.wardId)) + '" class="receiver-edit-btn" aria-label="แก้ไขจุดติดตั้งของ ' + escapeHTML(node.nodeId) + '"><span class="ic ic-edit" aria-hidden="true"></span> แก้ไขจุดติดตั้ง</button>'
                 : '';
             // Only "hide" is offered on a visible card. Permanent delete lives in
             // the hidden-boards section below: a board with a card is usually
@@ -9384,6 +9599,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                                 '<span class="receiver-status-pill" style="color:' + status.color + ';background:' + status.bg + ';">● ' + status.label + '</span>' +
                                 '<div class="receiver-location-label">จุดติดตั้ง</div>' +
                                 '<div class="receiver-location break-words">' + escapeHTML(locationText) + '</div>' +
+                                (zoneLabel ? '<div class="receiver-node-meta">โซน: ' + escapeHTML(zoneLabel) + '</div>' : '<div class="receiver-node-meta" style="color:var(--status-warning-text);">ยังไม่ได้กำหนดโซน — แจ้งเตือนผู้ป่วยหลุดโซนใช้ไม่ได้จนกว่าจะกำหนด</div>') +
                                 '<div class="receiver-node-meta">ตัวรับ ' + escapeHTML(node.nodeId) + '</div>' +
                             '</div>' +
                             '<div class="shrink-0 flex items-center gap-2">' + editButton + wifiButton + hideButton + '</div>' +
@@ -9499,8 +9715,14 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             }
             receiverNotice.classList.add('hidden');
             receiverGrid.innerHTML = nodes.map(receiverCard).join('');
+            availableWardsForZoneModal = Array.isArray(data.wards) ? data.wards : [];
             receiverGrid.querySelectorAll('[data-edit-receiver]').forEach(button => {
-                button.addEventListener('click', () => editReceiverLocation(button.dataset.mac, button.dataset.description || ''));
+                button.addEventListener('click', () => editReceiverLocation(
+                    button.dataset.mac,
+                    button.dataset.description || '',
+                    button.dataset.zoneLabel || '',
+                    button.dataset.wardId || ''
+                ));
             });
             receiverGrid.querySelectorAll('[data-revoke-receiver]').forEach(button => {
                 button.addEventListener('click', () => revokeReceiver(button.dataset.mac, button.dataset.node || ''));
@@ -9592,30 +9814,58 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
             document.getElementById('wifiSsid')?.focus();
         };
 
-        window.editReceiverLocation = (mac, currentDescription) => {
+        window.editReceiverLocation = (mac, currentDescription, currentZoneLabel, currentWardId) => {
             const safeMac = String(mac || '').trim();
+            const wardOptions = '<option value="">— ไม่กำหนดวอร์ด —</option>' +
+                availableWardsForZoneModal.map(w =>
+                    '<option value="' + escapeHTML(String(w.id)) + '"' + (String(w.id) === String(currentWardId || '') ? ' selected' : '') + '>' + escapeHTML(w.code) + ' - ' + escapeHTML(w.name) + '</option>'
+                ).join('');
             openModal('แก้ไขจุดติดตั้งตัวรับสัญญาณ',
                 '<div class="space-y-4">' +
                     '<div><label for="receiverDescription" class="block text-sm font-bold mb-2">รายละเอียดจุดติดตั้ง</label><textarea id="receiverDescription" maxlength="200" rows="4" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);" placeholder="เช่น หน้าห้อง OR 3, เคาน์เตอร์พยาบาล, โซน B เตียง 12">' + escapeHTML(currentDescription) + '</textarea><div class="flex justify-between mt-2 text-xs" style="color:var(--text-tertiary);"><span>ระบุตำแหน่งให้พยาบาลหาอุปกรณ์ได้ง่าย</span><span id="receiverDescriptionCount">0/200</span></div></div>' +
+                    '<div class="border-t pt-4" style="border-color:var(--border-light);">' +
+                        '<div class="text-xs font-bold mb-2" style="color:var(--text-tertiary);">สำหรับระบบแจ้งเตือนผู้ป่วยหลุดโซน (ไม่บังคับ)</div>' +
+                        '<label for="receiverZoneLabel" class="block text-sm font-bold mb-2">ชื่อโซน</label>' +
+                        '<input type="text" id="receiverZoneLabel" maxlength="100" class="w-full border p-3 rounded-xl mb-3" style="background:var(--bg-input);color:var(--text-primary);" placeholder="เช่น วอร์ด A - ทางออก" value="' + escapeHTML(currentZoneLabel || '') + '">' +
+                        '<label for="receiverZoneWard" class="block text-sm font-bold mb-2">วอร์ดที่ตัวรับนี้อยู่</label>' +
+                        '<select id="receiverZoneWard" class="w-full border p-3 rounded-xl" style="background:var(--bg-input);color:var(--text-primary);">' + wardOptions + '</select>' +
+                        '<div class="mt-2 text-xs" style="color:var(--text-tertiary);">ถ้าผู้ป่วยของวอร์ดอื่นมาปรากฏที่ตัวรับนี้ ระบบจะแจ้งเตือนว่าอาจหลุดโซนที่กำหนด</div>' +
+                    '</div>' +
                     '<div class="p-3 rounded-xl" style="background:var(--bg-card-hover);"><div class="text-xs font-bold" style="color:var(--text-tertiary);">ตัวรับสัญญาณ</div><div class="font-mono text-sm mt-1">' + escapeHTML(safeMac) + '</div></div>' +
                 '</div>',
                 async () => {
                     const input = document.getElementById('receiverDescription');
+                    const zoneLabelInput = document.getElementById('receiverZoneLabel');
+                    const zoneWardSelect = document.getElementById('receiverZoneWard');
                     const submit = document.getElementById('modalSubmit');
                     const description = String(input?.value || '').trim();
+                    const zoneLabel = String(zoneLabelInput?.value || '').trim();
+                    const zoneWardId = String(zoneWardSelect?.value || '').trim();
                     if (description.length > 200) {
                         showReceiverToast('รายละเอียดจุดติดตั้งยาวเกิน 200 ตัวอักษร', 'error');
+                        return;
+                    }
+                    if (zoneLabel.length > 100) {
+                        showReceiverToast('ชื่อโซนยาวเกิน 100 ตัวอักษร', 'error');
                         return;
                     }
                     setModalBusy(true);
                     submit.textContent = 'กำลังบันทึก…';
                     try {
-                        const response = await fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/description', {
-                            method:'PUT',
-                            headers:{'Content-Type':'application/json'},
-                            body:JSON.stringify({description})
-                        });
-                        if (!response.ok) throw new Error(await apiErrorMessage(response, 'บันทึกจุดติดตั้งไม่สำเร็จ'));
+                        const [descriptionResponse, zoneResponse] = await Promise.all([
+                            fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/description', {
+                                method:'PUT',
+                                headers:{'Content-Type':'application/json'},
+                                body:JSON.stringify({description})
+                            }),
+                            fetch('/api/esp32-nodes/' + encodeURIComponent(safeMac) + '/zone', {
+                                method:'PUT',
+                                headers:{'Content-Type':'application/json'},
+                                body:JSON.stringify({zone_label: zoneLabel || null, ward_id: zoneWardId || null})
+                            })
+                        ]);
+                        if (!descriptionResponse.ok) throw new Error(await apiErrorMessage(descriptionResponse, 'บันทึกจุดติดตั้งไม่สำเร็จ'));
+                        if (!zoneResponse.ok) throw new Error(await apiErrorMessage(zoneResponse, 'บันทึกโซนไม่สำเร็จ'));
                         closeModal(true, true);
                         showReceiverToast('บันทึกจุดติดตั้งเรียบร้อยแล้ว', 'success');
                         await loadReceivers();
