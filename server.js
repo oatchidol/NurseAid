@@ -44,7 +44,7 @@ const {
     summariseEsp32Uptime,
     summariseEsp32Reboots
 } = require('./esp32-status');
-const { resolveCurrentZone, zoneMatchState } = require('./patient-location');
+const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged } = require('./patient-location');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
 // forwards X-Forwarded-Proto/X-Forwarded-For) so req.protocol reflects the real
@@ -1181,6 +1181,12 @@ const LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS = Math.max(
     0,
     Number.parseInt(process.env.LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS || '60', 10) || 60
 );
+// Hourly-gated retention sweep for patient_zone_history. Set ONCE per
+// runAlertEngine() tick (never inside the per-patient loop) so a failing
+// DELETE never retries every tick; a failed sweep simply retries on the next
+// hourly tick.
+let lastZoneHistoryCleanupAt = 0;
+const ZONE_HISTORY_RETENTION_MS = 60 * 60 * 1000; // 1 hour
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Bangkok';
 const ALERT_ENGINE_INTERVAL_MS = Math.max(5000, Number.parseInt(process.env.ALERT_ENGINE_INTERVAL_MS || '15000', 10) || 15000);
 const LINE_RATE_LIMIT_BACKOFF_MS = Math.max(
@@ -1537,6 +1543,31 @@ async function initDatabase() {
               WHERE LOWER(n.mac) = LOWER(a.mac) AND a.ward_id IS NULL AND n.ward_id IS NOT NULL;
         `);
     } catch (e) { console.error("RBAC migration error:", e.message); }
+
+    // ─── Patient Zone/Location History ──────────────────────────────────
+    // One open interval per wearable mac, closed when its zone/ward/match
+    // state changes (see patient-location.js hasZoneStateChanged and the zone
+    // check in runAlertEngine). Retained for the "where has this patient been"
+    // view; the alert engine prunes rows older than 7 days on an hourly
+    // schedule (lastZoneHistoryCleanupAt).
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS patient_zone_history (
+                id BIGSERIAL PRIMARY KEY,
+                mac TEXT NOT NULL,
+                board_mac TEXT,
+                zone_label TEXT,
+                ward_id INTEGER,
+                match_state TEXT NOT NULL,
+                started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                ended_at TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_patient_zone_history_mac_started
+                ON patient_zone_history (mac, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_patient_zone_history_open
+                ON patient_zone_history (mac) WHERE ended_at IS NULL;
+        `);
+    } catch (e) { console.error("Patient zone history migration error:", e.message); }
 
     // ─── Patient Priority & Manual Dashboard Order ──────────────────────
     try {
@@ -6675,6 +6706,19 @@ async function runAlertEngine() {
     if (alertEngineRunning) return;
     alertEngineRunning = true;
     try {
+        const zoneHistoryCleanupNow = Date.now();
+        if (zoneHistoryCleanupNow - lastZoneHistoryCleanupAt > ZONE_HISTORY_RETENTION_MS) {
+            try {
+                await pool.query(
+                    "DELETE FROM patient_zone_history WHERE ended_at IS NOT NULL AND ended_at < now() - interval '7 days'"
+                );
+            } catch (error) {
+                console.error('[Zone History Cleanup]', error.message);
+            } finally {
+                lastZoneHistoryCleanupAt = Date.now();
+            }
+        }
+
         // Receiver monitoring is independent of patient-vitals telemetry health.
         // A stale live-status snapshot must never prevent ESP32 board alerts from running.
         await runEsp32ReceiverSweep();
@@ -6780,6 +6824,46 @@ async function runAlertEngine() {
                     if (persistedSeconds >= LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS) {
                         await triggerZoneMismatchAlert(status, deviceSettings, nodeZone?.zoneLabel || currentNode?.nodeId || null);
                     }
+                }
+
+                // Persist this tick's zone state as a history interval. The
+                // mismatch-alert logic above has already run, so a write failure
+                // here must not affect it — hence the inner try/catch. One
+                // patient's patient_zone_history failure can't break the alert
+                // tick for the other patients.
+                try {
+                    // patient_zone_history stores mac in canonical uppercase form
+                    // (matching /api/patient-locations and canonicalEsp32Mac), not
+                    // the lowercase `mac` this function otherwise uses internally.
+                    const macUpper = mac.toUpperCase();
+                    const currentZoneState = {
+                        board_mac: currentNode ? currentNode.boardMac : null,
+                        zone_label: nodeZone?.zoneLabel || null,
+                        ward_id: nodeZone?.wardId ?? null,
+                        match_state: matchState
+                    };
+                    const openResult = await pool.query(
+                        'SELECT id, board_mac, zone_label, ward_id, match_state FROM patient_zone_history WHERE mac = $1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1',
+                        [macUpper]
+                    );
+                    const openRow = openResult.rows[0] || null;
+                    if (hasZoneStateChanged(openRow, currentZoneState)) {
+                        if (openRow) {
+                            await pool.query('UPDATE patient_zone_history SET ended_at = now() WHERE id = $1', [openRow.id]);
+                        }
+                        await pool.query(
+                            'INSERT INTO patient_zone_history (mac, board_mac, zone_label, ward_id, match_state) VALUES ($1, $2, $3, $4, $5)',
+                            [
+                                macUpper,
+                                currentZoneState.board_mac,
+                                currentZoneState.zone_label,
+                                currentZoneState.ward_id,
+                                currentZoneState.match_state
+                            ]
+                        );
+                    }
+                } catch (error) {
+                    console.error(`[Zone History] mac=${status.mac}:`, error.message);
                 }
             } catch (error) {
                 console.error(`[Zone Mismatch Alert] mac=${status.mac}:`, error.message);
@@ -9120,10 +9204,50 @@ app.get('/api/patient-locations', requireCapability('patients:location:read'), a
                 zone_match: zoneMatchState(row.ward_id, nodeZone?.wardId)
             };
         });
+        const locationMacs = locations.map(location => location.mac);
+        const openHistory = await pool.query(
+            'SELECT UPPER(mac) AS mac, started_at FROM patient_zone_history WHERE mac = ANY($1) AND ended_at IS NULL',
+            [locationMacs]
+        );
+        const sinceByMac = new Map(openHistory.rows.map(row => [row.mac, row.started_at]));
+        locations.forEach(location => {
+            location.since = sinceByMac.get(location.mac) || null;
+        });
         res.json({ locations });
     } catch (error) {
         console.error('[Patient Locations]', error.message);
         res.status(500).json({ error: 'Unable to read patient locations' });
+    }
+});
+
+app.get('/api/patient-locations/:mac/history', requireCapability('patients:location:read'), async (req, res) => {
+    const mac = canonicalEsp32Mac(req.params.mac);
+    if (!mac) return res.status(400).json({ error: 'Invalid MAC address' });
+
+    try {
+        const scope = await wardScopeSql(req, 'ward_id', 1);
+        const patient = await pool.query(
+            `SELECT 1
+             FROM nurseaid
+             WHERE UPPER(mac) = $${scope.params.length + 1}
+               AND NULLIF(BTRIM(hm_number), '') IS NOT NULL
+               ${scope.clause ? `AND ${scope.clause}` : ''}`,
+            [...scope.params, mac]
+        );
+        if (!patient.rows.length) return res.status(404).json({ error: 'Patient not found' });
+
+        const history = await pool.query(
+            `SELECT board_mac, zone_label, ward_id, match_state, started_at, ended_at
+             FROM patient_zone_history
+             WHERE mac = $1
+             ORDER BY started_at DESC
+             LIMIT 200`,
+            [mac]
+        );
+        res.json({ history: history.rows });
+    } catch (error) {
+        console.error('[Patient Location History]', error.message);
+        res.status(500).json({ error: 'Unable to read patient location history' });
     }
 });
 

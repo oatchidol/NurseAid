@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseEsp32Topology } = require('../esp32-status');
-const { resolveCurrentZone, zoneMatchState } = require('../patient-location');
+const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged } = require('../patient-location');
 
 // Build a two-node topology snapshot and parse it through the real parser so
 // the test exercises the true integration (raw snapshot -> parseEsp32Topology
@@ -88,4 +88,44 @@ test('zoneMatchState: missing node ward is unknown, never mismatch', () => {
 
 test('zoneMatchState: string/number ward ids compare by value', () => {
     assert.equal(zoneMatchState('3', 3), 'expected');
+});
+
+const zoneState = {
+    board_mac: 'F0:F5:BD:A1:C5:8C',
+    zone_label: 'Ward A',
+    ward_id: 1,
+    match_state: 'expected'
+};
+
+test('hasZoneStateChanged: no open row opens a new interval', () => {
+    assert.equal(hasZoneStateChanged(null, zoneState), true);
+    assert.equal(hasZoneStateChanged(undefined, zoneState), true);
+});
+
+test('hasZoneStateChanged: identical state does not open a new interval', () => {
+    assert.equal(hasZoneStateChanged({ ...zoneState }, zoneState), false);
+});
+
+test('hasZoneStateChanged: a different board opens a new interval', () => {
+    assert.equal(hasZoneStateChanged({ ...zoneState, board_mac: '48:27:E2:B7:89:C4' }, zoneState), true);
+});
+
+test('hasZoneStateChanged: a different zone label opens a new interval', () => {
+    assert.equal(hasZoneStateChanged({ ...zoneState, zone_label: 'Ward B' }, zoneState), true);
+});
+
+test('hasZoneStateChanged: ward IDs compare by value and detect real changes', () => {
+    assert.equal(hasZoneStateChanged({ ...zoneState, ward_id: '1' }, zoneState), false);
+    assert.equal(hasZoneStateChanged({ ...zoneState, ward_id: 2 }, zoneState), true);
+});
+
+test('hasZoneStateChanged: a different match state opens a new interval', () => {
+    assert.equal(hasZoneStateChanged({ ...zoneState, match_state: 'mismatch' }, zoneState), true);
+});
+
+test('hasZoneStateChanged: null and undefined fields are equivalent', () => {
+    assert.equal(hasZoneStateChanged(
+        { ...zoneState, zone_label: null },
+        { ...zoneState, zone_label: undefined }
+    ), false);
 });
