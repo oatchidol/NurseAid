@@ -7926,6 +7926,44 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
         };
     }
 
+    function openZoneHistoryModal(mac, name, bed) {
+        const session = prepareModal('ประวัติตำแหน่ง — ' + (name || bed || mac), '<div class="text-sm text-center py-6" style="color:var(--text-tertiary);">กำลังโหลด…</div>', {
+            wide: true, hideCancel: true, confirmText: 'ปิด'
+        });
+        document.getElementById('modalSubmit').onclick = () => closeModal(true);
+        fetch('/api/patient-locations/' + encodeURIComponent(mac) + '/history')
+            .then(async response => {
+                if (!response.ok) throw new Error('ไม่สามารถโหลดประวัติตำแหน่งได้');
+                return response.json();
+            })
+            .then(data => {
+                if (session !== modalSession) return;
+                const body = document.getElementById('modalBody');
+                const history = Array.isArray(data.history) ? data.history : [];
+                if (!history.length) {
+                    body.innerHTML = '<p class="text-sm text-center py-6" style="color:var(--text-tertiary);">ยังไม่มีประวัติตำแหน่งของผู้ป่วยรายนี้</p>';
+                    return;
+                }
+                const stateMeta = {
+                    expected: { label: 'อยู่ในเขต', color: 'var(--status-success-text)', bg: 'color-mix(in srgb, var(--status-success-text) 10%, var(--bg-card))' },
+                    mismatch: { label: 'อาจอยู่นอกเขต', color: 'var(--status-warning-text)', bg: 'color-mix(in srgb, var(--status-warning-text) 10%, var(--bg-card))' },
+                    unknown: { label: 'ไม่ทราบ', color: 'var(--text-secondary)', bg: 'var(--bg-badge)' }
+                };
+                const rows = history.map(row => {
+                    const state = stateMeta[row.match_state] || stateMeta.unknown;
+                    const startedAt = row.started_at ? new Date(row.started_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+                    const endedAt = row.ended_at ? new Date(row.ended_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : null;
+                    const range = escapeHTML(startedAt) + ' – ' + (endedAt ? escapeHTML(endedAt) : '<strong style="color:var(--status-success-text);">ปัจจุบัน</strong>');
+                    return '<tr style="border-bottom:1px solid var(--border-color);"><td class="py-3 pr-3 text-sm break-words">' + escapeHTML(row.zone_label || 'ไม่ทราบโซน') + '</td><td class="py-3 pr-3 whitespace-nowrap"><span class="text-2xs px-2 py-0.5 rounded-full font-bold" style="background:' + state.bg + ';color:' + state.color + ';">' + escapeHTML(state.label) + '</span></td><td class="py-3 text-2xs" style="color:var(--text-secondary);">' + range + '</td></tr>';
+                }).join('');
+                body.innerHTML = '<div class="overflow-x-auto"><table class="w-full text-left"><thead><tr style="border-bottom:1px solid var(--border-color);color:var(--text-tertiary);"><th class="pb-2 pr-3 text-2xs">โซน</th><th class="pb-2 pr-3 text-2xs">สถานะ</th><th class="pb-2 text-2xs">ช่วงเวลา</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+            })
+            .catch(() => {
+                if (session !== modalSession) return;
+                document.getElementById('modalBody').innerHTML = '<p class="text-sm text-center py-6" style="color:var(--status-critical-text);">ไม่สามารถโหลดประวัติตำแหน่งได้</p>';
+            });
+    }
+
     function openIndividualConfig(mac, name, bed) {
         const current = getLimits(mac);
         const html = \`
@@ -8062,6 +8100,9 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 });
                 replacement.querySelector('[data-action="open-config"]')?.addEventListener('click', () => {
                     openIndividualConfig(card.patient.mac, card.patient.name, card.patient.bed_no);
+                });
+                replacement.querySelector('[data-action="show-zone-history"]')?.addEventListener('click', () => {
+                    openZoneHistoryModal(card.patient.mac, card.patient.name, card.patient.bed_no);
                 });
                 replacement.querySelector('[data-action="edit-note"]')?.addEventListener('click', () => {
                     openClinicalNoteModal(card.patient.hm_number, card.patient.bed_no, card.patient.name, card.patient.clinical_note);
@@ -8239,7 +8280,17 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     : (zoneMatch === 'expected'
                         ? 'ล่าสุดใกล้: ' + (location.current_zone_label || 'ไม่ทราบโซน')
                         : 'ไม่ทราบตำแหน่งล่าสุด');
-                const zoneBadgeColor = zoneMatch === 'mismatch' ? 'var(--status-warning-text)' : 'var(--text-tertiary)';
+                const zoneBadgeSince = location?.since
+                    ? ' · ตั้งแต่ ' + new Date(location.since).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+                    : '';
+                const zoneBadgeColor = zoneMatch === 'mismatch'
+                    ? 'var(--status-warning-text)'
+                    : (zoneMatch === 'expected' ? 'var(--status-success-text)' : 'var(--text-secondary)');
+                const zoneBadgeBg = zoneMatch === 'mismatch'
+                    ? 'color-mix(in srgb, var(--status-warning-text) 10%, var(--bg-card))'
+                    : (zoneMatch === 'expected'
+                        ? 'color-mix(in srgb, var(--status-success-text) 10%, var(--bg-card))'
+                        : 'var(--bg-badge)');
                 const {
                     metricAges: _metricAges,
                     lastSeenAt: _lastSeenAt,
@@ -8250,7 +8301,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     ...stablePatient
                 } = p;
                 const signature = JSON.stringify({
-                    theme, p: stablePatient, zoneMatch, zoneLabel: location?.current_zone_label || null,
+                    theme, p: stablePatient, zoneMatch, zoneLabel: location?.current_zone_label || null, zoneSince: location?.since || null,
                     statusLabel, isHrCrit, isHrWarn, isSpo2Crit, isSpo2Warn, isTempCrit, isTempWarn
                 });
                 const safe = {
@@ -8263,7 +8314,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                     temp: escapeHTML(p.temp),
                     batteryLabel: escapeHTML(battLabel),
                     spo2Quality: escapeHTML(p.spo2Quality || 'unavailable'),
-                    zoneBadgeText: escapeHTML(zoneBadgeText)
+                    zoneBadgeText: escapeHTML(zoneBadgeText + zoneBadgeSince)
                 };
                 const html = \`
                 <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
@@ -8285,7 +8336,8 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                         <span class="text-2xs font-bold">\${safe.batteryLabel}</span>
                                     </div>
                                 </div>
-                                <span class="text-2xs" style="color: \${zoneBadgeColor};" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</span>
+                                <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold text-left break-words" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
+                                <div class="text-2xs" style="color:var(--text-tertiary);opacity:.8;">ตำแหน่งโดยประมาณ ไม่ใช่ตำแหน่งจริง</div>
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
