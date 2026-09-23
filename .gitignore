@@ -95,3 +95,6 @@ firmware/build/
 
 # Local WiFi credentials for firmware builds — never commit a ward password
 firmware/wifi_credentials.h
+
+# Intentional SSH key for cross-machine AI analysis (real credential -- must never be committed)
+.nurseaid-central-key.tmp
