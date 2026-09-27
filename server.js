@@ -3648,7 +3648,10 @@ ${ICON_SET}
 
         .monitor-grid-layout {
             display: grid !important;
-            grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)) !important;
+            /* 360px is the minimum safe width for the live-card header. With 285px,
+               collapsing the sidebar can create one extra grid column; that makes every
+               card narrower and squeezes the patient name between the fixed controls. */
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)) !important;
             gap: 0.75rem !important;
             align-items: start !important;
         }
@@ -3664,17 +3667,6 @@ ${ICON_SET}
             align-items: stretch !important;
         }
 
-        @media (min-width: 1800px) {
-            .monitor-grid-layout {
-                grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)) !important;
-            }
-        }
-
-        @media (min-width: 2500px) {
-            .monitor-grid-layout {
-                grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)) !important;
-            }
-        }
 
         /* DELIBERATE side border. The generic rule against thick side borders targets
            DECORATIVE stripes; this one is the opposite - it is the card's clinical-state signal
@@ -8324,7 +8316,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             <span class="shrink-0 text-2xs px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: var(--text-inverse);">\${safe.bed}</span>
                             <span data-role="device-status" role="status" class="w-3 h-3 shrink-0 rounded-full \${statusColor}" aria-label="สถานะเครื่อง: \${statusLabel}" title="\${safe.dataMessage}"></span>
                             <div class="flex min-w-0 flex-col gap-0.5">
-                                <button type="button" data-action="show-trend" class="font-bold text-sm cursor-pointer leading-tight text-left" style="color: \${nameColor}; overflow-wrap:anywhere;">\${safe.name}</button>
+                                <button type="button" data-action="show-trend" class="font-bold text-sm cursor-pointer leading-tight text-left truncate" style="color: \${nameColor}; max-width:100%;" title="\${safe.name}">\${safe.name}</button>
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-2xs font-bold" style="color: \${hnColor}; font-family: var(--font-mono); letter-spacing:.01em;">\${safe.hn}</span>
                                     <div class="flex items-center gap-0.5 \${battColor}">
@@ -8336,8 +8328,6 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                                         <span class="text-2xs font-bold">\${safe.batteryLabel}</span>
                                     </div>
                                 </div>
-                                <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold text-left block" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
-                                <div class="text-2xs" style="color:var(--text-tertiary);opacity:.8;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">(ตำแหน่งโดยประมาณ)</div>
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
@@ -8359,6 +8349,11 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         <button type="button" data-action="edit-note" class="note-editable shrink-0 p-1 transition-colors" style="color: var(--text-tertiary);" aria-label="\${p.clinical_note ? 'แก้ไขบันทึกทางคลินิก' : 'เพิ่มบันทึกทางคลินิก'}" title="\${p.clinical_note ? 'มีบันทึก · แก้ไข' : 'เพิ่มบันทึกทางคลินิก'}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h4m-7 5h10a2 2 0 002-2V7a2 2 0 00-2-2h-2.586a1 1 0 01-.707-.293L11.293 3.293A1 1 0 0010.586 3H8a2 2 0 00-2 2v13a2 2 0 002 2z"/></svg>
                         </button>
+                    </div>
+
+                    <div class="flex items-center gap-2 mb-3 flex-wrap">
+                        <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
+                        <span class="text-2xs" style="color:var(--text-tertiary);opacity:.8;white-space:nowrap;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">(ตำแหน่งโดยประมาณ)</span>
                     </div>
 
                     <div class="grid grid-cols-3 gap-2">
