@@ -3648,10 +3648,7 @@ ${ICON_SET}
 
         .monitor-grid-layout {
             display: grid !important;
-            /* 360px is the minimum safe width for the live-card header. With 285px,
-               collapsing the sidebar can create one extra grid column; that makes every
-               card narrower and squeezes the patient name between the fixed controls. */
-            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)) !important;
+            grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)) !important;
             gap: 0.75rem !important;
             align-items: start !important;
         }
@@ -3667,6 +3664,17 @@ ${ICON_SET}
             align-items: stretch !important;
         }
 
+        @media (min-width: 1800px) {
+            .monitor-grid-layout {
+                grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)) !important;
+            }
+        }
+
+        @media (min-width: 2500px) {
+            .monitor-grid-layout {
+                grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)) !important;
+            }
+        }
 
         /* DELIBERATE side border. The generic rule against thick side borders targets
            DECORATIVE stripes; this one is the opposite - it is the card's clinical-state signal
@@ -3680,6 +3688,33 @@ ${ICON_SET}
             border-top-width: 0 !important;
             border-left-width: 4px !important;
             border-radius: var(--r-xl) !important;
+            container-type: inline-size;
+        }
+
+        .monitor-card-header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: start;
+            gap: 0.5rem;
+        }
+
+        .monitor-card-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.25rem;
+            min-width: 0;
+        }
+
+        @container (max-width: 320px) {
+            .monitor-card-header {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .monitor-card-actions {
+                width: 100%;
+                padding-top: 0.15rem;
+            }
         }
         #monitor-grid > .card.dragging {
             position: relative; z-index: 20;
@@ -8310,7 +8345,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 };
                 const html = \`
                 <div class="card p-4 border-t-4 transition-all" data-device-state="\${isInactive ? 'inactive' : 'active'}" style="\${cardBorderStyle} \${isInactive ? inactiveCardStyle : ''}">
-                    <div class="flex items-center justify-between mb-4 gap-2 pb-2" style="border-bottom-color: var(--border-color);">
+                    <div class="monitor-card-header mb-4 pb-2" style="border-bottom-color: var(--border-color);">
                         <div class="flex min-w-0 items-center gap-2 flex-1">
                             <button type="button" data-role="drag-handle" class="priority-editable shrink-0" aria-label="ลากเพื่อจัดเรียงลำดับ" title="ลากเพื่อจัดเรียงลำดับ" style="cursor:grab; touch-action:none; background:none; border:none; padding:2px; color:var(--text-tertiary); font-size:var(--icon-md);"><span class="ic ic-grip" aria-hidden="true"></span></button>
                             <span class="shrink-0 text-2xs px-2 py-0.5 rounded font-bold italic uppercase tracking-tighter" style="background: \${bedBg}; color: var(--text-inverse);">\${safe.bed}</span>
@@ -8331,6 +8366,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             </div>
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
+                        <div class="monitor-card-actions">
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
                             <optgroup label="วัดต่อเนื่อง · เปลืองแบตมากสุด">
@@ -8349,6 +8385,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                         <button type="button" data-action="edit-note" class="note-editable shrink-0 p-1 transition-colors" style="color: var(--text-tertiary);" aria-label="\${p.clinical_note ? 'แก้ไขบันทึกทางคลินิก' : 'เพิ่มบันทึกทางคลินิก'}" title="\${p.clinical_note ? 'มีบันทึก · แก้ไข' : 'เพิ่มบันทึกทางคลินิก'}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h4m-7 5h10a2 2 0 002-2V7a2 2 0 00-2-2h-2.586a1 1 0 01-.707-.293L11.293 3.293A1 1 0 0010.586 3H8a2 2 0 00-2 2v13a2 2 0 002 2z"/></svg>
                         </button>
+                        </div>
                     </div>
 
                     <div class="flex items-center gap-2 mb-3 flex-wrap">
