@@ -135,7 +135,6 @@ const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const APP_ORIGIN = process.env.APP_ORIGIN || '';
 const SESSION_COOKIE = 'nurseaid_session';
 const OR_PATIENT_API_BASE_URL = String(process.env.OR_PATIENT_API_BASE_URL || '').trim();
-const OR_PATIENT_ALLOW_HTTP = String(process.env.OR_PATIENT_ALLOW_HTTP || 'false').toLowerCase() === 'true';
 const parsedOrPatientTimeout = Number.parseInt(process.env.OR_PATIENT_TIMEOUT_MS || '10000', 10);
 const OR_PATIENT_TIMEOUT_MS = Number.isFinite(parsedOrPatientTimeout)
     ? Math.min(30000, Math.max(1000, parsedOrPatientTimeout))
@@ -10888,9 +10887,7 @@ app.get('/api/or-patients', requireCapability('patients:write'), async (req, res
         const result = await getCurrentPatientsByWard({
             baseUrl: OR_PATIENT_API_BASE_URL,
             wardCode: patientSearch,
-            timeoutMs: OR_PATIENT_TIMEOUT_MS,
-            production: process.env.NODE_ENV === 'production',
-            allowHttp: OR_PATIENT_ALLOW_HTTP
+            timeoutMs: OR_PATIENT_TIMEOUT_MS
         });
         // Search terms can contain HN, CID, or a patient name. Never persist them in audit logs.
         logAudit(req, 'READ', 'external_patient_search', null, {
@@ -10903,7 +10900,7 @@ app.get('/api/or-patients', requireCapability('patients:write'), async (req, res
         const upstreamStatus = error instanceof OrPatientError ? error.upstreamStatus : null;
         console.error('[OR Patient Ward] Fetch failed:', code, upstreamStatus || '');
 
-        if (['MISSING_BASE_URL', 'INVALID_BASE_URL', 'INSECURE_BASE_URL'].includes(code)) {
+        if (['MISSING_BASE_URL', 'INVALID_BASE_URL'].includes(code)) {
             return res.status(503).json({ error: 'การตั้งค่าการเชื่อมต่อ HIS ไม่ถูกต้อง' });
         }
         if (code === 'TIMEOUT') {

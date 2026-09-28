@@ -34,10 +34,7 @@ function validatePatientSearch(value) {
     return search;
 }
 
-function buildPatientsByWardUrl(baseUrl, search, {
-    production = false,
-    allowHttp = false
-} = {}) {
+function buildPatientsByWardUrl(baseUrl, search) {
     const configuredBaseUrl = typeof baseUrl === 'string' ? baseUrl.trim() : '';
     if (!configuredBaseUrl) {
         throw new OrPatientError('OR patient API base URL is not configured', { code: 'MISSING_BASE_URL' });
@@ -54,10 +51,6 @@ function buildPatientsByWardUrl(baseUrl, search, {
         || root.username || root.password || root.search || root.hash) {
         throw new OrPatientError('OR patient API base URL is invalid', { code: 'INVALID_BASE_URL' });
     }
-    if (production && !allowHttp && root.protocol !== 'https:') {
-        throw new OrPatientError('OR patient API must use HTTPS in production', { code: 'INSECURE_BASE_URL' });
-    }
-
     const url = new URL('get_patient.php', root);
     url.searchParams.set('search', validatePatientSearch(search));
     return url;
@@ -122,15 +115,13 @@ async function getCurrentPatientsByWard({
     baseUrl,
     wardCode,
     timeoutMs = DEFAULT_TIMEOUT_MS,
-    production = false,
-    allowHttp = false,
     fetchImpl = globalThis.fetch
 }) {
     if (typeof fetchImpl !== 'function') {
         throw new OrPatientError('Fetch implementation is unavailable', { code: 'FETCH_UNAVAILABLE' });
     }
 
-    const url = buildPatientsByWardUrl(baseUrl, wardCode, { production, allowHttp });
+    const url = buildPatientsByWardUrl(baseUrl, wardCode);
     const parsedTimeout = Number(timeoutMs);
     const effectiveTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0
         ? parsedTimeout

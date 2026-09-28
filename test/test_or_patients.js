@@ -21,7 +21,7 @@ function response(payload, { status = 200, rawBody, contentLength } = {}) {
 }
 
 test('builds the patient search endpoint with a leading-zero HN preserved', () => {
-    const url = buildPatientsByWardUrl('https://his.example.test/or_patient', '08', { production: true });
+    const url = buildPatientsByWardUrl('https://his.example.test/or_patient', '08');
     assert.equal(url.toString(), 'https://his.example.test/or_patient/get_patient.php?search=08');
 });
 
@@ -30,18 +30,8 @@ test('supports another exact ward code without numeric conversion', () => {
     assert.equal(url.searchParams.get('search'), 'A-03');
 });
 
-test('rejects an HTTP provider URL in production', () => {
-    assert.throws(
-        () => buildPatientsByWardUrl('http://his.example.test/or_patient', '08', { production: true }),
-        error => error instanceof OrPatientError && error.code === 'INSECURE_BASE_URL'
-    );
-});
-
-test('allows an HTTP provider URL in production only with explicit opt-in', () => {
-    const url = buildPatientsByWardUrl('http://his.internal.test/or_patient', '08', {
-        production: true,
-        allowHttp: true
-    });
+test('allows an HTTP provider URL without an explicit opt-in', () => {
+    const url = buildPatientsByWardUrl('http://his.internal.test/or_patient', '08');
     assert.equal(url.toString(), 'http://his.internal.test/or_patient/get_patient.php?search=08');
 });
 
@@ -56,7 +46,6 @@ test('preserves leading-zero HNs and removes fields outside the contract', async
     const result = await getCurrentPatientsByWard({
         baseUrl: 'https://his.example.test/or_patient',
         wardCode: '08',
-        production: true,
         fetchImpl: async url => {
             assert.equal(url.searchParams.get('search'), '08');
             return response({
