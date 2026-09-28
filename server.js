@@ -3693,28 +3693,26 @@ ${ICON_SET}
 
         .monitor-card-header {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: minmax(0, 1fr);
             align-items: start;
-            gap: 0.5rem;
+            gap: 0.45rem;
         }
 
         .monitor-card-actions {
             display: flex;
             align-items: center;
-            justify-content: flex-end;
-            gap: 0.25rem;
+            gap: 0.35rem;
+            width: 100%;
             min-width: 0;
         }
 
-        @container (max-width: 320px) {
-            .monitor-card-header {
-                grid-template-columns: minmax(0, 1fr);
-            }
-
-            .monitor-card-actions {
-                width: 100%;
-                padding-top: 0.15rem;
-            }
+        .monitor-zone-badge {
+            flex: 1 1 0;
+            min-width: 0;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         #monitor-grid > .card.dragging {
             position: relative; z-index: 20;
@@ -8367,6 +8365,7 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             \${hasCustom ? '<span class="shrink-0" title="ตั้งค่าเฉพาะบุคคล" aria-label="ตั้งค่าเฉพาะบุคคล" style="color: var(--text-tertiary); display:inline-flex;"><span class="ic ic-sliders" style="font-size:var(--icon-sm);" aria-hidden="true"></span></span>' : ''}
                         </div>
                         <div class="monitor-card-actions">
+                        <button type="button" data-action="show-zone-history" class="monitor-zone-badge text-2xs px-2 py-0.5 rounded-full font-bold" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
                         \${priorityBadge}
                         <select data-action="set-priority" data-priority="\${priorityKey}" class="priority-editable priority-select shrink-0" aria-label="ตั้งค่าความสำคัญ" title="ความสำคัญกำหนดทั้งความถี่การวัดและความเร็วในการแจ้งเตือนเมื่ออุปกรณ์หลุด">
                             <optgroup label="วัดต่อเนื่อง · เปลืองแบตมากสุด">
@@ -8386,11 +8385,6 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h4m-7 5h10a2 2 0 002-2V7a2 2 0 00-2-2h-2.586a1 1 0 01-.707-.293L11.293 3.293A1 1 0 0010.586 3H8a2 2 0 00-2 2v13a2 2 0 002 2z"/></svg>
                         </button>
                         </div>
-                    </div>
-
-                    <div class="flex items-center gap-2 mb-3 flex-wrap">
-                        <button type="button" data-action="show-zone-history" class="text-2xs px-2 py-0.5 rounded-full font-bold" style="background:\${zoneBadgeBg};color:\${zoneBadgeColor};border:none;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">\${safe.zoneBadgeText}</button>
-                        <span class="text-2xs" style="color:var(--text-tertiary);opacity:.8;white-space:nowrap;" title="ตำแหน่งโดยประมาณจากตัวรับสัญญาณที่ใกล้ที่สุด ไม่ใช่ตำแหน่งที่แน่นอน">(ตำแหน่งโดยประมาณ)</span>
                     </div>
 
                     <div class="grid grid-cols-3 gap-2">
