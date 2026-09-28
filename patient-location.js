@@ -44,4 +44,41 @@ function hasZoneStateChanged(openRow, current) {
     return false;
 }
 
-module.exports = { resolveCurrentZone, zoneMatchState, hasZoneStateChanged };
+// The dashboard should not flicker to "unknown" while a medium/low-priority
+// wearable is intentionally disconnected between measurement rounds. The open
+// history row is the last stable receiver assignment; use it only when there is
+// no current receiver. A real current receiver always wins immediately.
+function resolveDisplayedLocation(patientWardId, currentNode, nodeZone, openRow) {
+    if (currentNode) {
+        const boardMac = currentNode.boardMac || null;
+        const sameOpenBoard = openRow
+            && String(openRow.board_mac || '').toUpperCase() === String(boardMac || '').toUpperCase();
+        return {
+            current_zone_label: nodeZone?.zoneLabel || null,
+            current_board_mac: boardMac,
+            zone_match: zoneMatchState(patientWardId, nodeZone?.wardId),
+            since: sameOpenBoard ? (openRow.started_at || null) : null,
+            source: 'connected'
+        };
+    }
+
+    if (openRow && openRow.board_mac) {
+        return {
+            current_zone_label: openRow.zone_label || null,
+            current_board_mac: openRow.board_mac,
+            zone_match: zoneMatchState(patientWardId, openRow.ward_id),
+            since: openRow.started_at || null,
+            source: 'last_known'
+        };
+    }
+
+    return {
+        current_zone_label: null,
+        current_board_mac: null,
+        zone_match: 'unknown',
+        since: null,
+        source: 'unknown'
+    };
+}
+
+module.exports = { resolveCurrentZone, zoneMatchState, hasZoneStateChanged, resolveDisplayedLocation };

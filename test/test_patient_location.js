@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseEsp32Topology } = require('../esp32-status');
-const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged } = require('../patient-location');
+const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged, resolveDisplayedLocation } = require('../patient-location');
 
 // Build a two-node topology snapshot and parse it through the real parser so
 // the test exercises the true integration (raw snapshot -> parseEsp32Topology
@@ -128,4 +128,52 @@ test('hasZoneStateChanged: null and undefined fields are equivalent', () => {
         { ...zoneState, zone_label: null },
         { ...zoneState, zone_label: undefined }
     ), false);
+});
+
+test('displayed location keeps the last stable zone while the watch is temporarily disconnected', () => {
+    const startedAt = new Date('2026-09-28T10:00:00Z');
+    const displayed = resolveDisplayedLocation(1, null, undefined, {
+        board_mac: 'F0:F5:BD:A1:C5:8C',
+        zone_label: 'ห้อง 301',
+        ward_id: 1,
+        match_state: 'expected',
+        started_at: startedAt
+    });
+    assert.deepEqual(displayed, {
+        current_zone_label: 'ห้อง 301',
+        current_board_mac: 'F0:F5:BD:A1:C5:8C',
+        zone_match: 'expected',
+        since: startedAt,
+        source: 'last_known'
+    });
+});
+
+test('a newly connected receiver overrides the old last-known zone immediately', () => {
+    const displayed = resolveDisplayedLocation(
+        2,
+        { boardMac: '48:27:E2:B7:89:C4' },
+        { wardId: 2, zoneLabel: 'ห้อง 401' },
+        {
+            board_mac: 'F0:F5:BD:A1:C5:8C',
+            zone_label: 'ห้อง 301',
+            ward_id: 1,
+            match_state: 'mismatch',
+            started_at: new Date('2026-09-28T10:00:00Z')
+        }
+    );
+    assert.equal(displayed.current_zone_label, 'ห้อง 401');
+    assert.equal(displayed.current_board_mac, '48:27:E2:B7:89:C4');
+    assert.equal(displayed.zone_match, 'expected');
+    assert.equal(displayed.since, null, 'old zone start time must not leak onto the new receiver');
+    assert.equal(displayed.source, 'connected');
+});
+
+test('without a current receiver or a stable history row the displayed location is unknown', () => {
+    assert.deepEqual(resolveDisplayedLocation(1, null, undefined, null), {
+        current_zone_label: null,
+        current_board_mac: null,
+        zone_match: 'unknown',
+        since: null,
+        source: 'unknown'
+    });
 });

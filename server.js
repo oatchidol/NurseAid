@@ -44,7 +44,7 @@ const {
     summariseEsp32Uptime,
     summariseEsp32Reboots
 } = require('./esp32-status');
-const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged } = require('./patient-location');
+const { resolveCurrentZone, zoneMatchState, hasZoneStateChanged, resolveDisplayedLocation } = require('./patient-location');
 const app = express();
 // Trust exactly one hop of reverse proxy (nginx at the edge terminates TLS and
 // forwards X-Forwarded-Proto/X-Forwarded-For) so req.protocol reflects the real
@@ -1179,6 +1179,16 @@ const zoneMismatchSince = {};
 const LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS = Math.max(
     0,
     Number.parseInt(process.env.LIVE_ZONE_MISMATCH_DEBOUNCE_SECONDS || '60', 10) || 60
+);
+// mac -> epoch ms when the wearable's board was first observed missing from the
+// topology while it still had an open, real zone. A transient ESP32 gap would
+// otherwise immediately demote the open interval to "unknown zone" and flap it
+// back when the signal returns — hold the last-known zone until the gap
+// persists past the priority-aware hold window (with this value as the minimum).
+const zoneUnknownSince = {};
+const LIVE_ZONE_UNKNOWN_GRACE_SECONDS = Math.max(
+    0,
+    Number.parseInt(process.env.LIVE_ZONE_UNKNOWN_GRACE_SECONDS || '120', 10) || 120
 );
 // Hourly-gated retention sweep for patient_zone_history. Set ONCE per
 // runAlertEngine() tick (never inside the per-patient loop) so a failing
@@ -6766,7 +6776,7 @@ async function runAlertEngine() {
         const nodeZoneByBoardMac = new Map();
         try {
             const nodeZones = await pool.query(
-                'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata WHERE ward_id IS NOT NULL'
+                'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata'
             );
             nodeZones.rows.forEach(row => nodeZoneByBoardMac.set(row.board_mac, { wardId: row.ward_id, zoneLabel: row.zone_label }));
         } catch (error) {
@@ -6871,6 +6881,29 @@ async function runAlertEngine() {
                         [macUpper]
                     );
                     const openRow = openResult.rows[0] || null;
+
+                    // A transient ESP32 topology gap makes currentNode null; without
+                    // a grace window this immediately demotes the open interval to
+                    // "unknown zone" and flaps it back when the signal returns. Hold
+                    // the last-known zone until the gap persists past the grace.
+                    const transientUnknown = currentNode === null && openRow && openRow.board_mac != null;
+                    if (transientUnknown) {
+                        if (!zoneUnknownSince[mac]) zoneUnknownSince[mac] = Date.now();
+                        const priorityPresenceSeconds = freshnessPolicyForPriority(
+                            LIVE_FRESHNESS_POLICY,
+                            status.priority
+                        ).presence;
+                        const holdLastZoneSeconds = Math.max(
+                            LIVE_ZONE_UNKNOWN_GRACE_SECONDS,
+                            priorityPresenceSeconds
+                        );
+                        if ((Date.now() - zoneUnknownSince[mac]) / 1000 < holdLastZoneSeconds) {
+                            continue;
+                        }
+                    } else {
+                        delete zoneUnknownSince[mac];
+                    }
+
                     if (hasZoneStateChanged(openRow, currentZoneState)) {
                         if (openRow) {
                             await pool.query('UPDATE patient_zone_history SET ended_at = now() WHERE id = $1', [openRow.id]);
@@ -9258,7 +9291,7 @@ app.get('/api/patient-locations', requireCapability('patients:location:read'), a
     try {
         const topology = readEsp32Topology(ESP32_TOPOLOGY_FILE, { sourceStaleSeconds: ESP32_SOURCE_STALE_SECONDS });
         const nodeZones = await pool.query(
-            'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata WHERE ward_id IS NOT NULL'
+            'SELECT UPPER(board_mac) AS board_mac, ward_id, zone_label FROM esp32_node_metadata'
         );
         const nodeZoneByBoardMac = new Map(
             nodeZones.rows.map(row => [row.board_mac, { wardId: row.ward_id, zoneLabel: row.zone_label }])
@@ -9271,24 +9304,29 @@ app.get('/api/patient-locations', requireCapability('patients:location:read'), a
                ${scope.clause ? `AND ${scope.clause}` : ''}`,
             scope.params
         );
+        const patientMacs = patients.rows.map(row => row.mac);
+        const openHistory = patientMacs.length
+            ? await pool.query(
+                `SELECT DISTINCT ON (UPPER(mac))
+                        UPPER(mac) AS mac, board_mac, zone_label, ward_id, match_state, started_at
+                   FROM patient_zone_history
+                  WHERE UPPER(mac) = ANY($1) AND ended_at IS NULL
+                  ORDER BY UPPER(mac), started_at DESC`,
+                [patientMacs]
+            )
+            : { rows: [] };
+        const openHistoryByMac = new Map(openHistory.rows.map(row => [row.mac, row]));
+
         const locations = patients.rows.map(row => {
             const node = resolveCurrentZone(topology.nodes, row.mac);
             const nodeZone = node ? nodeZoneByBoardMac.get(String(node.boardMac || '').toUpperCase()) : undefined;
-            return {
-                mac: row.mac,
-                current_zone_label: nodeZone?.zoneLabel || null,
-                current_board_mac: node ? node.boardMac : null,
-                zone_match: zoneMatchState(row.ward_id, nodeZone?.wardId)
-            };
-        });
-        const locationMacs = locations.map(location => location.mac);
-        const openHistory = await pool.query(
-            'SELECT UPPER(mac) AS mac, started_at FROM patient_zone_history WHERE mac = ANY($1) AND ended_at IS NULL',
-            [locationMacs]
-        );
-        const sinceByMac = new Map(openHistory.rows.map(row => [row.mac, row.started_at]));
-        locations.forEach(location => {
-            location.since = sinceByMac.get(location.mac) || null;
+            const resolved = resolveDisplayedLocation(
+                row.ward_id,
+                node,
+                nodeZone,
+                openHistoryByMac.get(row.mac) || null
+            );
+            return { mac: row.mac, ...resolved };
         });
         res.json({ locations });
     } catch (error) {
