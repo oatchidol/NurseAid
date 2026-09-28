@@ -661,10 +661,12 @@ def run_apply_update(action_id):
                 app_port = os.environ.get("PORT", "3333")
                 os.environ["FIRMWARE_OTA_BASE_URL"] = f"http://{detected_ip}:{app_port}"
         report_phase(action_id, "checking")
-        # Clean-tree guard: never git-reset/checkout over an ops engineer's
-        # in-progress edit on the same checkout this bind-mounts.
-        if repo_command("git", "status", "--porcelain").strip():
-            raise RuntimeError("repo has uncommitted local changes, refusing to update")
+        # Only tracked/index modifications can be overwritten by reset --hard.
+        # Playwright recordings, local firmware drafts, and other untracked
+        # files are intentionally excluded: their mere presence must not
+        # block an update. Git pull itself refuses untracked path collisions.
+        if repo_command("git", "status", "--porcelain", "--untracked-files=no").strip():
+            raise RuntimeError("repo has uncommitted tracked changes, refusing to update")
 
         # Snapshot current state so a failed build/health check can roll back.
         old_sha = repo_command("git", "rev-parse", "HEAD").strip()

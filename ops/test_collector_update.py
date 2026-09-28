@@ -13,7 +13,7 @@ SPEC.loader.exec_module(MODULE)
 class ApplyUpdateVersionTests(unittest.TestCase):
     def _repo_command(self, old_sha, new_sha):
         def run(*args, **kwargs):
-            if args[:3] == ("git", "status", "--porcelain"):
+            if args == ("git", "status", "--porcelain", "--untracked-files=no"):
                 return ""
             if args[:3] == ("git", "rev-parse", "HEAD"):
                 run.rev_count += 1
@@ -79,6 +79,50 @@ class ApplyUpdateVersionTests(unittest.TestCase):
         self.assertIn("version verification failed", result["reason"])
         compose.assert_any_call("build", "nurseaid", timeout=600)
         self.assertGreaterEqual(compose.call_count, 3)
+
+
+class ApplyUpdateCleanTreeTests(unittest.TestCase):
+    def test_untracked_files_do_not_block_update_but_tracked_edits_do(self):
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True, text=True
+                ).stdout
+
+            git("init", "-q")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Test")
+            source = Path(root) / "tracked.txt"
+            source.write_text("original")
+            git("add", "tracked.txt")
+            git("commit", "-qm", "baseline")
+            (Path(root) / "firmware-draft.ino").write_text("untracked")
+            self.assertIn("?? firmware-draft.ino", git("status", "--porcelain"))
+            self.assertFalse(git("status", "--porcelain", "--untracked-files=no").strip())
+            source.write_text("modified")
+            self.assertIn("tracked.txt", git("status", "--porcelain", "--untracked-files=no"))
+            git("restore", "tracked.txt")
+            git("add", "firmware-draft.ino")
+            self.assertIn("firmware-draft.ino", git("status", "--porcelain", "--untracked-files=no"))
+
+    def test_update_aborts_before_pull_when_tracked_changes_exist(self):
+        def fake_repo(*args, **kwargs):
+            if args == ("git", "status", "--porcelain", "--untracked-files=no"):
+                return " M server.js\n"
+            raise AssertionError("No other git operation should run when tracked changes exist")
+
+        with mock.patch.object(MODULE, "acquire_apply_update_lock"), \
+             mock.patch.object(MODULE, "release_apply_update_lock"), \
+             mock.patch.object(MODULE, "detect_host_lan_ip", return_value=None), \
+             mock.patch.object(MODULE, "report_phase"), \
+             mock.patch.object(MODULE, "repo_command", side_effect=fake_repo), \
+             mock.patch.object(MODULE, "compose_command") as compose:
+            with self.assertRaisesRegex(RuntimeError, "uncommitted tracked changes"):
+                MODULE.run_apply_update("00000000-0000-4000-8000-000000000000")
+            compose.assert_not_called()
 
 
 if __name__ == "__main__":
