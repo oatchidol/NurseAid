@@ -17,19 +17,192 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
 
 const {
     WEARABLE_STATUS_OFF_WRIST,
     WEARABLE_STATUS_WORN,
     freshnessPolicyForPriority,
+    calculateQueryWindowMinutes,
     buildLiveSnapshot,
+    resolveServedStatuses,
     shouldRaiseOfflineAlert
 } = require('../live-status.js');
 
 const BASE = {
     clinical: 600, status: 180, battery: 1800,
-    quality: 600, presence: 90, liveHr: 30
+    quality: 600, presence: 90, liveHr: 120
 };
+
+// Exercise the real server policy parsing and query-to-status mapping, with
+// in-memory DB/Influx inputs. This also checks the production hrAvailable gate
+// without starting Express, MQTT or a database, or inheriting local .env values.
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+function serverSection(startMarker, endMarker) {
+    const start = serverSource.indexOf(startMarker);
+    const end = serverSource.indexOf(endMarker, start);
+    assert.ok(start >= 0 && end > start, `server section ${startMarker} must exist`);
+    return serverSource.slice(start, end);
+}
+const serverPolicySource = serverSection('const parsedLiveFreshness =', 'const parsedInfluxTimeout =');
+const queryStatusesSource = serverSection('async function queryLiveStatuses()', 'const readLiveStatuses =');
+
+async function serverHrStatus(ageSeconds, env = {}, statusValue = WEARABLE_STATUS_WORN, priority = 'high') {
+    const now = Date.UTC(2026, 10, 2, 0, 0, 0);
+    let hrAvailable;
+    let clinicalQuery;
+    const context = vm.createContext({
+        Date: class extends Date { static now() { return now; } },
+        process: { env }, SERVER_STARTED_AT_MS: now,
+        buildLiveSnapshot, calculateQueryWindowMinutes, freshnessPolicyForPriority,
+        normalizeMac: mac => mac.toLowerCase(),
+        pool: { query: async sql => ({ rows: sql.includes('FROM nurseaid n')
+            ? [{ mac: 'aa:bb:cc:dd:ee:ff', priority, device_type: 'jstyle' }]
+            : [] }) },
+        influxConfig: { bucket: 'test' },
+        queryApi: { collectRows: async sql => {
+            if (!sql.includes('ble_heart')) return [];
+            clinicalQuery = sql;
+            return [['ble_heart', 140], ['ble_temp', 36.8], ['ble_spo2', 98], ['ble_status', statusValue]]
+                .map(([_measurement, _value]) => ({
+                    mac: 'aa:bb:cc:dd:ee:ff', _measurement, _value, _field: 'value',
+                    _time: new Date(now - ageSeconds * 1000).toISOString()
+                }));
+        } },
+        // Alert classification is independent of freshness; inspect the actual
+        // availability flag passed to it by queryLiveStatuses.
+        alertThresholds: () => ({}),
+        classifyVitalRange: () => 'normal', classifySpo2Level: () => 'normal',
+        returnVitalRangeWithHysteresis: () => 'normal', returnSpo2LevelWithHysteresis: () => 'normal',
+        ALERT_HYSTERESIS_HR_BPM: 2, ALERT_HYSTERESIS_TEMP_C: 0.2, ALERT_HYSTERESIS_SPO2_PCT: 1,
+        applyVitalAlertHysteresis: (mac, metrics) => {
+            hrAvailable = metrics.find(metric => metric.key === 'hr').available;
+            return { alertLevel: 'normal', alertCauses: [] };
+        },
+        pruneVitalAlertHysteresisState: () => {}
+    });
+    const [status] = await vm.runInContext(`${serverPolicySource}\n${queryStatusesSource}\nqueryLiveStatuses()`, context);
+    const policy = vm.runInContext(`freshnessPolicyForPriority(LIVE_FRESHNESS_POLICY, ${JSON.stringify(priority)})`, context);
+    return { status, hrAvailable, policy, clinicalQuery, liveHr: vm.runInContext('LIVE_FRESHNESS_POLICY.liveHr', context) };
+}
+
+const PRIORITY_HR_CASES = [
+    ['high', 120, [[100, true], [120, true], [130, false]]],
+    ['medium', 180, [[170, true], [180, true], [190, false]]],
+    ['low', 420, [[400, true], [420, true], [430, false]]]
+];
+for (const [priority, windowSeconds, cases] of PRIORITY_HR_CASES) {
+    for (const [ageSeconds, expectedLive] of cases) {
+        test(`${priority} server HR at ${ageSeconds}s has hrLive/hrAvailable=${expectedLive}`, async () => {
+            const { status, hrAvailable, liveHr, policy } = await serverHrStatus(ageSeconds, {}, WEARABLE_STATUS_WORN, priority);
+            assert.equal(liveHr, 120);
+            assert.equal(policy.liveHr, windowSeconds);
+            assert.equal(status.hrLive, expectedLive);
+            assert.equal(hrAvailable, expectedLive);
+            assert.equal(status.dataQuality, expectedLive ? 'live' : 'recent');
+            assert.equal(status.hr, 140, 'clinical retention is independent of HR alert freshness');
+        });
+    }
+}
+
+test('snapshot fallback uses 120s and each priority adds only its scheduled rest', () => {
+    const now = Date.now();
+    for (const ageSeconds of [100, 120, 130, 170, 190, 400, 430]) {
+        const sensor = { heart: { value: 72, timestampMs: now - ageSeconds * 1000 } };
+        assert.equal(buildLiveSnapshot(sensor, now).hrLive, ageSeconds <= 120);
+        for (const [priority, windowSeconds] of PRIORITY_HR_CASES) {
+            const policy = freshnessPolicyForPriority(BASE, priority);
+            assert.equal(buildLiveSnapshot(sensor, now, policy).hrLive, ageSeconds <= windowSeconds);
+        }
+    }
+});
+
+test('LIVE_HR_FRESHNESS_SECONDS overrides the base in both directions before adding rest', async () => {
+    for (const override of ['30', '200']) {
+        for (const [priority, restSeconds] of [['high', 0], ['medium', 60], ['low', 300]]) {
+            const windowSeconds = Number(override) + restSeconds;
+            for (const ageSeconds of [windowSeconds, windowSeconds + 1]) {
+                const { status, hrAvailable, liveHr, policy } = await serverHrStatus(
+                    ageSeconds, { LIVE_HR_FRESHNESS_SECONDS: override }, WEARABLE_STATUS_WORN, priority);
+                assert.equal(liveHr, Number(override));
+                assert.equal(policy.liveHr, windowSeconds);
+                assert.equal(status.hrLive, ageSeconds <= windowSeconds);
+                assert.equal(hrAvailable, ageSeconds <= windowSeconds);
+            }
+        }
+    }
+});
+
+test('invalid HR env overrides fall back to a 120s base', async () => {
+    for (const override of ['', 'invalid', '0', '-1', 'Infinity']) {
+        for (const [priority, windowSeconds] of PRIORITY_HR_CASES) {
+            for (const ageSeconds of [windowSeconds, windowSeconds + 1]) {
+                const { status, hrAvailable, liveHr } = await serverHrStatus(
+                    ageSeconds, { LIVE_HR_FRESHNESS_SECONDS: override }, WEARABLE_STATUS_WORN, priority);
+                assert.equal(liveHr, 120);
+                assert.equal(status.hrLive, ageSeconds <= windowSeconds);
+                assert.equal(hrAvailable, ageSeconds <= windowSeconds);
+            }
+        }
+    }
+});
+
+test('priority HR is capped at the widened clinical retention without mutating the shared base', () => {
+    const base = Object.freeze({ ...BASE, clinical: 100, liveHr: 200 });
+    for (const [priority, clinical] of [['high', 100], ['medium', 240], ['low', 480]]) {
+        const policy = freshnessPolicyForPriority(base, priority);
+        assert.notStrictEqual(policy, base);
+        assert.equal(policy.clinical, clinical);
+        assert.equal(policy.liveHr, clinical);
+        policy.liveHr = 1;
+        assert.equal(base.liveHr, 200);
+        assert.equal(base.clinical, 100);
+    }
+    const implicitMedium = freshnessPolicyForPriority(BASE);
+    assert.equal(implicitMedium.liveHr, 180);
+});
+
+test('production Influx query covers every priority HR window, including custom retention', async () => {
+    for (const env of [{}, { LIVE_VITAL_FRESHNESS_SECONDS: '120', LIVE_HR_FRESHNESS_SECONDS: '900' }]) {
+        for (const [priority] of PRIORITY_HR_CASES) {
+            const { policy, clinicalQuery } = await serverHrStatus(100, env, WEARABLE_STATUS_WORN, priority);
+            const [, minutes] = clinicalQuery.match(/range\(start: -(\d+)m\)/);
+            assert.ok(Number(minutes) * 60 > policy.liveHr);
+            assert.ok(policy.liveHr <= policy.clinical);
+        }
+    }
+});
+
+test('custom clinical retention bounds live HR and keeps off-wrist status authoritative', async () => {
+    const env = { LIVE_VITAL_FRESHNESS_SECONDS: '120', LIVE_STATUS_FRESHNESS_SECONDS: '60', LIVE_HR_FRESHNESS_SECONDS: '900' };
+    const { status, hrAvailable, liveHr } = await serverHrStatus(200, env);
+    assert.equal(liveHr, 120);
+    assert.equal(status.hrLive, false);
+    assert.equal(hrAvailable, false);
+    assert.equal(status.hr, '--');
+    const offWrist = await serverHrStatus(100, env, WEARABLE_STATUS_OFF_WRIST);
+    assert.equal(offWrist.status.isWorn, false);
+    assert.equal(offWrist.hrAvailable, false);
+    const now = Date.now();
+    assert.equal(buildLiveSnapshot({ heart: { value: 72, timestampMs: now - 200000 } }, now,
+        { clinical: 120, liveHr: 900 }).hrLive, false, 'direct callers also respect clinical retention');
+});
+
+test('monitor HR warning colors respect server HR freshness', () => {
+    const hrChecks = serverSection('const isHrCrit =', 'const isSpo2Crit =');
+    const limits = { hrMin: 50, hrWarningMin: 60, hrWarningMax: 110, hrMax: 120 };
+    for (const hr of [140, 115]) {
+        for (const hrLive of [true, false]) {
+            const result = vm.runInNewContext(`${hrChecks}\n({ isHrCrit, isHrWarn })`, {
+                canEvaluateVitals: true, p: { hr, hrLive }, limit: limits
+            });
+            assert.equal(result.isHrCrit, hrLive && hr === 140);
+            assert.equal(result.isHrWarn, hrLive && hr === 115);
+        }
+    }
+});
 
 test('a reading timestamped in the future is corrupt, not the freshest one', () => {
     const now = Date.now();
@@ -230,4 +403,22 @@ test('production timeline: 28 sparse points over 194 minutes still creates an of
         'the sparse production-shaped trace must contain at least one alertable Offline interval');
     assert.deepEqual(offlineAlertTimes, [durationSeconds],
         'the final fresh-battery / lost-connectivity observation must be alertable immediately');
+});
+
+test('resolveServedStatuses keeps recent cached vitals during a brief stale grace window', () => {
+    const cached = [{ mac: '21:02:02:06:9F:20', hr: 78, spo2: 98, temp: 36.7, status: 'Online' }];
+
+    const fresh = resolveServedStatuses({ value: cached, stale: false, ageMs: 0 }, 60000);
+    assert.equal(fresh.unavailable, false);
+    assert.equal(fresh.statuses[0].hr, 78);
+
+    const withinGrace = resolveServedStatuses({ value: cached, stale: true, ageMs: 15000 }, 60000);
+    assert.equal(withinGrace.unavailable, false);
+    assert.equal(withinGrace.statuses[0].hr, 78);
+    assert.equal(withinGrace.statuses[0].spo2, 98);
+
+    const pastGrace = resolveServedStatuses({ value: cached, stale: true, ageMs: 65000 }, 60000);
+    assert.equal(pastGrace.unavailable, true);
+    assert.equal(pastGrace.statuses[0].hr, '--');
+    assert.equal(pastGrace.statuses[0].status, 'Unavailable');
 });

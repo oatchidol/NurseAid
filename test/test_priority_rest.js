@@ -72,13 +72,13 @@ test('medium and low widen the windows past their rest interval', () => {
     assert.equal(low.clinical, 600);      // base still larger at this rest
 });
 
-test('widening never shortens a window and leaves battery and liveHr alone', () => {
+test('widening never shortens a window, keeps battery and adds rest to liveHr', () => {
     const low = freshnessPolicyForPriority(BASE, 'low');
     for (const key of ['clinical', 'status', 'quality', 'presence']) {
         assert.ok(low[key] >= BASE[key], `${key} must not shrink`);
     }
     assert.equal(low.battery, BASE.battery);
-    assert.equal(low.liveHr, BASE.liveHr, 'a resting watch is genuinely not streaming');
+    assert.equal(low.liveHr, BASE.liveHr + PRIORITY_REST_SECONDS.low);
 });
 
 test('offline threshold rises to cover a rest but never drops below the operator value', () => {
@@ -137,11 +137,11 @@ test('at the current rest intervals the base window already covers a whole rest'
     assert.equal(asHigh.connected, true, 'same window, so high reads the same');
 });
 
-test('presence is the only window a rest still stretches at these intervals', () => {
+test('presence and liveHr stretch while clinical retention stays unchanged at these rests', () => {
     // Lock in which dimension the widening actually moves, so a future change to
     // PRIORITY_REST_SECONDS is forced through this test. clinical, quality and the
     // effective status window (max(status, clinical)) are all pinned at the 600s
-    // base for every priority; only presence separates them. If a longer rest is
+    // base for every priority; presence and liveHr separate them. If a longer rest is
     // restored, clinical starts widening again and the Influx query range below
     // has to grow with it -- that coupling is the whole reason this file exists.
     const low = freshnessPolicyForPriority(BASE, 'low');

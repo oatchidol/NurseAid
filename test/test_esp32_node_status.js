@@ -7,7 +7,9 @@ const {
     parseHeartbeatPayload,
     parseEsp32InventoryPayload,
     parseBootTopic,
-    parseBootPayload
+    parseBootPayload,
+    parseBootBreadcrumb,
+    handleBootMessage
 } = require('../server.js');
 
 test('parseHeartbeatTopic extracts the bare nodeId from ble/node/<id>', () => {
@@ -148,15 +150,16 @@ test('parseBootTopic rejects the bare heartbeat topic, other suffixes and non-bo
     assert.equal(parseBootTopic(undefined), null);
 });
 
-test('parseBootPayload accepts a realistic production payload (Thai text + emoji) and ignores md5', () => {
+test('parseBootPayload accepts a realistic production payload (Thai text + emoji) and keeps md5', () => {
     // Real firmware payloads carry free-form Thai/emoji boot reasons and an
-    // md5 field the server does not use. The parser must survive UTF-8 and
-    // return exactly { bootCount, reason, version } — nothing else.
+    // md5 build fingerprint. The parser must survive UTF-8 and return exactly
+    // { bootCount, reason, version, md5 } — nothing else.
     const payload = Buffer.from('{"boot":9,"reason":"🔴 Task watchdog (loop ค้าง)","version":"2.1.0","md5":"a3c10346"}');
     assert.deepEqual(parseBootPayload(payload), {
         bootCount: 9,
         reason: '🔴 Task watchdog (loop ค้าง)',
-        version: '2.1.0'
+        version: '2.1.0',
+        md5: 'a3c10346'
     });
 });
 
@@ -166,7 +169,8 @@ test('parseBootPayload accepts boot: 0 (a valid first boot)', () => {
     assert.deepEqual(parseBootPayload(Buffer.from('{"boot":0}')), {
         bootCount: 0,
         reason: null,
-        version: null
+        version: null,
+        md5: null
     });
 });
 
@@ -209,6 +213,80 @@ test('parseBootPayload tolerates missing reason and version (older firmware)', (
     assert.deepEqual(parseBootPayload(Buffer.from('{"boot":3}')), {
         bootCount: 3,
         reason: null,
-        version: null
+        version: null,
+        md5: null
+    });
+});
+
+test('boot breadcrumbs are optional, independently validated, and capped', () => {
+    assert.deepEqual(parseBootBreadcrumb({ boot: 9 }), {});
+    for (const input of [null, undefined, [], 'bad']) {
+        assert.deepEqual(parseBootBreadcrumb(input), {});
+    }
+    assert.deepEqual(parseBootBreadcrumb({
+        stage: 'x'.repeat(40), stage_slot: 255, stage_ms: 0, prev_up_ms: 4294967295
+    }), { stage: 'x'.repeat(32), stage_slot: 255, stage_ms: 0, prev_up_ms: 4294967295 });
+    assert.deepEqual(parseBootBreadcrumb({ stage: '', stage_slot: 0 }), { stage: '', stage_slot: 0 });
+    for (const bad of [null, true, '4', {}, [], -1, 1.5, NaN, Infinity, -Infinity]) {
+        assert.deepEqual(parseBootBreadcrumb({
+            stage: bad, stage_slot: bad, stage_ms: bad, prev_up_ms: bad
+        }), typeof bad === 'string' ? { stage: bad } : {});
+    }
+    assert.deepEqual(parseBootBreadcrumb({ stage_slot: 256 }), {});
+    assert.deepEqual(parseBootBreadcrumb({ stage: 'ble_connect', stage_slot: -1, stage_ms: '5', prev_up_ms: 12 }),
+        { stage: 'ble_connect', prev_up_ms: 12 });
+    assert.deepEqual(parseBootPayload(Buffer.from('{"boot":9,"stage":{},"stage_slot":256,"stage_ms":1e999,"prev_up_ms":-1}')),
+        { bootCount: 9, reason: null, version: null, md5: null });
+});
+
+test('boot handler stores breadcrumbs in event detail while preserving legacy detail and dedupe', async (t) => {
+    const { Pool } = require('pg');
+    const events = [];
+    const updates = [];
+    let baseline = 8;
+    t.mock.method(Pool.prototype, 'query', async (sql, params) => {
+        if (sql.startsWith('SELECT board_mac')) return { rows: [{ board_mac: 'F0:F5:BD:A1:C5:8C' }] };
+        if (sql.startsWith('SELECT last_boot_count')) return { rows: [{ last_boot_count: baseline }] };
+        if (sql.includes('INSERT INTO esp32_node_events')) {
+            events.push(params);
+            return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE esp32_nodes SET last_boot_count')) {
+            updates.push(params[0]);
+            return { rows: [], rowCount: 1 };
+        }
+        assert.fail(`Unexpected SQL: ${sql}`);
+    });
+    const reason = '🔴 Task watchdog (loop ค้าง)';
+    const send = (extra = {}, boot = 9) => handleBootMessage('na1c58c', parseBootPayload(
+        Buffer.from(JSON.stringify({ boot, reason, ...extra }))));
+
+    await send();
+    const legacy = { bootCount: 9, previousBootCount: 8, reason };
+    assert.equal(events[0][3], JSON.stringify(legacy));
+    assert.deepEqual(events[0].slice(0, 3), ['F0:F5:BD:A1:C5:8C', 'na1c58c', 'reboot']);
+
+    const breadcrumb = { stage: 'ble_discover', stage_slot: 0, stage_ms: 95000, prev_up_ms: 94000 };
+    await send(breadcrumb);
+    assert.deepEqual(JSON.parse(events[1][3]), { ...legacy, ...breadcrumb });
+    await send({ stage: {}, stage_slot: 256, stage_ms: -1, prev_up_ms: '94000' });
+    assert.equal(events[2][3], JSON.stringify(legacy));
+    await send({ stage: 's'.repeat(80), stage_slot: 255, stage_ms: 0, prev_up_ms: 0 });
+    assert.deepEqual(JSON.parse(events[3][3]), {
+        ...legacy, stage: 's'.repeat(32), stage_slot: 255, stage_ms: 0, prev_up_ms: 0
+    });
+
+    baseline = 9;
+    await send(breadcrumb); // Retained replay still produces no event/update.
+    assert.equal(events.length, 4);
+    assert.deepEqual(updates, [9, 9, 9, 9]);
+    baseline = null;
+    await send(breadcrumb); // First sighting still only establishes the baseline.
+    assert.equal(events.length, 4);
+    assert.deepEqual(updates, [9, 9, 9, 9, 9]);
+    baseline = 10;
+    await send(breadcrumb);
+    assert.deepEqual(JSON.parse(events[4][3]), {
+        bootCount: 9, previousBootCount: 10, reason, counterReset: true, ...breadcrumb
     });
 });

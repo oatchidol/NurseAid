@@ -39,7 +39,8 @@ function priorityRestSeconds(priority) {
 
 // Widen the freshness windows so a patient on medium/low priority is not
 // reported stale or offline during a rest the system itself scheduled.
-// `high` is returned untouched. An unset priority means 'medium' (the ward
+// `high` keeps the base windows, with liveHr capped at clinical retention.
+// An unset priority means 'medium' (the ward
 // default set in postgres-init/01-init.sql), so it is widened like any other
 // resting patient — otherwise the server would call a resting watch offline.
 function freshnessPolicyForPriority(basePolicy, priority) {
@@ -48,19 +49,18 @@ function freshnessPolicyForPriority(basePolicy, priority) {
     // global LIVE_FRESHNESS_POLICY is shared by every device on every poll,
     // and one careless mutation downstream would silently retune the whole
     // ward's staleness rules.
-    if (!restSeconds) return { ...basePolicy };
+    const policy = { ...basePolicy };
     const floor = restSeconds + PRIORITY_REST_MARGIN_SECONDS;
     const widen = value => Math.max(Number(value) || 0, floor);
-    return {
-        ...basePolicy,
-        clinical: widen(basePolicy?.clinical),
-        status: widen(basePolicy?.status),
-        quality: widen(basePolicy?.quality),
-        presence: widen(basePolicy?.presence)
-        // battery and liveHr are deliberately left alone: battery is already
-        // far longer than any rest, and hrLive means "streaming right now",
-        // which a resting watch genuinely is not.
-    };
+    if (restSeconds) {
+        for (const key of ['clinical', 'status', 'quality', 'presence']) {
+            policy[key] = widen(basePolicy?.[key]);
+        }
+    }
+    // The base HR allowance already includes the cycle margin; add only rest.
+    policy.liveHr = Math.min(basePolicy.liveHr + restSeconds, policy.clinical);
+    // Battery retention is already far longer than any scheduled rest.
+    return policy;
 }
 
 // The offline alert must not fire inside a scheduled rest either. Raise the
@@ -136,8 +136,11 @@ function buildLiveSnapshot(sensor, nowMs, freshness) {
             battery: Number(freshness?.battery) || 1800,
             quality: Number(freshness?.quality) || 600,
             presence: Number(freshness?.presence) || 90,
-            liveHr: Number(freshness?.liveHr) || 30
+            // Firmware SpO2 phase ~80s per attempt + margin; priority adds its scheduled rest.
+            liveHr: Number(freshness?.liveHr) || 120
         };
+    // A live badge must not outlast the clinical value (including custom policies).
+    policy.liveHr = Math.min(policy.liveHr, policy.clinical);
     // The status entry is what says whether the watch is on a wrist, so the
     // vitals are only meaningful while that answer is still current. When it
     // expired first the system forgot the answer but kept the readings, and
@@ -341,6 +344,22 @@ function markStatusesUnavailable(statuses, reason = 'telemetry_unavailable') {
     });
 }
 
+/**
+ * Keep serving recently cached statuses across brief telemetry query hiccups
+ * so a single transient timeout does not blank every patient card to '--'.
+ */
+function resolveServedStatuses(snapshot, unavailableGraceMs = 60000) {
+    if (!snapshot) return { statuses: [], unavailable: true };
+    if (!snapshot.stale) return { statuses: snapshot.value || [], unavailable: false };
+    const graceMs = Number.isFinite(Number(unavailableGraceMs))
+        ? Math.max(0, Number(unavailableGraceMs))
+        : 60000;
+    if (Number.isFinite(snapshot.ageMs) && snapshot.ageMs <= graceMs) {
+        return { statuses: snapshot.value || [], unavailable: false };
+    }
+    return { statuses: markStatusesUnavailable(snapshot.value), unavailable: true };
+}
+
 module.exports = {
     WEARABLE_STATUS_OFF_WRIST,
     WEARABLE_STATUS_WORN,
@@ -354,6 +373,7 @@ module.exports = {
     createSingleFlightCache,
     createResilientSingleFlightCache,
     markStatusesUnavailable,
+    resolveServedStatuses,
     offlineThresholdMinutes,
     shouldRaiseOfflineAlert
 };

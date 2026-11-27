@@ -144,3 +144,36 @@ test('nodeSupportsBrokerArg treats unknown firmware as unsupported so a broker a
     assert.equal(nodeSupportsBrokerArg(123), false);
     assert.equal(nodeSupportsBrokerArg({}), false);
 });
+
+// ── build fingerprint (same version string, different binary) ──
+const { md5OfBuffer, firmwareBuildMatches, firmwareBuildMismatch, parseBootPayload } = require('../server.js');
+
+test('parseBootPayload keeps a valid md5 and drops a malformed or absent one', () => {
+    const mk = extra => Buffer.from(JSON.stringify({ boot: 3, reason: 'x', version: '2.2.5', ...extra }));
+    assert.equal(parseBootPayload(mk({ md5: '82B58233' })).md5, '82b58233');
+    assert.equal(parseBootPayload(mk({ md5: 'zz' })).md5, null);
+    assert.equal(parseBootPayload(mk({ md5: 123 })).md5, null);
+    assert.equal(parseBootPayload(mk({})).md5, null);
+});
+
+test('firmwareBuildMatches compares the board prefix against the full image md5', () => {
+    const full = md5OfBuffer(Buffer.from('image-a'));
+    assert.equal(firmwareBuildMatches(full.slice(0, 8), full), true);
+    assert.equal(firmwareBuildMatches('00000000', full), false);
+    assert.equal(firmwareBuildMatches(null, full), null);
+    assert.equal(firmwareBuildMatches('82b58233', null), null);
+});
+
+test('firmwareBuildMismatch flags only a known version whose uploaded images all differ', () => {
+    const a = md5OfBuffer(Buffer.from('a'));
+    const b = md5OfBuffer(Buffer.from('b'));
+    const rows = [{ version: '2.2.5', md5: a }];
+    assert.equal(firmwareBuildMismatch('2.2.5', a.slice(0, 8), rows), false);
+    assert.equal(firmwareBuildMismatch('2.2.5', b.slice(0, 8), rows), true);
+    // another upload of the same version that does match clears the warning
+    assert.equal(firmwareBuildMismatch('2.2.5', b.slice(0, 8), [...rows, { version: '2.2.5', md5: b }]), false);
+    // unknown version, no md5 reported, or no md5 on record → never a false alarm
+    assert.equal(firmwareBuildMismatch('2.9.9', b.slice(0, 8), rows), false);
+    assert.equal(firmwareBuildMismatch('2.2.5', null, rows), false);
+    assert.equal(firmwareBuildMismatch('2.2.5', b.slice(0, 8), [{ version: '2.2.5', md5: null }]), false);
+});

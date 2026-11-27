@@ -27,6 +27,7 @@ const {
     calculateQueryWindowMinutes,
     createResilientSingleFlightCache,
     markStatusesUnavailable,
+    resolveServedStatuses,
     offlineThresholdMinutes,
     offlineThresholdMinutesForPriority,
     freshnessPolicyForPriority,
@@ -70,14 +71,17 @@ const LIVE_VITAL_FRESHNESS_SECONDS = Number.isFinite(parsedLiveFreshness) && par
 const parsedStatusFreshness = Number.parseInt(process.env.LIVE_STATUS_FRESHNESS_SECONDS || '180', 10);
 const parsedBatteryFreshness = Number.parseInt(process.env.LIVE_BATTERY_FRESHNESS_SECONDS || '1800', 10);
 const parsedPresenceFreshness = Number.parseInt(process.env.LIVE_PRESENCE_FRESHNESS_SECONDS || '90', 10);
-const parsedLiveHrFreshness = Number.parseInt(process.env.LIVE_HR_FRESHNESS_SECONDS || '30', 10);
+// Firmware SpO2 phase ~80s per attempt + margin; priority adds its scheduled rest.
+const parsedLiveHrFreshness = Number.parseInt(process.env.LIVE_HR_FRESHNESS_SECONDS || '120', 10);
 const LIVE_FRESHNESS_POLICY = {
     clinical: LIVE_VITAL_FRESHNESS_SECONDS,
     status: Number.isFinite(parsedStatusFreshness) && parsedStatusFreshness > 0 ? parsedStatusFreshness : 180,
     battery: Number.isFinite(parsedBatteryFreshness) && parsedBatteryFreshness > 0 ? parsedBatteryFreshness : 1800,
     quality: LIVE_VITAL_FRESHNESS_SECONDS,
     presence: Number.isFinite(parsedPresenceFreshness) && parsedPresenceFreshness > 0 ? parsedPresenceFreshness : 90,
-    liveHr: Number.isFinite(parsedLiveHrFreshness) && parsedLiveHrFreshness > 0 ? parsedLiveHrFreshness : 30,
+    // Live HR must fit inside clinical retention and its Influx query window.
+    liveHr: Math.min(LIVE_VITAL_FRESHNESS_SECONDS,
+        Number.isFinite(parsedLiveHrFreshness) && parsedLiveHrFreshness > 0 ? parsedLiveHrFreshness : 120),
     sessionStartedAtMs: SERVER_STARTED_AT_MS
 };
 // The Influx range has to cover the WIDEST freshness any patient can be given,
@@ -96,14 +100,21 @@ const LIVE_CLINICAL_QUERY_WINDOW_MINUTES = calculateQueryWindowMinutes({
 const LIVE_BATTERY_QUERY_WINDOW_MINUTES = calculateQueryWindowMinutes({
     battery: LIVE_FRESHNESS_POLICY.battery
 });
-const parsedInfluxTimeout = Number.parseInt(process.env.INFLUX_QUERY_TIMEOUT_MS || '5000', 10);
+const parsedInfluxTimeout = Number.parseInt(process.env.INFLUX_QUERY_TIMEOUT_MS || '15000', 10);
 const INFLUX_QUERY_TIMEOUT_MS = Number.isFinite(parsedInfluxTimeout) && parsedInfluxTimeout >= 1000
     ? parsedInfluxTimeout
-    : 5000;
+    : 15000;
 const parsedLiveFallback = Number.parseInt(process.env.LIVE_STATUS_FALLBACK_SECONDS || '300', 10);
 const LIVE_STATUS_FALLBACK_MS = (Number.isFinite(parsedLiveFallback) && parsedLiveFallback > 0
     ? parsedLiveFallback
     : 300) * 1000;
+const parsedUnavailableGrace = Number.parseInt(process.env.LIVE_STATUS_UNAVAILABLE_GRACE_SECONDS || '60', 10);
+const LIVE_STATUS_UNAVAILABLE_GRACE_MS = Math.min(
+    LIVE_STATUS_FALLBACK_MS,
+    Number.isFinite(parsedUnavailableGrace) && parsedUnavailableGrace >= 0
+        ? parsedUnavailableGrace * 1000
+        : 60000
+);
 function strictEnvNumber(name, fallback) {
     const raw = process.env[name];
     if (raw === undefined || String(raw).trim() === '') return Number(fallback);
@@ -305,6 +316,38 @@ function initMqttClient() {
     });
 }
 
+// A deployment row only leaves 'pending'/'start' when the board reports back
+// over MQTT. A board that never receives the command, crash-loops, or dies
+// mid-download reports nothing, so without a deadline the row (and the UI,
+// and the "delete version" guard) would hang forever.
+//   pending → no 'start' ever arrived: command lost or board unresponsive.
+//   start   → download began but no terminal result: board died mid-update.
+const OTA_PENDING_TIMEOUT_SECONDS = Number.parseInt(process.env.OTA_PENDING_TIMEOUT_SECONDS, 10) || 180;
+const OTA_START_TIMEOUT_SECONDS = Number.parseInt(process.env.OTA_START_TIMEOUT_SECONDS, 10) || 600;
+// A late result is still accepted for a row we already timed out, but only
+// within this window — beyond it the report is unrelated to that request.
+const OTA_LATE_REPORT_WINDOW_SECONDS = 3600;
+
+async function sweepStaleFirmwareDeployments() {
+    const result = await pool.query(
+        `UPDATE firmware_deployments
+            SET status='timeout',
+                detail = CASE WHEN status='pending'
+                    THEN 'บอร์ดไม่ตอบรับคำสั่ง OTA (อาจออฟไลน์ รีบูตวน หรือค้าง)'
+                    ELSE 'เริ่มอัปเดตแล้วแต่ไม่มีผลรายงานกลับ (บอร์ดอาจดับหรือรีเซ็ตระหว่างโหลด)'
+                END,
+                updated_at=NOW()
+          WHERE (status='pending' AND requested_at < NOW() - make_interval(secs => $1))
+             OR (status='start'   AND updated_at   < NOW() - make_interval(secs => $2))
+        RETURNING id, board_mac`,
+        [OTA_PENDING_TIMEOUT_SECONDS, OTA_START_TIMEOUT_SECONDS]
+    );
+    if (result.rowCount) {
+        console.warn(`[Firmware OTA] Timed out ${result.rowCount} stale deployment(s): ${result.rows.map(r => r.board_mac).join(', ')}`);
+    }
+    return result.rowCount;
+}
+
 async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
     // Resolve nodeId -> board_mac via the durable esp32_nodes registry instead
     // of reading the volatile topology snapshot file. This is the same path used
@@ -336,10 +379,12 @@ async function handleOtaStatusMessage(nodeId, { state, detail, version }) {
          SET status=$1, detail=$2, reported_version=$3, updated_at=NOW()
          WHERE id = (
              SELECT id FROM firmware_deployments
-             WHERE board_mac=$4 AND status IN ('pending','start')
+             WHERE board_mac=$4
+               AND (status IN ('pending','start')
+                    OR (status='timeout' AND updated_at > NOW() - make_interval(secs => $5)))
              ORDER BY requested_at DESC LIMIT 1
          )`,
-        [state, detail || null, version || null, boardMac]
+        [state, detail || null, version || null, boardMac, OTA_LATE_REPORT_WINDOW_SECONDS]
     );
 }
 
@@ -427,14 +472,41 @@ async function handleHeartbeatMessage(nodeId, { uptime, heap, wifi_rssi, time_ok
 // gets delivered on the next reconnect where bootCount > baseline still holds.
 // A second heuristic would double-count the same reboot and corrupt the
 // "how flaky is this board" number, which is the entire purpose of this feature.
-async function handleBootMessage(nodeId, { bootCount, reason, version }) {
+// Optional crash breadcrumbs are independent: discard each malformed field.
+function parseBootBreadcrumb(data) {
+    const detail = {};
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return detail;
+    if (typeof data.stage === 'string') detail.stage = data.stage.slice(0, 32);
+    if (Number.isInteger(data.stage_slot) && data.stage_slot >= 0 && data.stage_slot <= 255) {
+        detail.stage_slot = data.stage_slot;
+    }
+    for (const key of ['stage_ms', 'prev_up_ms']) {
+        if (Number.isFinite(data[key]) && Number.isInteger(data[key]) && data[key] >= 0) {
+            detail[key] = data[key];
+        }
+    }
+    return detail;
+}
+
+async function handleBootMessage(nodeId, payload) {
+    const { bootCount, reason, version, md5 } = payload;
+    const breadcrumb = parseBootBreadcrumb(payload);
     const boardMac = await resolveBoardMacByNodeId(nodeId);
     if (!boardMac) {
         // Boot arrived before the authoritative ble/esp32 inventory message.
         // Buffer it so it is not silently lost — flush when identity resolves.
-        bufferPendingBoot(nodeId, { bootCount, reason, version });
+        bufferPendingBoot(nodeId, { bootCount, reason, version, md5, ...breadcrumb });
         console.warn(`[ESP32 Boot] Boot from unidentified nodeId ${nodeId} — buffered until ble/esp32 inventory arrives`);
         return;
+    }
+    // Record which binary the board is running. Done before the reboot-counter
+    // decision table because the retained-replay branch returns early, and a
+    // first sighting after the server upgrade still needs the fingerprint.
+    if (md5) {
+        await pool.query(
+            `UPDATE esp32_nodes SET last_fw_md5 = $1 WHERE board_mac = $2 AND last_fw_md5 IS DISTINCT FROM $1`,
+            [md5, boardMac]
+        );
     }
     // Read the current baseline so we can apply the decision table.
     const prev = await pool.query(
@@ -466,7 +538,8 @@ async function handleBootMessage(nodeId, { bootCount, reason, version }) {
         await recordEsp32Event(boardMac, nodeId, 'reboot', {
             bootCount,
             previousBootCount: lastBootCount,
-            reason
+            reason,
+            ...breadcrumb
         });
         await pool.query(
             `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
@@ -484,7 +557,8 @@ async function handleBootMessage(nodeId, { bootCount, reason, version }) {
         bootCount,
         previousBootCount: lastBootCount,
         reason,
-        counterReset: true
+        counterReset: true,
+        ...breadcrumb
     });
     await pool.query(
         `UPDATE esp32_nodes SET last_boot_count = $1 WHERE board_mac = $2`,
@@ -577,7 +651,31 @@ function parseCookies(header = '') {
 
 function sessionCookie(token) {
     const secure = process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE === 'true';
-    return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800${secure ? '; Secure' : ''}`;
+    return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}${secure ? '; Secure' : ''}`;
+}
+
+const SESSION_TTL_SECONDS = 8 * 60 * 60;
+// Sliding session: an authenticated request renews the cookie once less than
+// half the lifetime remains, so an open monitor page that polls every few
+// seconds never expires mid-shift, while an abandoned session still lapses
+// SESSION_TTL_SECONDS after its last activity.
+function shouldRenewSession(claims, nowSeconds = Math.floor(Date.now() / 1000)) {
+    const exp = claims ? Number(claims.exp) : NaN;
+    return Number.isFinite(exp) && exp - nowSeconds < SESSION_TTL_SECONDS / 2;
+}
+
+function signSessionToken(user) {
+    return jwt.sign(
+        {
+            id: user.id,
+            username: user.username,
+            name: user.full_name,
+            role: user.role,
+            sessionVersion: Number(user.session_version) || 0
+        },
+        SESSION_SECRET,
+        { expiresIn: SESSION_TTL_SECONDS, issuer: 'nurseaid' }
+    );
 }
 
 function clearSessionCookie() {
@@ -1152,6 +1250,7 @@ app.use(async (req, res, next) => {
         };
         // Load user's ward assignments for scoping
         req.user.wardIds = await getUserWardIds(user.id);
+        if (shouldRenewSession(claims)) res.setHeader('Set-Cookie', sessionCookie(signSessionToken(user)));
     } catch (error) {
         console.error('[Authentication]', error.message);
         if (req.path.startsWith('/api/')) return res.status(503).json({ error: 'Authentication service unavailable' });
@@ -1621,6 +1720,25 @@ async function initDatabase() {
             ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS broker_state_at TIMESTAMP;
         `);
     } catch (e) { console.error("Broker trial state migration error:", e.message); }
+
+    // ─── Firmware build fingerprint ─────────────────────────────────────────────
+    // The version string alone cannot prove which binary a board runs: two
+    // different builds can both say "2.2.5". The board reports the leading hex
+    // of its sketch MD5 in its boot message; the server stores the MD5 of each
+    // uploaded .bin so the two can be compared.
+    try {
+        await pool.query(`
+            ALTER TABLE esp32_nodes ADD COLUMN IF NOT EXISTS last_fw_md5 VARCHAR(32);
+            ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS md5 VARCHAR(32);
+        `);
+        const missing = await pool.query(`SELECT id, filename FROM firmware_versions WHERE md5 IS NULL AND filename <> ''`);
+        for (const row of missing.rows) {
+            try {
+                const md5 = md5OfFile(path.join(FIRMWARE_UPLOAD_DIR, row.filename));
+                await pool.query(`UPDATE firmware_versions SET md5=$1 WHERE id=$2`, [md5, row.id]);
+            } catch (e) { console.warn(`[Firmware] md5 backfill skipped for version ${row.id}: ${e.message}`); }
+        }
+    } catch (e) { console.error("Firmware md5 migration error:", e.message); }
 
         const userCount = await pool.query('SELECT COUNT(*) FROM users');
     if (parseInt(userCount.rows[0].count) === 0) {
@@ -5048,6 +5166,23 @@ ${ICON_SET}
     <audio id="alertSound" src="/assets/alert-default.wav" preload="auto"></audio>
 
     <script>
+        // Session expiry: any same-origin /api/ call that comes back 401 means the
+        // session is gone, so go to /login instead of leaving each caller to show a
+        // misleading "could not load" message.
+        (function () {
+            const nativeFetch = window.fetch.bind(window);
+            let redirecting = false;
+            window.fetch = function (input, init) {
+                return nativeFetch(input, init).then(function (response) {
+                    const url = typeof input === 'string' ? input : (input && input.url) || '';
+                    if (response.status === 401 && !redirecting && url.indexOf('/api/') === 0 && url !== '/api/login') {
+                        redirecting = true;
+                        window.location.href = '/login';
+                    }
+                    return response;
+                });
+            };
+        })();
         let nurse = '';
         let role = 'viewer';
         const _ROLE_LABELS = {
@@ -6273,17 +6408,7 @@ app.post('/api/login', async (req, res) => {
         await pool.query('UPDATE users SET password=$1 WHERE id=$2', [await hashPassword(password), user.id]);
     }
 
-    const token = jwt.sign(
-        {
-            id: user.id,
-            username: user.username,
-            name: user.full_name,
-            role: user.role,
-            sessionVersion: Number(user.session_version) || 0
-        },
-        SESSION_SECRET,
-        { expiresIn: '8h', issuer: 'nurseaid' }
-    );
+    const token = signSessionToken(user);
     res.setHeader('Set-Cookie', sessionCookie(token));
     res.json({ success: true, name: user.full_name, role: user.role });
 
@@ -7123,16 +7248,17 @@ async function runEsp32ReceiverSweep() {
 app.get('/api/live-status', async (req, res) => {
     try {
         const snapshot = await readLiveStatuses();
-        let statuses = snapshot.stale
-            ? markStatusesUnavailable(snapshot.value)
-            : snapshot.value;
-            
+        const resolved = resolveServedStatuses(snapshot, LIVE_STATUS_UNAVAILABLE_GRACE_MS);
+
         // POST-FILTERING for ward scope. Never query-filter the shared live cache.
-        statuses = filterStatusesForUser(statuses, req.user);
-        
+        const statuses = filterStatusesForUser(resolved.statuses, req.user);
+
         if (snapshot.stale) {
-            console.warn(`[Live Status] Serving safe fallback after query failure: ${snapshot.error?.message || 'unknown error'}`);
-            res.setHeader('X-NurseAid-Telemetry', 'stale-fallback');
+            const ageSec = Number.isFinite(snapshot.ageMs) ? Math.round(snapshot.ageMs / 1000) : null;
+            console.warn(
+                `[Live Status] Serving ${resolved.unavailable ? 'unavailable' : 'cached-grace'} fallback (${ageSec ?? '?'}s old) after query failure: ${snapshot.error?.message || 'unknown error'}`
+            );
+            res.setHeader('X-NurseAid-Telemetry', resolved.unavailable ? 'stale-fallback' : 'cached-grace');
         }
         res.json(statuses.map(({ _alertSettings, ...status }) => status));
     } catch (error) {
@@ -7211,8 +7337,8 @@ const AI_TOOLS = Object.freeze([
 
 async function aiVisibleStatuses(user) {
     const snapshot = await readLiveStatuses();
-    const value = snapshot.stale ? markStatusesUnavailable(snapshot.value) : snapshot.value;
-    return filterStatusesForUser(Array.isArray(value) ? value : [], user);
+    const { statuses } = resolveServedStatuses(snapshot, LIVE_STATUS_UNAVAILABLE_GRACE_MS);
+    return filterStatusesForUser(Array.isArray(statuses) ? statuses : [], user);
 }
 
 function aiBedLabel(status) {
@@ -8232,8 +8358,8 @@ app.get('/', (req, res) => res.send(ui(req.user, 'dash', `
                 const isInactive = isOffline || isOffWrist || isLowBattery || isAwaitingWearState;
                 const canEvaluateVitals = isOnline && isWorn && !isInactive && !p.telemetryStale;
                 const limit = getLimits(p.mac);
-                const isHrCrit = canEvaluateVitals && p.hr !== '--' && (p.hr > limit.hrMax || p.hr < limit.hrMin);
-                const isHrWarn = canEvaluateVitals && p.hr !== '--' && !isHrCrit && (p.hr > limit.hrWarningMax || p.hr < limit.hrWarningMin);
+                const isHrCrit = canEvaluateVitals && p.hrLive && p.hr !== '--' && (p.hr > limit.hrMax || p.hr < limit.hrMin);
+                const isHrWarn = canEvaluateVitals && p.hrLive && p.hr !== '--' && !isHrCrit && (p.hr > limit.hrWarningMax || p.hr < limit.hrWarningMin);
                 const isSpo2Crit = canEvaluateVitals && p.spo2 !== '--' && p.spo2 <= limit.spo2CriticalMin;
                 const isSpo2Warn = canEvaluateVitals && p.spo2 !== '--' && !isSpo2Crit && p.spo2 < limit.spo2WarningMin;
                 const isTempCrit = canEvaluateVitals && p.temp !== '--' && (p.temp > limit.tempMax || p.temp < limit.tempMin);
@@ -8943,10 +9069,11 @@ async function esp32NodesForUi(req) {
     );
     const healthByMac = new Map(healthStatus.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const registry = await pool.query(
-        `SELECT board_mac, node_id, ip_address, last_fw_version, last_seen_at,
+        `SELECT board_mac, node_id, ip_address, last_fw_version, last_fw_md5, last_seen_at,
                 broker_state, broker_state_addr, broker_state_at, revoked_at
            FROM esp32_nodes`
     );
+    const firmwareImages = await pool.query(`SELECT version, md5 FROM firmware_versions WHERE md5 IS NOT NULL`);
     const registryByMac = new Map(registry.rows.map(row => [String(row.board_mac || '').toUpperCase(), row]));
     const decommissioned = await pool.query('SELECT board_mac FROM esp32_node_decommissioned');
     const decommissionedMacs = new Set(decommissioned.rows.map(row => String(row.board_mac || '').toUpperCase()));
@@ -9082,6 +9209,9 @@ async function esp32NodesForUi(req) {
             zoneLabel: meta.zone_label || null,
             wardId: meta.ward_id ?? null,
             fwVersion: health.fw_version || null,
+            fwMd5: reg.last_fw_md5 || null,
+            // Same version string, different binary than the one uploaded here.
+            fwBuildMismatch: firmwareBuildMismatch(health.fw_version || reg.last_fw_version || null, reg.last_fw_md5, firmwareImages.rows),
             uptimeSec: health.uptime_sec ?? null,
             wifiRssi: health.wifi_rssi ?? null,
             freeHeapBytes: health.free_heap_bytes ?? null,
@@ -9850,7 +9980,7 @@ app.get('/esp32-mgmt', requireCapability('devices:read'), async (req, res) => {
                     '<div class="receiver-metric"><div class="receiver-metric-label">Heartbeat ล่าสุด</div><div class="receiver-metric-value">' + escapeHTML(receiverLastSeenText(node.lastSeenAt, node.lastSeenAgeSeconds)) + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">IP Address</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.ipAddress || '-') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">Board MAC</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.boardMac || '-') + '</div></div>' +
-                    '<div class="receiver-metric"><div class="receiver-metric-label">เวอร์ชันเฟิร์มแวร์</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.fwVersion || 'ไม่ทราบ') + (node.stale ? ' <span style="color:var(--status-warning-text);">⚠️ ไม่มีข้อมูลสถานะล่าสุด</span>' : '') + '</div></div>' +
+                    '<div class="receiver-metric"><div class="receiver-metric-label">เวอร์ชันเฟิร์มแวร์</div><div class="receiver-metric-value font-mono">' + escapeHTML(node.fwVersion || 'ไม่ทราบ') + (node.fwBuildMismatch ? ' <span title="build ' + escapeHTML(node.fwMd5 || '') + ' ไม่ตรงกับไฟล์ที่อัปโหลดในระบบ" style="color:var(--status-warning-text);">⚠️ ไบนารีไม่ตรงกับที่อัปโหลด</span>' : '') + (node.stale ? ' <span style="color:var(--status-warning-text);">⚠️ ไม่มีข้อมูลสถานะล่าสุด</span>' : '') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">หน่วยความจำว่าง</div><div class="receiver-metric-value">' + (typeof node.freeHeapBytes === 'number' ? Math.round(node.freeHeapBytes / 1024) + ' KB' : 'ไม่มีข้อมูล') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">อัปไทม์</div><div class="receiver-metric-value">' + (typeof node.uptimeSec === 'number' ? Math.floor(node.uptimeSec / 3600) + ' ชม ' + Math.floor((node.uptimeSec % 3600) / 60) + ' น' : 'ไม่มีข้อมูล') + '</div></div>' +
                     '<div class="receiver-metric"><div class="receiver-metric-label">ออนไลน์ 24 ชม.</div><div class="receiver-metric-value">' + (node.uptime24h ? node.uptime24h.uptimePercent.toFixed(1) + ' %' : 'ไม่มีข้อมูล') + '</div></div>' +
@@ -10434,7 +10564,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
 
     // Restrict role options based on current user's role
     let addRoleOptions, editRoleOptions;
-    if (req.user.role === 'super_admin') {
+    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
         addRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse" selected>พยาบาลประจำการ</option><option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option><option value="super_admin">ผู้ดูแลระบบสูงสุด</option>';
         editRoleOptions = '<option value="viewer">ผู้ดูข้อมูล</option><option value="staff_nurse">พยาบาลประจำการ</option><option value="ward_admin">ผู้ดูแลหอผู้ป่วย</option><option value="super_admin">ผู้ดูแลระบบสูงสุด</option>';
     } else {
@@ -10472,7 +10602,7 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
         const roleBadge = `<span class="text-2xs px-2 py-0.5 rounded-full font-bold" style="${_tint(_r.t)}">${_r.l}</span>`;
         const myRank = {super_admin:4,admin:4,ward_admin:3,staff_nurse:2,operator:2,viewer:1}[req.user.role]||1;
         const targetRank = {super_admin:4,admin:4,ward_admin:3,staff_nurse:2,operator:2,viewer:1}[u.role]||1;
-        const canManage = (myRank > targetRank) || (myRank === 4 && targetRank === 4 && req.user.id === u.id); // roughly
+        const canManage = (myRank > targetRank) || (myRank === 4 && targetRank === 4);
         return `<tr>
             <td class="font-mono text-xs">${escapeHtml(u.username)}</td>
             <td>${escapeHtml(u.full_name || '-')}</td>
@@ -10529,7 +10659,12 @@ app.get('/users-mgmt', requireCapability('users:manage:ward', 'users:manage:all'
         };
         window.editUser = async (id, username, fullName, currentRole) => {
             const wardChecksHtml = \`${wardChecks}\`;
-            const roleOpts = \`${editRoleOptions}\`.replace('value="viewer"', 'value="viewer" ' + (currentRole === 'viewer' ? 'selected' : '')).replace('value="staff_nurse"', 'value="staff_nurse" ' + (currentRole === 'staff_nurse' || currentRole === 'operator' ? 'selected' : ''));
+            const normalizedRole = currentRole === 'admin' ? 'super_admin' : (currentRole === 'operator' ? 'staff_nurse' : currentRole);
+            const roleOpts = \`${editRoleOptions}\`
+                .replace('value="viewer"', 'value="viewer"' + (normalizedRole === 'viewer' ? ' selected' : ''))
+                .replace('value="staff_nurse"', 'value="staff_nurse"' + (normalizedRole === 'staff_nurse' ? ' selected' : ''))
+                .replace('value="ward_admin"', 'value="ward_admin"' + (normalizedRole === 'ward_admin' ? ' selected' : ''))
+                .replace('value="super_admin"', 'value="super_admin"' + (normalizedRole === 'super_admin' ? ' selected' : ''));
             const html = \`
                 <div class="space-y-4">
                     <div><label class="text-xs font-bold">ชื่อผู้ใช้</label><input id="eu_user" value="\${escapeHTML(username)}" class="w-full border p-3 rounded-xl bg-slate-50"></div>
@@ -10674,8 +10809,12 @@ app.put('/api/users/:id', requireCapability('users:manage:ward', 'users:manage:a
             await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Cannot manage a user outside your ward' });
         }
-        if (['super_admin'].includes(current.rows[0].role) && !['super_admin'].includes(role)) {
-            const adminCount = await client.query("SELECT COUNT(*)::int AS count FROM users WHERE role='super_admin'");
+        if (req.user.role === 'ward_admin' && ['super_admin', 'admin', 'ward_admin'].includes(current.rows[0].role)) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Ward admins cannot manage admin accounts' });
+        }
+        if (['super_admin', 'admin'].includes(current.rows[0].role) && !['super_admin', 'admin'].includes(role)) {
+            const adminCount = await client.query("SELECT COUNT(*)::int AS count FROM users WHERE role IN ('super_admin','admin')");
             if (adminCount.rows[0].count <= 1) {
                 await client.query('ROLLBACK');
                 return res.status(409).json({ error: 'Cannot demote the last super admin' });
@@ -10730,6 +10869,11 @@ app.put('/api/users/:id/password', requireCapability('users:manage:ward', 'users
         return res.status(403).json({ error: 'Cannot manage a user outside your ward' });
     }
     try {
+        const target = await pool.query('SELECT role FROM users WHERE id=$1', [id]);
+        if (!target.rows.length) return res.status(404).json({ error: 'User not found' });
+        if (req.user.role === 'ward_admin' && ['super_admin', 'admin', 'ward_admin'].includes(target.rows[0].role)) {
+            return res.status(403).json({ error: 'Ward admins cannot manage admin accounts' });
+        }
         const hashed = await hashPassword(password);
         const result = await pool.query(
             `UPDATE users SET password=$1, session_version=session_version+1
@@ -10746,6 +10890,7 @@ app.put('/api/users/:id/password', requireCapability('users:manage:ward', 'users
 app.delete('/api/users/:id', requireCapability('users:manage:ward', 'users:manage:all'), async (req, res) => {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid user id' });
+    if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -10758,6 +10903,10 @@ app.delete('/api/users/:id', requireCapability('users:manage:ward', 'users:manag
         if (!(await userSharesWardWithCaller(req, id))) {
             await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Cannot manage a user outside your ward' });
+        }
+        if (req.user.role === 'ward_admin' && ['super_admin', 'admin', 'ward_admin'].includes(check.rows[0].role)) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Ward admins cannot manage admin accounts' });
         }
         if (['super_admin', 'admin'].includes(check.rows[0].role)) {
             const adminCount = await client.query("SELECT COUNT(*)::int AS count FROM users WHERE role IN ('super_admin','admin')");
@@ -15557,6 +15706,35 @@ function parseBootTopic(topic) {
 // non-finite numbers, negatives and non-integers are all rejected. reason and
 // version are free-form device text; they are trimmed and length-capped so they
 // cannot bloat the JSONB detail column or the VARCHAR(40) last_fw_version column.
+// MD5 of a firmware image as the board itself reports it (hex, lowercase).
+function md5OfBuffer(buffer) {
+    return crypto.createHash('md5').update(buffer).digest('hex');
+}
+function md5OfFile(filePath) {
+    return md5OfBuffer(fs.readFileSync(filePath));
+}
+
+// The board sends only the leading hex of its sketch MD5 (8 chars today), so a
+// match is a prefix comparison. Returns null when either side is unknown —
+// "can't tell" must never be shown as a mismatch.
+function firmwareBuildMatches(nodeMd5, imageMd5) {
+    const node = String(nodeMd5 || '').toLowerCase();
+    const image = String(imageMd5 || '').toLowerCase();
+    if (!/^[0-9a-f]{6,32}$/.test(node) || !/^[0-9a-f]{32}$/.test(image)) return null;
+    return image.startsWith(node);
+}
+
+// True only when we hold uploaded image(s) for the version the board claims and
+// none of them is the binary it is actually running.
+function firmwareBuildMismatch(nodeVersion, nodeMd5, versionRows) {
+    if (!nodeVersion || !nodeMd5) return false;
+    const candidates = (versionRows || []).filter(r => r.version === nodeVersion && r.md5);
+    if (!candidates.length) return false;
+    const results = candidates.map(r => firmwareBuildMatches(nodeMd5, r.md5));
+    if (results.some(r => r === true)) return false;
+    return results.some(r => r === false);
+}
+
 function parseBootPayload(buffer) {
     try {
         const data = JSON.parse(buffer.toString());
@@ -15575,7 +15753,12 @@ function parseBootPayload(buffer) {
         // Match the last_fw_version VARCHAR(40) column width.
         const cappedVersion = version !== null && version.length > 40 ? version.slice(0, 40) : version;
 
-        return { bootCount, reason: cappedReason, version: cappedVersion };
+        // Firmware older than the build-fingerprint change sends no md5.
+        const md5 = typeof data.md5 === 'string' && /^[0-9a-fA-F]{6,32}$/.test(data.md5.trim())
+            ? data.md5.trim().toLowerCase()
+            : null;
+
+        return { bootCount, reason: cappedReason, version: cappedVersion, md5, ...parseBootBreadcrumb(data) };
     } catch (e) {
         return null;
     }
@@ -15889,9 +16072,9 @@ app.post('/api/firmware/upload', requireCapability('devices:firmware:write'), (r
             const embeddedConfig = extractFirmwareMetadata(file.buffer);
             const token = generateFirmwareDownloadToken();
             const inserted = await pool.query(
-                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by, embedded_config)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-                [version, notes, '', file.size, token, req.user.id, embeddedConfig ? JSON.stringify(embeddedConfig) : null]
+                `INSERT INTO firmware_versions (version, notes, filename, file_size, download_token, uploaded_by, embedded_config, md5)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+                [version, notes, '', file.size, token, req.user.id, embeddedConfig ? JSON.stringify(embeddedConfig) : null, md5OfBuffer(file.buffer)]
             );
             const versionId = inserted.rows[0].id;
             const filename = buildFirmwareFilename(versionId, file.originalname);
@@ -16151,6 +16334,10 @@ async function startServer() {
     activeStates.rows.forEach(row => { deviceAlertState[normalizeMac(row.mac)] = row.level; });
     await runAlertEngine();
     setInterval(runAlertEngine, ALERT_ENGINE_INTERVAL_MS);
+    const sweepOta = () => sweepStaleFirmwareDeployments().catch(err =>
+        console.error('[Firmware OTA] Stale deployment sweep failed:', err.message));
+    sweepOta();
+    setInterval(sweepOta, 30000);
     app.listen(PORT, '0.0.0.0', () => console.log('✅ SERVER RUNNING ON PORT ' + PORT));
 }
 
@@ -16166,6 +16353,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+    shouldRenewSession,
+    signSessionToken,
     validateAiChatPayload,
     AI_TOOLS,
     aiBedBrief,
@@ -16202,10 +16391,16 @@ module.exports = {
     isUsableBrokerAddr,
     nodeSupportsBrokerArg,
     OTA_BROKER_ARG_MIN_FW,
+    sweepStaleFirmwareDeployments,
+    handleOtaStatusMessage,
+    md5OfBuffer,
+    firmwareBuildMatches,
+    firmwareBuildMismatch,
     parseOtaStatusTopic,
     parseOtaStatusPayload,
     parseBootTopic,
     parseBootPayload,
+    parseBootBreadcrumb,
     handleBootMessage,
     parseHeartbeatTopic,
     parseHeartbeatPayload,
