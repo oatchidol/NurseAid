@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+## [2.24.1] - 2026-11-27
+
+### Added
+- **OTA stale-deployment sweep** — สแกน deployment ที่ค้างในสถานะ pending/start ทุก 30 วินาทีและมาร์ก timeout อัตโนมัติ (ปรับได้ผ่าน `OTA_PENDING_TIMEOUT_SECONDS` และ `OTA_START_TIMEOUT_SECONDS` ใหม่) และยอมรับรายงานผลล่าช้าได้นาน 1 ชั่วโมง
+- **ติดตาม MD5 ของ build เฟิร์มแวร์** — บันทึก MD5 ของไฟล์ `.bin` ที่อัปโหลด (พร้อม backfill ของไฟล์เก่า) และรับค่า sketch MD5 จาก ESP32 ในข้อความ boot/status เพื่อเตือน "ไบนารีไม่ตรงกับที่อัปโหลด" บนหน้าสถานะตัวรับสัญญาณ
+- **ESP32 boot watchdog breadcrumbs** — เฟิร์มแวร์บันทึกระดับ watchdog (RTC crash breadcrumbs) และส่ง stage/slot/เวลาตอน crash กลับมาในข้อความ boot พร้อมเหตุผล reset (TASK_WDT/INT_WDT/WDT/PANIC) เพื่อให้ไล่เหตุ hang ได้
+- **OTA rollback verification** — เฟิร์มแวร์ใหม่ยืนยัน `esp_ota_mark_app_valid_cancel_rollback()` หลัง boot สำเร็จ จึงไม่ถูก rollback
+- **LED status บน ESP32** — ไฟแสดงสถานะเครือข่าย (WiFi/MQTT/portal) ทำงานผ่าน Ticker แยกจาก `loop()` จึงไม่ค้างเมื่อ loop ถูกบล็อก
+- **ดึงคิว BLE เป็นชุด** — `loop()` ดึง frame จาก BLE queue เป็นชุดละไม่เกิน `FRAME_QUEUE_MAX_PER_LOOP` (8) เฟรม แล้ววนต่อจนคิวว่าง พร้อม feed watchdog ระหว่างประมวลผล ป้องกัน watchdog timeout จากคิวยาว
+- **ตรวจสอบลำดับชั้นผู้ดูแลในหน้าจัดการผู้ใช้** — ward_admin แก้ไข ลบ หรือเปลี่ยนรหัสผ่านบัญชีระดับ admin (super_admin/admin/ward_admin) ไม่ได้, ห้ามลบบัญชีของตัวเอง และขยายการกัน "ลดสิทธิ์ผู้ดูแลคนสุดท้าย" ให้ครอบคลุมทั้ง super_admin และ admin
+- **Tests ใหม่** — เพิ่ม `test/test_firmware_watchdog.js` และ `test/test_session_renewal.js` ลงใน `test:offline`
+
+### Changed
+- **Sliding session renewal** — session cookie ถูกต่ออายุอัตโนมัติเมื่อเหลืออายุไม่ถึงครึ่งของ TTL (8 ชั่วโมง) และ client ถูก redirect ไป `/login` อัตโนมัติเมื่อเรียก API แล้วได้ 401
+- **Live-status grace window** — เมื่อ query InfluxDB ล้มเหลว จะยังคงแสดงค่า cache ล่าสุดภายใน grace window (`LIVE_STATUS_UNAVAILABLE_GRACE_SECONDS` ใหม่ ค่าเริ่มต้น 60 วินาที) แทนที่จะทำให้การ์ดผู้ป่วยว่างเปล่าทันที
+- **Live heart-rate freshness 30s → 120s** — ระยะเวลา freshness ของ heart-rate แบบ live ปรับจาก 30 เป็น 120 วินาที (ครอบคลุม SpO₂ phase ~80s ของเฟิร์มแวร์) และขยายเพิ่มตามเวลาพักของ priority-rest; ค่า liveHr ถูกจำกัดไม่ให้เกิน clinical window
+- **ค่าเริ่มต้น environment ใหม่/เปลี่ยน** — `LIVE_STATUS_CACHE_MS` 3000 → 5000, `INFLUX_QUERY_TIMEOUT_MS` 5000 → 15000, `LIVE_HR_FRESHNESS_SECONDS` 30 → 120 ใน `.env.example`/`docker-compose.yml` และเพิ่มตัวแปรใหม่ `LIVE_STATUS_UNAVAILABLE_GRACE_SECONDS`, `OTA_PENDING_TIMEOUT_SECONDS`, `OTA_START_TIMEOUT_SECONDS`
+
+### Fixed
+- แก้ปัญหา deployment OTA ที่ค้างไม่มีที่สิ้นสุดเมื่อ node ไม่รายงานสถานะกลับ (ถูก sweep และมาร์ก timeout แทน)
+
+### Notes
+- **Known issues / follow-ups** — ค่าเริ่มต้นใน `docker-compose.yml` ของ `LIVE_HR_FRESHNESS_SECONDS` ยังเป็น 30 ทั้งที่โค้ดและ `.env.example` ใช้ 120 และค่าเริ่มต้น `LIVE_STATUS_CACHE_MS` ใน `server.js` ยังเป็น 3000 ทั้งที่ `.env.example`/`docker-compose.yml` ใช้ 5000 — ควรทำให้ตรงกัน
+
 ## [2.24.0] - 2026-09-28
 
 ### Added
