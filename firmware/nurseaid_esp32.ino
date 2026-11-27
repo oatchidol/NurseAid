@@ -40,9 +40,26 @@
 #include <ArduinoOTA.h>     // OTA แบบ push (สั่งจาก command line ด้วย espota.py ได้)
 #include <HTTPUpdate.h>     // OTA แบบ pull (โหลด .bin จาก Pi เอง สั่งผ่าน MQTT)
 #include <ESPmDNS.h>
+#include <Ticker.h>          // ตัวจับเวลาไฟ LED — ทำงานแยกจาก loop() ไฟจึงไม่ค้างตอนบล็อก
 #include <esp_task_wdt.h>   // watchdog ระดับชิป — รีเซ็ตเองเมื่อ loop() ค้าง
+#include <esp_ota_ops.h>     // ยืนยัน/ย้อนกลับเฟิร์มแวร์หลัง OTA
 #include <esp_system.h>
 #include <esp_mac.h>       // esp_read_mac() — อ่าน MAC เรียงถูกลำดับ
+
+// Keep these before Arduino-generated prototypes; the wire names are diagnostic only.
+enum WdtStage : uint8_t {
+    WD_IDLE = 0, WD_LOOP_HEAD, WD_MDNS_OTA, WD_NET_HEALTH,
+    WD_ENSURE_NETWORK, WD_MQTT_SUBSCRIBE, WD_BOOT_PUBLISH, WD_FRAME_PROCESS,
+    WD_SERVICE_SLOT, WD_BLE_CONNECT, WD_BLE_DISCOVER, WD_BLE_SUBSCRIBE,
+    WD_MANAGE_SCAN, WD_NTP, WD_HEARTBEAT, WD_ESP32_STATUS,
+    WD_REPORT_ACTIVE_LIST, WD_OTA, WD_PUBLISH_METRIC
+};
+static const char* const WDT_STAGE_NAMES[] = {
+    "idle", "loop_head", "mdns_ota", "net_health", "ensure_network",
+    "mqtt_subscribe", "boot_publish", "frame_process", "serviceSlot",
+    "ble_connect", "ble_discover", "ble_subscribe", "manage_scan", "ntp",
+    "heartbeat", "esp32_status", "report_active_list", "ota", "publishMetric"
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // EMBEDDED METADATA — webapp อ่านจากไฟล์ .bin ได้ทันทีหลังอัปโหลด
@@ -87,14 +104,14 @@ struct __attribute__((packed)) FirmwareMetadata {
   #include "wifi_credentials.h"
 #endif
 #ifndef WIFI_SSID
-  #define WIFI_SSID      ""
-  #define WIFI_PASS      ""
+  #define WIFI_SSID        "ksr_comp3"
+  #define WIFI_PASS        "1111100000"
 #endif
 
 // --- โหมดตั้งค่า WiFi ผ่านหน้าเว็บ ---
 #define WM_AP_PASSWORD   "naidsetup"   // รหัสเข้า WiFi ตอนตั้งค่า (อย่างน้อย 8 ตัว)
 #define WM_PORTAL_TIMEOUT_SEC   180    // ไม่มีใครเข้ามาตั้งค่าใน 3 นาที → เลิกรอ แล้วบูตใหม่
-#define WM_CONNECT_TIMEOUT_SEC   20    // รอเชื่อม WiFi เดิมนานสุดกี่วินาที
+#define WM_CONNECT_TIMEOUT_SEC   60    // รอเชื่อม WiFi เดิมนานสุดกี่วินาที
 
 // ปุ่ม BOOT บนบอร์ด (GPIO9 บน C3 / GPIO0 บนรุ่นอื่น) ใช้ล้างค่า WiFi
 //   กดค้างไว้ตอนเสียบไฟ → เข้าโหมดตั้งค่าใหม่
@@ -105,6 +122,34 @@ struct __attribute__((packed)) FirmwareMetadata {
   #define WM_RESET_PIN     0
 #endif
 #define WM_RESET_HOLD_MS  3000
+
+// ═══════════════════════════════════════════════════════════════════
+// 💡 ไฟแสดงสถานะเครือข่าย (LED สีฟ้าบนบอร์ด)
+//
+//   ESP32-C3 Super Mini มี LED 2 ดวง:
+//     • สีแดง  = ไฟเลี้ยง ต่อตรงกับไฟ 5V → ควบคุมด้วยโค้ดไม่ได้ ติดตลอดเมื่อเสียบไฟ
+//     • สีฟ้า  = GPIO8 ควบคุมได้ (active LOW: เขียน LOW = ติด)
+//
+//   รูปแบบไฟสีฟ้า:
+//     ติดค้าง                     = WiFi ✅  MQTT ✅  ทำงานปกติ
+//     กะพริบ 2 ครั้ง แล้วดับ 1 วิ   = WiFi ✅  MQTT ❌  (broker/รหัส/เครือข่ายปลายทาง)
+//     กะพริบเร็วรัว               = WiFi ❌           (ชื่อ/รหัส WiFi, สัญญาณ, router)
+//     กะพริบช้า ติด 1 วิ ดับ 1 วิ    = โหมดตั้งค่า WiFi ผ่านมือถือ (รอคนมาตั้ง)
+//     ดับสนิท                      = ยังไม่เริ่มทำงาน / เฟิร์มแวร์ค้าง
+//
+//   ⚠️ บอร์ดรุ่น "Super Mini Plus" มี LED RGB (WS2812) ต่อขา GPIO8 ร่วมด้วย
+//      รุ่นนั้นไฟอาจไม่ตรงตามนี้ → ตั้ง STATUS_LED_PIN เป็น -1 เพื่อปิด
+//   ⚠️ GPIO8 เป็น strapping pin — ใช้เป็น output หลังบูตได้ปกติ แต่ห้ามต่ออะไรเพิ่ม
+// ═══════════════════════════════════════════════════════════════════
+#if CONFIG_IDF_TARGET_ESP32C3
+  #define STATUS_LED_PIN      8
+#else
+  #define STATUS_LED_PIN     -1        // บอร์ดอื่นขา LED ต่างกัน — ปิดไว้ก่อน
+#endif
+#define STATUS_LED_ACTIVE_LOW 1
+// ⚠️ ต้องประกาศตรงนี้ (บนสุด) — Arduino สร้าง prototype ของฟังก์ชันอัตโนมัติ
+//    ไว้ก่อนโค้ดของเรา ถ้า enum อยู่ล่างกว่าฟังก์ชันที่คืนค่าชนิดนี้จะคอมไพล์ไม่ผ่าน
+enum LedMode : uint8_t { LED_OFF, LED_SOLID, LED_FAST, LED_DOUBLE, LED_SLOW };
 
 // ═══════════════════════════════════════════════════════════════════
 // รายชื่อ WiFi ที่โหนดรู้จัก (เก็บใน NVS)
@@ -138,7 +183,7 @@ struct WifiCred {
 };
 
 // --- MQTT (ค่าเดียวกับ iStyle28.py) ---
-#define MQTT_BROKER      "172.16.251.45"
+#define MQTT_BROKER      "192.168.50.125"
 #define MQTT_PORT        1883
 #define MQTT_USER        "nursemon"
 #define MQTT_PASS        "softTech^2"              // ← ใส่รหัสเดียวกับที่ตั้งใน env MQTT_PASS ของ Pi
@@ -159,7 +204,7 @@ struct WifiCred {
 static char NODE_ID[24] = "";
 
 // --- OTA / สั่งงานระยะไกล ---
-#define FW_VERSION       "2.2.3"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
+#define FW_VERSION       "2.2.6"    // ส่งไปกับ heartbeat ใช้ยืนยันว่าอัปเดตสำเร็จจริง
 
 #define OTA_PASSWORD     "naid-ota" // ⚠️ เปลี่ยนก่อนใช้จริง ใครรู้รหัสนี้อัปเฟิร์มแวร์เข้าเครื่องได้
 static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตหลังรู้ NODE_ID
@@ -171,13 +216,21 @@ static char TOPIC_CMD_NODE[64]     = "";   // เติมตอนบูตห�
 // ชั้นที่ 1: Task Watchdog ระดับชิป
 //   ถ้า loop() ไม่กลับมา "ป้อนอาหาร" ภายในเวลาที่ตั้ง ชิปจะรีเซ็ตตัวเอง
 //   ⚠️ ต้องตั้งมากกว่าเวลา block นานสุดใน loop หนึ่งรอบ ไม่งั้นจะรีเซ็ตทั้งที่ปกติ
-//      วัดแล้วกรณีแย่สุด ~12 วิ (connect 8 + discovery 3 + อื่น ๆ) จึงตั้ง 30 วิ
-#define WDT_TIMEOUT_SEC              30
-// ระหว่าง OTA (push/pull) ขยายเพดานนี้ชั่วคราวแทนการลบ watchdog ทิ้งเฉยๆ —
-// ไฟล์ ~1.5MB ที่ WiFi ช้าใช้เวลา ~40 วิ ต้องการเพดานสูงกว่านั้นพอสมควร แต่ถ้า
-// ดาวน์โหลดค้างสนิทจริง (TCP ค้างไม่มี RST/FIN, ไม่มี onError ให้เรียก) ยังต้องมี
-// จุดตัดให้ชิปรีเซ็ตตัวเองกลับมาได้ — โหนดพวกนี้ไม่มี USB ให้กู้คืนหน้างาน
+//      วัดแล้วกรณีแย่สุด ~12 วิ (connect 8 + discovery 3 + อื่น ๆ) จึงตั้ง 30 วิ (แก้เป็น 60)
+#define WDT_TIMEOUT_SEC              60
+// ระหว่าง OTA ยังเฝ้า loop อยู่ แต่ยอมให้เงียบได้นานขึ้น และป้อนอาหารเมื่อรับไฟล์คืบหน้า
 #define OTA_WDT_TIMEOUT_SEC          90
+
+// ระบายคิวจนว่างเหมือนเดิม (FIFO, drop-new คงเดิม) ป้อน watchdog ระหว่างเฟรม/ชุด
+// ค่านี้ไม่ใช่เพดานต่อ loop — ครบชุดแล้วระบายต่อจนคิวว่าง
+#define FRAME_QUEUE_MAX_PER_LOOP 8
+
+// 🛟 กู้ตัวเองเมื่อ OTA เฟิร์มแวร์ที่ "ต่อ broker ไม่ได้"
+//    เคสจริง: เผลอ OTA โค้ดที่ตั้ง MQTT_BROKER ผิด → บูตขึ้นปกติ ไม่แครช
+//    watchdog จึงไม่ทำงาน แต่สั่งอะไรไม่ได้เลยเพราะ MQTT เข้าไม่ถึง
+//    แก้โดยใช้กลไก rollback ของ ESP32: เฟิร์มแวร์ใหม่หลัง OTA อยู่สถานะ
+//    PENDING_VERIFY ถ้าต่อ broker ไม่ติดจนหมดเวลา → ย้อนกลับตัวเดิมอัตโนมัติ
+#define OTA_VERIFY_TIMEOUT_MS  (5UL * 60UL * 1000UL)   // 5 นาที
 #define BROKER_TRY_MAX_BOOTS         2       // ลองรวมกี่บูต ถ้าไม่ติด → กลับ broker เดิม
 #define BROKER_CONFIRM_MS            120000  // ต้องต่อติดต่อเนื่องกี่ ms ก่อนยืนยันเป็นตัวหลัก
 #define BROKER_TRIAL_DEADLINE_MS     900000  // ทดลองได้ไม่เกิน 15 นาที ไม่ผ่าน = ถอยกลับ
@@ -218,6 +271,7 @@ static char TOPIC_DEVICES_NODE[64] = "";   // เติมตอนบูตห�
 //   JSON-ish "AA:BB:CC:DD:EE:FF":"high" — ตัวอ่านหา MAC ก่อนแล้วอ่านคำถัดไปเป็น priority
 //   เรือนที่ไม่ถูกกล่าวถึงในข้อความนี้ = ไม่เปลี่ยนแปลง priority เดิม (ค่าเริ่มต้น = high)
 #define TOPIC_PRIORITY_ALL   MQTT_BASE_TOPIC "/priority"
+#define TOPIC_ESP32_ALL      MQTT_BASE_TOPIC "/esp32"     // ทุกโหนดรายงานว่าถือเรือนไหนอยู่
 static char TOPIC_PRIORITY_NODE[64] = "";   // เติมตอนบูตหลังรู้ NODE_ID
 
 // --- ⭐ จำกัดจำนวนเชื่อมต่อพร้อมกัน ---
@@ -262,18 +316,18 @@ FIRMWARE_META = {
 #endif
 
 // --- TIMING (มิลลิวินาที — ค่าเดียวกับ iStyle28.py ที่เป็นวินาที) ---
-#define BLE_CONNECT_TIMEOUT_MS      8000   // ⚠️ connect() เป็น blocking — ค่านี้คือ "เพดานความช้า"
+#define BLE_CONNECT_TIMEOUT_MS      15000   // ⚠️ connect() เป็น blocking — ค่านี้คือ "เพดานความช้า"
                                             //    ของการแจ้ง disconnect ทั้งโหนด เพราะ loop ติดอยู่ตรงนั้น
-                                            //    ลดจาก 15s เหลือ 8s เพื่อให้ Dashboard อัปเดตไวขึ้น
+                                            //    ลดจาก 15s เหลือ 8s (แก้เป็น 15) เพื่อให้ Dashboard อัปเดตไวขึ้น
                                             //    (เรือนที่ต่อไม่ติดใน 8 วิ มักต่อไม่ติดอยู่ดี)
-#define PHASE1_DURATION_MS         120000   // Phase 1 (HR/Temp) 120 วิ
+#define PHASE1_DURATION_MS         90000   // Phase 1 (HR/Temp) 90 วิ
 #define PHASE2_TIMEOUT_MS         75000   // รอผล SpO2 สูงสุด 75 วิ
                                             // ⚠️ ต้อง >= เวลาที่นาฬิกาใช้วัดจริงที่ช้าที่สุด
                                             //    วัดจากหน้างาน: 45 วิ (เร็วสุด) – 120 วิ (ช้าสุด)
                                             //    ถ้าตั้งน้อยกว่านี้ เคสที่วัดช้าจะไม่มีวันได้ค่าเลย
 #define KEEPALIVE_INTERVAL_MS      30000   // ส่ง 0x41 ทุก 30 วิ
 #define BATTERY_READ_INTERVAL_MS   60000   // ส่ง 0x13 ทุก 60 วิ
-#define RSSI_READ_INTERVAL_MS      30000   // อ่าน+ส่ง RSSI ทุก 30 วิ
+#define RSSI_READ_INTERVAL_MS      10000   // อ่าน+ส่ง RSSI ทุก 10 วิ
 #define DATA_TIMEOUT_MS            30000   // watchdog ช่วง Phase 1: เงียบเกินนี้ = ตัดทิ้ง
 // ⚠️ ช่วงวัด SpO2 ห้ามใช้ค่าข้างบน — นาฬิกาอาจเงียบยาวระหว่างวัด (45-120 วิ)
 //    ถ้าใช้ค่าเดียวกัน watchdog จะตัดการเชื่อมต่อทิ้งกลางคันทุกครั้ง
@@ -287,12 +341,12 @@ FIRMWARE_META = {
 //   ครบเพดานนี้เมื่อไหร่ให้กลับ Phase 1 ทันที ไม่วัดซ้ำต่อ
 #define PHASE2_TOTAL_BUDGET_MS    180000   // 3 นาที
 #define MQTT_PUBLISH_INTERVAL_MS    1000   // rate limit ต่อ (mac, key)
-#define ESP32_STATUS_INTERVAL_MS   30000   // ความถี่ส่งสถานะโหนดไป ble/esp32
+#define ESP32_STATUS_INTERVAL_MS   10000   // ความถี่ส่งสถานะโหนดไป ble/esp32
 #define STALE_DEVICE_MS            30000   // ไม่เห็น advertisement เกินนี้ = ไม่อยู่ในระยะ
 #define CONNECT_STAGGER_MS          1500   // เว้นระยะระหว่างการ connect แต่ละเรือน
 #define FAIL_COUNT_FOR_COOLDOWN        5   // fail ครบแล้วพัก
 #define COOLDOWN_MS                60000
-#define RSSI_MIN_THRESHOLD           -85   // สัญญาณอ่อนกว่านี้ไม่พยายามต่อ
+#define RSSI_MIN_THRESHOLD           -100   // สัญญาณอ่อนกว่านี้ไม่พยายามต่อ
                                             // ⚠️ FIX (debug session นี้): คืนจาก -100 กลับเป็น -85
                                             //    -100 dBm อยู่เกือบชิดพื้น noise — พยายามต่อกับ
                                             //    เรือนที่สัญญาณอ่อนขนาดนั้นมีโอกาสสูงที่จะ connect
@@ -312,6 +366,16 @@ FIRMWARE_META = {
 //      ถ้าแอปไม่เคยส่ง priority มาเลย ระบบจะทำงานเหมือนก่อนมี feature นี้ทุกประการ
 #define PRIORITY_MEDIUM_INTERVAL_MS    (1UL * 60UL * 1000UL)   // 1 นาที
 #define PRIORITY_LOW_INTERVAL_MS       (5UL * 60UL * 1000UL)   // 5 นาที
+
+// ── คงตำแหน่งไว้ระหว่างพักรอบ (priority กลาง/ต่ำ) ──
+//   ปัญหาเดิม: พอตัดการเชื่อมต่อไปพัก เรือนนั้นหายจาก ble/esp32 ทันที
+//              หน้า monitor เลยขึ้น "ไม่ทราบตำแหน่ง" และนับเวลาอยู่ที่เดิมไม่ต่อเนื่อง
+//   ทางแก้  : ระหว่างพัก โหนดนี้ยังรายงานเรือนนั้นใน devices ต่อ (ตำแหน่งเดิม)
+//     • ถ้าไปต่อกับโหนดอื่นระหว่างพัก → โหนดนี้ปล่อยทันทีที่เห็นโหนดนั้นรายงาน
+//     • ถ้าครบเวลาพัก + ระยะเผื่อนี้แล้วยังไม่กลับมาต่อที่ไหนเลย → เลิกรายงาน
+//       (หน้า monitor จะเห็นเป็น "ไม่ทราบ" ตามปกติ)
+//   ⚠️ ถ้ามีหลายเรือนแย่งกันต่อพร้อมกัน การต่อกลับอาจเกิน 30 วิ ให้เพิ่มค่านี้
+#define REST_HOLD_GRACE_MS             (30UL * 1000UL)         // 30 วิ
 // สถานะ 2 = "ยังจับคู่อยู่ แค่พักตามรอบ priority" — ต่างจาก 0 ที่แปลว่าหลุด/ถอดออก
 #define WEARABLE_STATUS_RESTING        2
 
@@ -479,12 +543,15 @@ struct RegDevice {
                                            //   ถ้าไม่เก็บ พอ reconnect จะกลับเป็น "สวมอยู่"
                                            //   แล้วส่ง temp จริงออกไป = ค่าเด้งบน Dashboard
     uint8_t priority = PRIORITY_HIGH;      // ตั้งจากแอป — ค่าเริ่มต้น high = พฤติกรรมเดิมทุกประการ
+    uint32_t holdUntil = 0;                // ≠0 = กำลังพักรอบ ยังรายงานตำแหน่งเดิมไว้จนถึงเวลานี้
+                                           //   เก็บที่ทะเบียน (ไม่ใช่ slot) เพราะ slot ถูกล้างตอนพัก
 };
 static RegDevice registry[MAX_REGISTERED];
 static int  numRegistered = 0;             // จำนวนจริงที่ใช้อยู่
 static bool haveNodeList  = false;         // เคยได้รายชื่อเฉพาะโหนดแล้วหรือยัง
 static bool sawAppRoster  = false;        // เคยได้รายชื่อ MAC จากแอปเราบน broker นี้แล้วหรือยัง
 static bool listDirty     = true;          // ต้องรายงานรายชื่อปัจจุบันกลับขึ้น MQTT
+static bool esp32StatusForce = false;      // ส่ง ble/esp32 ทันทีรอบถัดไป ไม่ต้องรอครบ interval
 static Preferences prefs;
 
 // ── คิวส่ง frame จาก BLE callback → loop() ──
@@ -761,6 +828,21 @@ static void loadRegistryAtBoot() {
 RTC_NOINIT_ATTR static uint32_t rtcBootCount;
 RTC_NOINIT_ATTR static uint32_t rtcMagic;
 #define RTC_MAGIC_VALUE 0xA1D0001u
+RTC_NOINIT_ATTR static uint8_t rtcStage;
+RTC_NOINIT_ATTR static uint32_t rtcStageAtMs;
+RTC_NOINIT_ATTR static uint8_t rtcStageSlot;
+RTC_NOINIT_ATTR static uint32_t rtcLastLoopMs;
+static bool prevStageValid = false;
+static uint8_t prevStage = WD_IDLE, prevStageSlot = 0xFF;
+// Previous-run timestamps, NOT ages measured against this boot's millis().
+static uint32_t prevStageMs = 0, prevUpMs = 0;
+
+static inline void wdtStage(uint8_t st, uint8_t slot = 0xFF);
+static inline void wdtStage(uint8_t st, uint8_t slot) {
+    rtcStage = st;
+    rtcStageSlot = slot;
+    rtcStageAtMs = millis();
+}
 
 static const char* resetReasonText() {
     switch (esp_reset_reason()) {
@@ -811,8 +893,7 @@ static void publishOtaStatus(const char* state, const char* detail) {
 
 static void slotCleanupFwd(DeviceSlot& s, bool graceful, bool planned = false);   // นิยามจริงอยู่ด้านล่าง
 
-// ขยาย/คืนเพดานเวลา watchdog — ใช้ทั้งฝั่ง OTA push (ArduinoOTA) และ pull (httpUpdate)
-// เพื่อไม่ให้ต้องจำแก้สองที่ (เคยเป็นแบบนั้นมาก่อนจนคอมเมนต์ต้องอ้างถึงกันเอง)
+// ขยาย/คืนเพดานเวลา OTA โดยไม่ถอด loop task ออกจาก watchdog
 static void otaWatchdogWiden(uint32_t seconds) {
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
     esp_task_wdt_config_t cfg = {
@@ -820,10 +901,15 @@ static void otaWatchdogWiden(uint32_t seconds) {
         .idle_core_mask = 0,
         .trigger_panic  = true,
     };
-    esp_task_wdt_reconfigure(&cfg);
+    if (esp_task_wdt_reconfigure(&cfg) != ESP_OK) {
+        esp_task_wdt_init(&cfg);
+    }
 #else
     esp_task_wdt_init(seconds, true);
 #endif
+    if (esp_task_wdt_status(NULL) != ESP_OK) {
+        esp_task_wdt_add(NULL);
+    }
     esp_task_wdt_reset();
 }
 static void otaWatchdogRestore() { otaWatchdogWiden(WDT_TIMEOUT_SEC); }
@@ -839,20 +925,24 @@ static void doHttpOta(const char* url) {
     for (auto& s : slots) if (s.inUse) slotCleanupFwd(s, true);
     delay(300);
 
-    // ขยายเพดาน watchdog ชั่วคราวแทนการลบทิ้ง (เหตุผลเดียวกับฝั่ง push)
-    //    httpUpdate.update() เป็น blocking call เดียวครอบคลุมทั้งการโหลดไฟล์
-    //    ไฟล์ ~1.5MB ที่ WiFi ช้าจะเกิน WDT 30 วิ → ถูกรีเซ็ตกลางคัน แต่ถ้า "ลบ" ทิ้ง
-    //    เฉยๆ แล้วดาวน์โหลดค้างสนิท (ไม่มี onError ให้เรียก) จะไม่มีอะไรช่วยรีเซ็ตชิป
-    //    กลับมาเลย ต้องไปถอดปลั๊กเอง — จึงขยายเวลาแทน ยังมีจุดตัดสุดท้ายเผื่อไว้
+    // ขยายเพดานระหว่างโหลด — ถ้า TCP ค้างสนิทยังมี watchdog ช่วยรีเซ็ต
+    // ป้อนอาหารเมื่อเขียนไฟล์คืบหน้า เพื่อให้ WiFi ช้าที่โหลดเกิน 90 วิยังอัปเดตได้
     otaWatchdogWiden(OTA_WDT_TIMEOUT_SEC);
 
     WiFiClient client;
-    client.setTimeout(15000);              // กัน TCP ค้างสนิทไม่ให้รอไม่มีที่สิ้นสุด
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    client.setTimeout(15000);              // core 3.x ใช้ Stream::setTimeout หน่วย ms
+#else
+    client.setTimeout(15);                 // core 2.x WiFiClient รับหน่วยวินาที
+#endif
     httpUpdate.rebootOnUpdate(false);      // จะรีบูตเองหลังแจ้งผลแล้ว
     httpUpdate.setLedPin(-1);
-    t_httpUpdate_return ret = httpUpdate.update(client, url);
+    httpUpdate.onProgress([](int, int) { esp_task_wdt_reset(); });
+    t_httpUpdate_return ret = httpUpdate.update(client, url, "", [](HTTPClient* http) {
+        http->setTimeout(15000);           // HTTPClient รับ ms ทั้งสอง core — กันค่าภายในทับ
+    });
 
-    // กลับสู่ timeout ปกติทันที ไม่ว่าผลจะเป็นอย่างไร (ก่อน switch ที่แยกผลลัพธ์)
+    // คืน timeout ปกติทุกผลลัพธ์ ก่อนแจ้งผลและรีบูต/กลับไปทำงานต่อ
     otaWatchdogRestore();
 
     switch (ret) {
@@ -1078,29 +1168,24 @@ static void setupArduinoOTA() {
         scanRunning = false;
         for (auto& s : slots) if (s.inUse) slotCleanupFwd(s, true);
 
-        // ขยายเพดาน watchdog ชั่วคราว (ไม่ลบทิ้ง — เหตุผลเดียวกับฝั่ง pull ใน doHttpOta)
-        //    ArduinoOTA::_runUpdate() มี while(...) วนรับไฟล์ทั้งก้อนอยู่ข้างใน
-        //    ไม่เคยกลับมาที่ loop() เลยจนกว่าจะเสร็จ → ไม่มีใครป้อนอาหาร watchdog
-        //    ไฟล์ ~1.5MB ที่ WiFi ~40KB/s ใช้เวลา ~40 วิ > WDT 30 วิ
-        //    → ชิปถูกรีเซ็ตกลางคัน ฝั่ง Pi เห็นเป็น "Connection reset by peer" ที่ ~75%
-        //    แต่ถ้าลบ watchdog ทิ้งเฉยๆ แล้ว TCP ค้างสนิทแบบไม่มี onError ให้เรียก
-        //    ชิปจะไม่มีอะไรช่วยรีเซ็ตกลับมาเลย (โหนดพวกนี้ไม่มี USB กู้คืนหน้างาน)
-        //    จึงขยายเวลาแทน ยังมีจุดตัดสุดท้ายเผื่อไว้ (ใช้ helper ร่วมกับฝั่ง pull)
+        // ArduinoOTA รับไฟล์ใน blocking call — ขยายเพดานและป้อนอาหารเมื่อรับคืบหน้า
+        // ถ้าค้างสนิทไม่มี progress/error ยังมี watchdog ช่วยรีเซ็ตกลับมา
         otaWatchdogWiden(OTA_WDT_TIMEOUT_SEC);
-        Serial.println("[OTA] เริ่มรับเฟิร์มแวร์ (push) — ขยายเพดาน watchdog ชั่วคราว");
+        Serial.println("[OTA] เริ่มรับเฟิร์มแวร์ (push) — ขยายเวลา watchdog ชั่วคราว");
     });
     ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
+        esp_task_wdt_reset();
         static int last = -1;
         int pct = t ? (int)(p * 100 / t) : 0;
         if (pct / 10 != last) { last = pct / 10; Serial.printf("[OTA] %d%%\n", pct); }
     });
     ArduinoOTA.onEnd([]() {
-        // สำเร็จ → ArduinoOTA จะรีบูตเองทันที แต่คืนเพดานปกติไว้เผื่อจังหวะคาบเกี่ยว
+        // สำเร็จ → คืน timeout ปกติก่อน ArduinoOTA รีบูต
         otaWatchdogRestore();
         Serial.println("[OTA] ✅ สำเร็จ — รีบูต");
     });
     ArduinoOTA.onError([](ota_error_t e) {
-        // ล้มเหลว → ต้องคืนเพดานปกติเสมอ ไม่งั้นเพดานกว้างค้างอยู่ถาวร
+        // ล้มเหลว → คืน timeout ปกติเสมอ ก่อนกลับไปทำงานต่อ
         otaWatchdogRestore();
         Serial.printf("[OTA] ❌ error %u (เฟิร์มแวร์เดิมยังอยู่ครบ)\n", e);
         otaBusy = false;
@@ -1110,22 +1195,77 @@ static void setupArduinoOTA() {
 }
 
 // ── รับข้อความจาก MQTT ──
+// ═══════════════════════════════════════════════════════════════════
+// อ่าน ble/esp32 ของโหนดอื่น — ตัดสินว่าต้องปล่อยตำแหน่งที่คงไว้หรือไม่
+// ═══════════════════════════════════════════════════════════════════
+// ดึงค่า string ของ key จาก JSON แบบง่าย (payload มาจากเฟิร์มแวร์เดียวกัน รูปแบบคงที่)
+static bool jsonStrField(const char* json, const char* key, char* out, size_t outLen) {
+    char pat[32]; snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* p = strstr(json, pat);
+    if (!p) return false;
+    p = strchr(p + strlen(pat), ':');   if (!p) return false;
+    p = strchr(p, '"');                 if (!p) return false;
+    p++;
+    const char* e = strchr(p, '"');     if (!e) return false;
+    size_t n = (size_t)(e - p); if (n >= outLen) n = outLen - 1;
+    memcpy(out, p, n); out[n] = 0;
+    return true;
+}
+
+// เช็คว่า MAC อยู่ใน array ของ key นั้นไหม — ดูเฉพาะช่วง [ ... ] ของ key
+//   ⚠️ ห้ามใช้ strstr ทั้ง payload เพราะมีฟิลด์ "mac" ของตัวโหนดเองปนอยู่
+static bool jsonArrayHasMac(const char* json, const char* key, const char* macUp) {
+    char pat[32]; snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* p = strstr(json, pat);
+    if (!p) return false;                       // โหนดเฟิร์มแวร์เก่าไม่มี key นี้ = ถือว่าว่าง
+    const char* a = strchr(p + strlen(pat), '[');  if (!a) return false;
+    const char* b = strchr(a, ']');                if (!b) return false;
+    size_t mlen = strlen(macUp);
+    for (const char* q = a; q + mlen <= b; q++)
+        if (strncmp(q, macUp, mlen) == 0) return true;
+    return false;
+}
+
+// เรือนที่เรากำลังคงตำแหน่งไว้ ถูกโหนดอื่นรายงานว่า "ต่ออยู่จริง" → ปล่อยทันที
+//   นับเฉพาะที่อยู่ใน devices และ "ไม่อยู่ใน resting" ของโหนดนั้น
+//   (ถ้าโหนดนั้นก็แค่คงตำแหน่งไว้เหมือนกัน ไม่ใช่หลักฐานว่าย้ายไปจริง)
+static void onOtherNodeStatus(const char* json) {
+    char other[32] = {0};
+    if (!jsonStrField(json, "node_id", other, sizeof(other))) return;
+    if (strcmp(other, NODE_ID) == 0) return;    // ข้อความของตัวเอง (broker ส่งกลับมา)
+
+    for (int i = 0; i < numRegistered; i++) {
+        RegDevice& r = registry[i];
+        if (!r.holdUntil || r.inSlot) continue;
+        if (!jsonArrayHasMac(json, "devices", r.macUp)) continue;
+        if (jsonArrayHasMac(json, "resting", r.macUp))  continue;
+        r.holdUntil = 0;
+        esp32StatusForce = true;                // ส่งรายการใหม่ทันที ลดช่วงที่ 2 โหนดอ้างเรือนเดียวกัน
+        Serial.printf("[HOLD] %s ไปต่อกับโหนด %s แล้ว → เลิกคงตำแหน่งที่นี่\n", r.macUp, other);
+    }
+}
+
 static void mqttCallback(char* topic, byte* payload, unsigned int len) {
     // วินิจฉัย: พิมพ์ทุกข้อความที่เข้ามา ใช้แยกสาเหตุเวลาไม่ได้รับรายชื่อ
     //   ไม่มีบรรทัดนี้เลย   = ข้อความไม่ถึงเครื่อง (ไม่ได้ retain / ACL / คนละ broker)
     //   มีแต่ไม่ถูกใช้      = topic ไม่ตรงกับที่โค้ดรอ
     Serial.printf("[MQTT-RX] %s (%u ไบต์)\n", topic, len);
-    if (len == 0 || len > 900) {
+    if (len == 0 || len > 1400) {
         Serial.println("[MQTT-RX] ⚠️ ขนาดไม่เข้าเกณฑ์ — ทิ้ง");
         return;
     }
-    static char buf[901];
+    static char buf[1401];
     memcpy(buf, payload, len);
     buf[len] = 0;
 
     // คำสั่งควบคุมมาก่อน
     if (strcmp(topic, TOPIC_CMD_NODE) == 0 || strcmp(topic, TOPIC_CMD_ALL) == 0) {
         handleCommand(buf);
+        return;
+    }
+
+    if (strcmp(topic, TOPIC_ESP32_ALL) == 0) {
+        onOtherNodeStatus(buf);
         return;
     }
 
@@ -1366,6 +1506,9 @@ static void subscribeDeviceList() {
     Serial.printf("[MQTT] รับคำสั่งที่ %s และ %s\n", TOPIC_CMD_NODE, TOPIC_CMD_ALL);
     mqtt.subscribe(TOPIC_PRIORITY_NODE);
     mqtt.subscribe(TOPIC_PRIORITY_ALL);
+    // ฟังรายงานของโหนดอื่น — ถ้าเรือนที่เรากำลังคงตำแหน่งไปต่อกับโหนดอื่นแล้ว ต้องปล่อย
+    bool okEsp = mqtt.subscribe(TOPIC_ESP32_ALL);
+    Serial.printf("[MQTT] subscribe %s → %s\n", TOPIC_ESP32_ALL, okEsp ? "✅" : "❌");
     Serial.printf("[MQTT] รอ priority จาก %s และ %s\n", TOPIC_PRIORITY_NODE, TOPIC_PRIORITY_ALL);
     Serial.printf("[MQTT] รอรายชื่อจาก %s และ %s\n", TOPIC_DEVICES_NODE, TOPIC_DEVICES_ALL);
 }
@@ -1391,7 +1534,15 @@ static void publishMetric(DeviceSlot& s, PubKey key, float value, bool isFloat) 
     snprintf(payload, sizeof(payload),
              "{\"value\": %s, \"mac\": \"%s\", \"time\": \"%s\", \"uuid\": \"%s\"}",
              val, s.macUp, ts, uid);
+    // Restore the caller's breadcrumb after a completed publish so later BLE
+    // work is not misidentified as an MQTT stall. No watchdog feed in this path.
+    const uint8_t callerStage = rtcStage, callerSlot = rtcStageSlot;
+    const uint32_t callerStageMs = rtcStageAtMs;
+    wdtStage(WD_PUBLISH_METRIC, (uint8_t)(&s - slots));
     mqtt.publish(topic, payload);
+    rtcStage = callerStage;
+    rtcStageSlot = callerSlot;
+    rtcStageAtMs = callerStageMs;
 }
 
 // ── ส่งชุด "สวมอยู่" (ตรรกะเดียวกับ _publish_wearing) ──
@@ -1423,6 +1574,7 @@ static void publishOffWrist(DeviceSlot& s) {
 //   ทำงานใน loop() (ดึงจากคิว) ไม่ใช่ใน BLE callback
 // ═══════════════════════════════════════════════════════════════════
 static void processFrame(DeviceSlot& s, const uint8_t* d, uint8_t len) {
+    wdtStage(WD_FRAME_PROCESS, (uint8_t)(&s - slots));
     uint32_t nowF = millis();
     // วัดพฤติกรรมนาฬิการะหว่าง Phase 2 — ใช้ตอบว่า "เงียบจริงไหม" ในบันทึก
     if (s.phase >= PH_P2_STOPPING) {
@@ -1664,6 +1816,7 @@ static void tryConnectNext() {
     int si = -1;
     for (int i = 0; i < MAX_DEVICES; i++) if (!slots[i].inUse) { si = i; break; }
     if (si < 0) return;
+    wdtStage(WD_BLE_CONNECT, (uint8_t)si);
 
     // เลือกเรือนที่: เห็นล่าสุด ≤30 วิ, สัญญาณ ≥ -85, ไม่ได้อยู่ใน slot, พ้น cooldown
     int best = -1;
@@ -1705,7 +1858,10 @@ static void tryConnectNext() {
 
     // ⚠️ connect() เป็น blocking (สูงสุด 15 วิ) — เรือนอื่นที่ต่ออยู่ไม่กระทบ
     //    (notify เข้าคิวต่อเนื่อง) แต่ MQTT จะเว้นช่วงสั้นๆ ซึ่ง keepalive 30 วิ รับได้
-    if (!s.client->connect(r.addr)) {                 // exchangeMTU=true อัตโนมัติ
+    wdtStage(WD_BLE_CONNECT, (uint8_t)si);
+    const bool connected = s.client->connect(r.addr); // exchangeMTU=true อัตโนมัติ
+    esp_task_wdt_reset();
+    if (!connected) {
         // เพิ่งกลับจากการ block นานถึง 8 วิ — ระหว่างนั้นอาจมีเรือนอื่นหลุดไปแล้ว
         // กวาดทันทีก่อนทำอย่างอื่น เพื่อให้ Dashboard ไม่ค้างแสดงเรือนที่หลุดไปแล้ว
         sweepGoneSlots();
@@ -1727,10 +1883,18 @@ static void tryConnectNext() {
     // ต่อติด → หา service/characteristic แล้ว subscribe
     // (ขั้น service discovery ก็ block เช่นกัน จึงกวาดเรือนที่หลุดอีกรอบ)
     sweepGoneSlots();
+    wdtStage(WD_BLE_DISCOVER, (uint8_t)si);
     NimBLERemoteService* svc = s.client->getService(UUID_SERVICE);
+    wdtStage(WD_BLE_DISCOVER, (uint8_t)si);
     NimBLERemoteCharacteristic* rx = svc ? svc->getCharacteristic(UUID_RX) : nullptr;
+    wdtStage(WD_BLE_DISCOVER, (uint8_t)si);
     s.txChar = svc ? svc->getCharacteristic(UUID_TX) : nullptr;
-    if (!rx || !s.txChar || !rx->subscribe(true, onNotify)) {
+    esp_task_wdt_reset();
+    wdtStage(WD_BLE_SUBSCRIBE, (uint8_t)si);
+    const bool subscribed = rx && s.txChar && rx->subscribe(true, onNotify);
+    esp_task_wdt_reset();
+    wdtStage(WD_BLE_CONNECT, (uint8_t)si);
+    if (!subscribed) {
         Serial.printf("[CONNECT] %s ไม่พบ FFF6/FFF7 หรือ subscribe ไม่ได้\n", r.macUp);
         s.client->disconnect();
         NimBLEDevice::deleteClient(s.client);
@@ -1757,6 +1921,10 @@ static void tryConnectNext() {
     s.phaseAt = millis();
     s.lastData = millis();
     r.inSlot = true;
+    if (r.holdUntil) {
+        r.holdUntil = 0;                       // ต่อกลับมาแล้ว ตำแหน่งมาจาก slot จริงแทน
+        Serial.printf("[HOLD] %s ต่อกลับที่โหนดนี้แล้ว\n", r.macUp);
+    }
     r.failCount = 0;
     Serial.printf("[CONNECT] ✅ %s (MTU=%d) — รอ notify พร้อม\n",
                   s.macUp, s.client ? s.client->getMTU() : 0);
@@ -1827,6 +1995,7 @@ static void dropSlotByRegIdx(int regIdx) {
 }
 
 static void serviceSlot(DeviceSlot& s) {
+    wdtStage(WD_SERVICE_SLOT, (uint8_t)(&s - slots));
     if (!s.inUse) return;
     uint32_t now = millis();
 
@@ -1981,6 +2150,13 @@ static void serviceSlot(DeviceSlot& s) {
                     //    ด้านบน) เพราะข้างใน slotCleanup เขียน nextAttempt เป็น +3 วิเสมอ
                     //    ตั้งก่อนจะโดนทับแล้วต่อกลับทันทีแทนที่จะพักจริง
                     registry[reg].nextAttempt = millis() + interval;
+                    // คงตำแหน่งเดิมไว้ใน ble/esp32 ระหว่างพัก + ระยะเผื่อให้ต่อกลับ
+                    registry[reg].holdUntil = millis() + interval + REST_HOLD_GRACE_MS;
+                    Serial.printf("[HOLD] %s คงตำแหน่งที่โหนดนี้ไว้ %lu วิ (พัก %lu + เผื่อ %lu)\n",
+                                  registry[reg].macUp,
+                                  (unsigned long)((interval + REST_HOLD_GRACE_MS) / 1000),
+                                  (unsigned long)(interval / 1000),
+                                  (unsigned long)(REST_HOLD_GRACE_MS / 1000));
                     return;
                 } else {
                     // กลับ Phase 1
@@ -2021,19 +2197,51 @@ static void ensureNetwork() {
     char cid[40];
     snprintf(cid, sizeof(cid), "naid-%s-%06lx", NODE_ID, (unsigned long)macSuffix24());
     Serial.printf("[MQTT] เชื่อม %s:%d ...\n", activeMqttBroker.c_str(), MQTT_PORT);
-    if (mqtt.connect(cid, MQTT_USER, MQTT_PASS)) {
+    wdtStage(WD_ENSURE_NETWORK);
+    const bool connected = mqtt.connect(cid, MQTT_USER, MQTT_PASS);
+    esp_task_wdt_reset();
+    if (connected) {
         Serial.println("[MQTT] ✅ เชื่อมต่อแล้ว");
+
+        // 🛟 ยืนยันเฟิร์มแวร์ตัวนี้ว่าใช้งานได้จริง
+        //    "ต่อ broker ติด" = หลักฐานชัดเจนที่สุดว่าเรายังสั่งงานมันได้
+        //    ถ้าไม่เรียกตรงนี้ bootloader จะย้อนกลับให้เองเมื่อรีเซ็ตครั้งหน้า
+        {
+            const esp_partition_t* run = esp_ota_get_running_partition();
+            esp_ota_img_states_t st;
+            if (esp_ota_get_state_partition(run, &st) == ESP_OK &&
+                st == ESP_OTA_IMG_PENDING_VERIFY) {
+                esp_ota_mark_app_valid_cancel_rollback();
+                Serial.println("[OTA] ✅ ยืนยันเฟิร์มแวร์นี้ใช้ได้ (ปลอด rollback แล้ว)");
+            }
+        }
+
         {   // รายงานว่ารอบที่แล้วดับเพราะอะไร — ใช้ไล่หาสาเหตุจากที่นั่งได้เลย
-            char t[64], p[220];
+            //   md5 ใส่ตรงนี้เพราะเป็น retained + ส่งทันทีหลังต่อ broker ติด
+            //   เช็คได้เร็วกว่ารอ heartbeat รอบแรก (สูงสุด 60 วิ)
+            wdtStage(WD_BOOT_PUBLISH);
+            char t[64], p[448];
             snprintf(t, sizeof(t), "%s/node/%s/boot", MQTT_BASE_TOPIC, NODE_ID);
             snprintf(p, sizeof(p),
-                     "{\"boot\":%lu,\"reason\":\"%s\",\"version\":\"%s\"}",
-                     (unsigned long)rtcBootCount, resetReasonText(), FW_VERSION);
+                     "{\"boot\":%lu,\"reason\":\"%s\",\"version\":\"%s\",\"md5\":\"%s\"}",
+                     (unsigned long)rtcBootCount, resetReasonText(), FW_VERSION,
+                     ESP.getSketchMD5().substring(0, 8).c_str());
+            if (prevStageValid) {
+                // Replace only the closing brace; legacy payload stays byte-identical.
+                const size_t end = strlen(p) - 1;
+                snprintf(p + end, sizeof(p) - end,
+                         ",\"stage\":\"%s\",\"stage_slot\":%u,\"stage_ms\":%lu,\"prev_up_ms\":%lu}",
+                         WDT_STAGE_NAMES[prevStage], (unsigned int)prevStageSlot,
+                         (unsigned long)prevStageMs, (unsigned long)prevUpMs);
+            }
             mqtt.publish(t, p, true);       // retained — เปิดดูย้อนหลังได้
+            esp_task_wdt_reset();
         }
         haveNodeList = false;                  // ให้ retained message ตัดสินใหม่ทุกครั้งที่ต่อใหม่
         sawAppRoster = false;                  // ให้ broker ใหม่ต้องพิสูจน์ตัวเองอีกครั้ง
+        wdtStage(WD_MQTT_SUBSCRIBE);
         subscribeDeviceList();
+        esp_task_wdt_reset();
     } else {
         Serial.printf("[MQTT] ❌ rc=%d\n", mqtt.state());
     }
@@ -2047,28 +2255,67 @@ static void ensureNetwork() {
 //   และเน้นข้อมูลการจับคู่ ใช้ให้ฝั่งเซิร์ฟเวอร์รู้ว่าเรือนไหนอยู่กับโหนดไหน
 //   โดยไม่ต้องรอ heartbeat รอบถัดไป
 // ═══════════════════════════════════════════════════════════════════
+// ── หมดเวลาคงตำแหน่ง: พักครบ + เผื่อแล้วยังไม่กลับมาต่อที่ไหนเลย ──
+//    เรียกทุกรอบ loop() เพื่อให้ปล่อยตรงเวลา ไม่ต้องรอรอบส่ง ble/esp32
+static void expireLocationHolds() {
+    uint32_t now = millis();
+    for (int i = 0; i < numRegistered; i++) {
+        RegDevice& r = registry[i];
+        if (!r.holdUntil || r.inSlot) continue;
+        if ((int32_t)(now - r.holdUntil) < 0) continue;     // ยังไม่ถึงเวลา (กัน millis ล้น)
+        r.holdUntil = 0;
+        esp32StatusForce = true;                // แจ้งทันทีว่าไม่อยู่แล้ว → หน้า monitor ขึ้น "ไม่ทราบ"
+        Serial.printf("[HOLD] %s พักครบแล้วไม่กลับมาต่อที่ไหน → เลิกรายงานตำแหน่ง\n", r.macUp);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ble/esp32 — บอกว่า "โหนดนี้คือใคร และกำลังถือนาฬิกาเรือนไหนอยู่บ้าง"
+//
+//   ส่งทุก ESP32_STATUS_INTERVAL_MS (หรือทันทีเมื่อ esp32StatusForce)
+//   devices = เรือนที่ต่ออยู่จริง + เรือนที่พักรอบอยู่ (คงตำแหน่งเดิม)
+//             → หน้า monitor ใช้ฟิลด์นี้ฟิลด์เดียวก็ได้ตำแหน่งต่อเนื่อง ไม่ต้องแก้ฝั่งเว็บ
+//   resting = เฉพาะเรือนที่พักรอบอยู่ (เป็นส่วนย่อยของ devices)
+//             → ใช้แยกได้ถ้าอยากแสดงสถานะ "พักรอบ" หรือแยกจาก "ต่ออยู่จริง"
+//             → โหนดอื่นใช้ตัดสินว่าเรือนย้ายไปจริงหรือแค่ถูกคงตำแหน่งไว้
+// ═══════════════════════════════════════════════════════════════════
 static void publishEsp32Status() {
     static uint32_t lastSend = 0;
     uint32_t now = millis();
-    if (now - lastSend < ESP32_STATUS_INTERVAL_MS) return;
+    if (!esp32StatusForce && now - lastSend < ESP32_STATUS_INTERVAL_MS) return;
     if (!mqtt.connected()) return;
     lastSend = now;
+    esp32StatusForce = false;
 
-    // รวม MAC ของนาฬิกาที่กำลังเชื่อมอยู่ เป็น JSON array
-    // ใช้เฉพาะ slot ที่ inUse และยังไม่ถูกตั้งธง gone (กำลังจะถูกเก็บกวาด)
-    char devices[MAX_DEVICES * 21 + 4];
-    int  pos = 0;
-    int  count = 0;
-    devices[pos++] = '[';
+    // static — ขนาดรวมเกือบ 1.5KB ไม่ควรอยู่บน stack ของ loop task
+    static char devices[MAX_REGISTERED * 21 + 4];
+    static char resting[MAX_REGISTERED * 21 + 4];
+    int dpos = 0, rpos = 0, count = 0, nConn = 0, nRest = 0;
+    devices[dpos++] = '[';
+    resting[rpos++] = '[';
+
+    // ① เรือนที่ต่ออยู่จริง
     for (auto& sl : slots) {
         if (!sl.inUse || sl.gone) continue;
-        pos += snprintf(devices + pos, sizeof(devices) - pos,
-                        "%s\"%s\"", count ? "," : "", sl.macUp);
-        count++;
-        if (pos >= (int)sizeof(devices) - 24) break;   // กัน buffer ล้น
+        if (dpos >= (int)sizeof(devices) - 24) break;       // กัน buffer ล้น
+        dpos += snprintf(devices + dpos, sizeof(devices) - dpos,
+                         "%s\"%s\"", count ? "," : "", sl.macUp);
+        count++; nConn++;
     }
-    devices[pos++] = ']';
-    devices[pos]   = 0;
+    // ② เรือนที่พักรอบ — ยังอยู่ในช่วงคงตำแหน่ง
+    for (int i = 0; i < numRegistered; i++) {
+        RegDevice& r = registry[i];
+        if (!r.holdUntil || r.inSlot) continue;
+        if ((int32_t)(now - r.holdUntil) >= 0) continue;   // หมดเวลาแล้ว (expire จะเก็บกวาด)
+        if (dpos >= (int)sizeof(devices) - 24 || rpos >= (int)sizeof(resting) - 24) break;
+        dpos += snprintf(devices + dpos, sizeof(devices) - dpos,
+                         "%s\"%s\"", count ? "," : "", r.macUp);
+        rpos += snprintf(resting + rpos, sizeof(resting) - rpos,
+                         "%s\"%s\"", nRest ? "," : "", r.macUp);
+        count++; nRest++;
+    }
+    devices[dpos++] = ']'; devices[dpos] = 0;
+    resting[rpos++] = ']'; resting[rpos] = 0;
 
     char ts[24];  timeStr(ts, sizeof(ts));
     char uid[40]; makeUuid(uid);
@@ -2076,14 +2323,17 @@ static void publishEsp32Status() {
     char topic[48];
     snprintf(topic, sizeof(topic), "%s/esp32", MQTT_BASE_TOPIC);
 
-    char payload[MAX_DEVICES * 21 + 260];
+    static char payload[MAX_REGISTERED * 42 + 320];
     snprintf(payload, sizeof(payload),
              "{\"node_id\": \"%s\", \"mac\": \"%s\", \"ip\": \"%s\", "
              "\"devices\": %s, \"count\": %d, "
+             "\"resting\": %s, \"connected_count\": %d, "
              "\"time\": \"%s\", \"uuid\": \"%s\"}",
              NODE_ID, WiFi.macAddress().c_str(), WiFi.localIP().toString().c_str(),
-             devices, count, ts, uid);
-    mqtt.publish(topic, payload);
+             devices, count, resting, nConn, ts, uid);
+    if (!mqtt.publish(topic, payload))
+        Serial.printf("[MQTT] ⚠️ ส่ง ble/esp32 ไม่สำเร็จ (%u ไบต์ — เกิน buffer?)\n",
+                      (unsigned)strlen(payload));
 }
 
 static void publishHeartbeat() {
@@ -2093,17 +2343,24 @@ static void publishHeartbeat() {
 
     int links = 0;
     for (auto& s : slots) if (s.inUse) links++;
-    char topic[48], payload[384];
+
+    // ⚠️ FW_VERSION เป็นแค่ข้อความที่ต้องพิมพ์แก้เอง — ลืมแก้แล้วหลอกตัวเองได้
+    //    md5 คำนวณจาก "ไบต์จริง" ของเฟิร์มแวร์ที่รันอยู่ในชิปตอนนี้
+    //    เทียบกับไฟล์ .bin บนเครื่องได้ตรง ๆ ด้วย: md5sum fw.bin | cut -c1-8
+    static String md5;
+    if (md5.length() == 0) md5 = ESP.getSketchMD5();   // คำนวณครั้งเดียวพอ
+
+    char topic[48], payload[420];
     snprintf(topic, sizeof(topic), "%s/node/%s", MQTT_BASE_TOPIC, NODE_ID);
     snprintf(payload, sizeof(payload),
              "{\"uptime\": %lu, \"links\": %d, \"heap\": %lu, "
              "\"wifi_rssi\": %d, \"time_ok\": %d, \"boot_reason\": \"%s\", "
-             "\"version\": \"%s\", \"ip\": \"%s\", "
+             "\"version\": \"%s\", \"md5\": \"%s\", \"ip\": \"%s\", "
              "\"mqtt_broker\": \"%s\", \"mqtt_port\": %d, \"max_devices\": %d}",
              (unsigned long)(now / 1000), links,
              (unsigned long)ESP.getFreeHeap(), WiFi.RSSI(), timeSynced() ? 1 : 0,
              resetReasonText(),
-             FW_VERSION, WiFi.localIP().toString().c_str(),
+             FW_VERSION, md5.substring(0, 8).c_str(), WiFi.localIP().toString().c_str(),
              activeMqttBroker.c_str(), MQTT_PORT, MAX_DEVICES);
     mqtt.publish(topic, payload);
 }
@@ -2111,7 +2368,64 @@ static void publishHeartbeat() {
 // ═══════════════════════════════════════════════════════════════════
 // SETUP / LOOP
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// 💡 ตัวขับไฟสถานะ — เรียกทุก 100 ms จาก Ticker (esp_timer task)
+//
+//   ทำไมไม่ทำใน loop(): setup() บล็อกนานตอนต่อ WiFi / เปิดหน้าตั้งค่า (สูงสุด 3 นาที)
+//   และ loop() บล็อกตอนต่อ BLE (สูงสุด 8 วิ) — ถ้าผูกกับ loop ไฟจะค้างนิ่ง
+//   คนหน้างานจะอ่านผิดว่า "ติดค้าง = ปกติ" ทั้งที่ยังเชื่อมไม่ติด
+//
+//   ⚠️ ห้ามเรียก mqtt.connected() จากตรงนี้ — ไม่ thread-safe (แตะ socket)
+//      ให้ loop() อัปเดตธง ledMqttUp แทน ส่วน WiFi.status() อ่านค่าที่เก็บไว้ ปลอดภัย
+// ═══════════════════════════════════════════════════════════════════
+static volatile bool    ledPortalActive = false;   // อยู่ในโหมดตั้งค่า WiFi
+static volatile bool    ledMqttUp       = false;   // อัปเดตจาก loop()
+static volatile bool    ledStarted      = false;   // setup() เริ่มเครือข่ายแล้ว
+static Ticker           ledTicker;
+
+static inline void ledWrite(bool on) {
+#if STATUS_LED_PIN >= 0
+    digitalWrite(STATUS_LED_PIN, (on ^ (STATUS_LED_ACTIVE_LOW != 0)) ? HIGH : LOW);
+#endif
+}
+
+static LedMode ledCurrentMode() {
+    if (!ledStarted)                     return LED_OFF;
+    if (ledPortalActive)                 return LED_SLOW;
+    if (WiFi.status() != WL_CONNECTED)   return LED_FAST;
+    if (!ledMqttUp)                      return LED_DOUBLE;
+    return LED_SOLID;
+}
+
+static void ledTick() {
+    static LedMode  last = LED_OFF;
+    static uint16_t step = 0;
+    LedMode m = ledCurrentMode();
+    if (m != last) { last = m; step = 0; }  // เปลี่ยนสถานะ → เริ่มจังหวะใหม่ให้อ่านง่าย
+
+    bool on = false;
+    switch (m) {
+        case LED_SOLID:  on = true;                                break;
+        case LED_FAST:   on = (step % 2) == 0;                     break;  // 100/100 ms
+        case LED_SLOW:   on = (step % 20) < 10;                    break;  // 1 วิ / 1 วิ
+        case LED_DOUBLE: { uint16_t k = step % 16;                        // ติด-ดับ-ติด แล้วดับ ~1 วิ
+                           on = (k < 2) || (k >= 4 && k < 6);      break; }
+        default:         on = false;                               break;
+    }
+    ledWrite(on);
+    step++;
+}
+
+static void ledBegin() {
+#if STATUS_LED_PIN >= 0
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    ledWrite(false);
+    ledTicker.attach_ms(100, ledTick);
+#endif
+}
+
 void setup() {
+    ledBegin();                 // เริ่มก่อนอย่างอื่น — ไฟดับไว้จนกว่าจะเริ่มต่อเครือข่าย
     Serial.begin(115200);
     // ⚠️ ESP32-C3/S3 ใช้ USB แบบ native (ไม่มีชิป USB-UART แยกเหมือน WROOM)
     //    ทุกครั้งที่รีเซ็ต การเชื่อมต่อ USB จะหลุดแล้ว enumerate ใหม่
@@ -2126,10 +2440,26 @@ void setup() {
     resolveNodeId();     // ต้องเรียกก่อนใช้ NODE_ID และก่อนสร้าง topic ใด ๆ
     Serial.printf("  โหนด: %s | จำกัด %d เรือนพร้อมกัน\n", NODE_ID, MAX_DEVICES);
     // นับจำนวนครั้งที่รีบูต (RTC memory อยู่รอดข้ามการรีเซ็ต แต่หายเมื่อถอดไฟ)
-    if (rtcMagic != RTC_MAGIC_VALUE) { rtcMagic = RTC_MAGIC_VALUE; rtcBootCount = 0; }
+    const bool rtcWasValid = rtcMagic == RTC_MAGIC_VALUE;
+    if (!rtcWasValid) { rtcMagic = RTC_MAGIC_VALUE; rtcBootCount = 0; }
     rtcBootCount++;
     Serial.printf("  บูตครั้งที่ %lu · สาเหตุ: %s\n",
                   (unsigned long)rtcBootCount, resetReasonText());
+    const esp_reset_reason_t resetReason = esp_reset_reason();
+    if (rtcWasValid && rtcStage <= WD_PUBLISH_METRIC &&
+        (resetReason == ESP_RST_TASK_WDT || resetReason == ESP_RST_INT_WDT ||
+         resetReason == ESP_RST_WDT || resetReason == ESP_RST_PANIC)) {
+        prevStageValid = true;
+        prevStage = rtcStage;
+        prevStageSlot = rtcStageSlot;
+        prevStageMs = rtcStageAtMs;
+        prevUpMs = rtcLastLoopMs;
+    }
+    // Also initialise every breadcrumb when rtcMagic was invalid (power loss).
+    rtcStage = WD_IDLE;
+    rtcStageSlot = 0xFF;
+    rtcStageAtMs = 0;
+    rtcLastLoopMs = 0;
 
     // เปิด Task Watchdog ระดับชิป — ถ้า loop() ค้าง ชิปจะรีเซ็ตตัวเอง
     // ⚠️ API ต่างกันระหว่าง Arduino ESP32 core 2.x กับ 3.x
@@ -2205,6 +2535,7 @@ void setup() {
     // --- WiFi (ตั้งค่าผ่านหน้าเว็บด้วย WiFiManager) ---
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
+    ledStarted = true;          // จากนี้ไฟจะบอกสถานะ WiFi/MQTT
     // บอร์ด ESP32-C3 บางล็อตเสาอากาศแมตช์ไม่ดี ส่งแรงเกินจะทำให้ไฟตกและรีบูตวน
     // ต้องเรียก "หลัง" WiFi.mode() เท่านั้น ไม่งั้นคำสั่งจะล้มเหลวเงียบ ๆ
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -2236,6 +2567,7 @@ void setup() {
         wm.setConnectTimeout(WM_CONNECT_TIMEOUT_SEC);   // รอเชื่อม WiFi เดิม
         wm.setConfigPortalTimeout(WM_PORTAL_TIMEOUT_SEC);
         wm.setAPCallback([](WiFiManager* mgr) {
+            ledPortalActive = true;             // 💡 กะพริบช้า = รอคนมาตั้งค่า
             Serial.println("\n╔════════════════════════════════════════════════╗");
             Serial.println("║  ยังไม่ได้ตั้งค่า WiFi — เปิดโหมดตั้งค่าแล้ว      ║");
             Serial.printf ("║  1. เชื่อม WiFi ชื่อ : %-22s ║\n", mgr->getConfigPortalSSID().c_str());
@@ -2304,6 +2636,7 @@ void setup() {
             delay(1000);
             ESP.restart();
         }
+        ledPortalActive = false;                // ออกจากโหมดตั้งค่าแล้ว
     }   // ปล่อย WiFiManager ทิ้งตรงนี้ คืน RAM ก่อนเริ่ม BLE
 
     // ⚠️ configTime() เป็นคำสั่งแบบ "สั่งแล้วจบ" ไม่ได้รอให้ sync เสร็จ
@@ -2342,7 +2675,10 @@ void setup() {
     // ต้องพอสำหรับ payload ที่ยาวที่สุด = ble/esp32 ตอนเชื่อมครบทุกเรือน
     //   (~336 ไบต์ที่ 8 เรือน) + topic + header ของ MQTT
     //   ⚠️ ถ้าเล็กเกิน PubSubClient จะ "ทิ้งข้อความเงียบ ๆ" ไม่มี error ให้เห็น
-    mqtt.setBufferSize(MAX_DEVICES * 24 + 384);
+    // ⚠️ ble/esp32 ยาวขึ้นเมื่อมีเรือนพักรอบ (devices + resting) ถ้าเกิน buffer
+    //    publish() จะล้มเหลวแบบเงียบ → ตำแหน่งหายทั้งโหนด ต้องเผื่อให้พอกรณีเต็มทะเบียน
+    //    และต้องรับ ble/esp32 ของโหนดอื่นที่ยาวเท่ากันได้ด้วย
+    mqtt.setBufferSize(MAX_REGISTERED * 42 + 640);
     mqtt.setKeepAlive(30);          // เผื่อช่วง connect BLE ที่ block ~15 วิ
     mqtt.setSocketTimeout(5);
 
@@ -2377,9 +2713,48 @@ void setup() {
     Serial.printf("[WDT] เริ่มเฝ้า loop แล้ว (timeout %d วิ)\n", WDT_TIMEOUT_SEC);
 }
 
+// 🛟 เฝ้าดูบูตแรกหลัง OTA — ต่อ broker ไม่ได้เลยภายในเวลาที่กำหนด = ย้อนกลับ
+static void checkOtaRollback() {
+    static bool     checked = false;      // ตรวจสถานะครั้งเดียวพอ
+    static bool     pending = false;
+    static uint32_t bootAt  = 0;
+
+    if (!checked) {
+        checked = true;
+        const esp_partition_t* run = esp_ota_get_running_partition();
+        esp_ota_img_states_t st;
+        if (esp_ota_get_state_partition(run, &st) == ESP_OK &&
+            st == ESP_OTA_IMG_PENDING_VERIFY) {
+            pending = true;
+            bootAt  = millis();
+            Serial.printf("[OTA] บูตแรกหลังอัปเดต — ต้องต่อ broker ให้ได้ใน %lu นาที "
+                          "ไม่งั้นย้อนกลับเฟิร์มแวร์เดิม\n",
+                          (unsigned long)(OTA_VERIFY_TIMEOUT_MS / 60000));
+        }
+    }
+    if (!pending) return;
+
+    // ต่อติดแล้ว → จุดยืนยันอยู่ใน ensureNetwork() แล้ว ตรงนี้แค่เลิกเฝ้า
+    if (mqtt.connected()) { pending = false; return; }
+
+    if (millis() - bootAt > OTA_VERIFY_TIMEOUT_MS) {
+        Serial.println("🛟 [OTA] ต่อ broker ไม่ได้เลยหลังอัปเดต — ย้อนกลับเฟิร์มแวร์เดิม");
+        Serial.flush();
+        delay(200);
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        // มาถึงบรรทัดนี้ = ไม่มี partition เดิมให้ย้อน (บูตแรกจาก USB)
+        pending = false;
+        Serial.println("[OTA] ⚠️ ไม่มีเฟิร์มแวร์เดิมให้ย้อนกลับ — ทำงานต่อตามปกติ");
+    }
+}
+
 void loop() {
+    rtcLastLoopMs = millis();
+    wdtStage(WD_LOOP_HEAD);
+    checkOtaRollback();
     esp_task_wdt_reset();                  // ป้อนอาหาร watchdog ทุกรอบ
 
+    wdtStage(WD_MDNS_OTA);
     // เริ่ม ArduinoOTA ครั้งแรกที่ WiFi ติด (อาจติดหลัง setup จบไปแล้ว)
     if (!otaReady && WiFi.status() == WL_CONNECTED) {
         char mdnsName[32];
@@ -2388,6 +2763,7 @@ void loop() {
         setupArduinoOTA();
         otaReady = true;
     }
+    wdtStage(WD_OTA);
     if (otaReady) ArduinoOTA.handle();      // ต้องเรียกบ่อย ไม่งั้น espota ต่อไม่ติด
 
     // ระหว่างอัปเดตเฟิร์มแวร์ หยุดทุกอย่าง ห้ามยุ่งกับ BLE/MQTT
@@ -2396,6 +2772,7 @@ void loop() {
     // ── ชั้นที่ 2: เน็ตหลุดยาวเกินกำหนด = รีบูต ──
     //    ครอบคลุมเคสที่ชิปไม่ค้าง (watchdog จึงไม่ทำงาน) แต่ WiFi/MQTT stack
     //    เอ๋อจนต่อไม่ติดอีกเลย ซึ่งเป็นอาการที่พบบ่อยกว่าการค้างทั้งเครื่อง
+    wdtStage(WD_NET_HEALTH);
     static uint32_t lastNetOk = 0;
     if (lastNetOk == 0) lastNetOk = millis();
     if (WiFi.status() == WL_CONNECTED && mqtt.connected()) lastNetOk = millis();
@@ -2480,18 +2857,33 @@ void loop() {
         ESP.restart();
     }
 
+    wdtStage(WD_ENSURE_NETWORK);
     ensureNetwork();
+    ledMqttUp = mqtt.connected();           // 💡 ส่งสถานะ MQTT ให้ตัวขับไฟ (thread-safe)
 
     // ประมวลผล frame จากคิว (BLE callback → ที่นี่)
     BleFrame f;
-    while (xQueueReceive(frameQueue, &f, 0) == pdTRUE) {
-        if (f.slot < MAX_DEVICES && slots[f.slot].inUse) {
-            processFrame(slots[f.slot], f.data, f.len);
+    uint8_t framesProcessed;
+    do {
+        framesProcessed = 0;
+        while (framesProcessed < FRAME_QUEUE_MAX_PER_LOOP &&
+               xQueueReceive(frameQueue, &f, 0) == pdTRUE) {
+            framesProcessed++;
+            if (f.slot < MAX_DEVICES && slots[f.slot].inUse) {
+                processFrame(slots[f.slot], f.data, f.len);
+            }
+            esp_task_wdt_reset();
         }
-    }
+    } while (framesProcessed == FRAME_QUEUE_MAX_PER_LOOP);
 
-    for (auto& s : slots) serviceSlot(s);
+    for (auto& s : slots) {
+        serviceSlot(s);
+        esp_task_wdt_reset();
+    }
+    wdtStage(WD_BLE_CONNECT);
     tryConnectNext();
+    esp_task_wdt_reset();
+    wdtStage(WD_MANAGE_SCAN);
     manageScan();
     // เทียบเวลาใหม่เป็นระยะ — นาฬิกาภายในชิปดริฟต์ได้หลายวินาทีต่อวัน
     // และถ้าตอนบูต NTP ไม่ผ่าน ตรงนี้จะเป็นโอกาสให้ sync สำเร็จภายหลัง
@@ -2500,13 +2892,21 @@ void loop() {
         if (WiFi.status() == WL_CONNECTED &&
             (lastNtp == 0 || millis() - lastNtp > NTP_RESYNC_INTERVAL_MS)) {
             lastNtp = millis();
+            wdtStage(WD_NTP);
             configTime(TZ_OFFSET_SEC, 0, NTP_SERVER1, NTP_SERVER2);
         }
     }
 
+    wdtStage(WD_HEARTBEAT);
     publishHeartbeat();
+    esp_task_wdt_reset();
+    expireLocationHolds();
+    wdtStage(WD_ESP32_STATUS);
     publishEsp32Status();
+    esp_task_wdt_reset();
+    wdtStage(WD_REPORT_ACTIVE_LIST);
     reportActiveList();
+    esp_task_wdt_reset();
 
     // log สรุปทุก 30 วิ
     if (millis() - lastStatusLog >= 30000) {
@@ -2520,5 +2920,6 @@ void loop() {
                       (unsigned long)ESP.getFreeHeap());
     }
 
+    wdtStage(WD_IDLE);
     delay(10);      // ปล่อยเวลาให้ task อื่น (NimBLE/WiFi) — loop ยังไวพอสำหรับ FSM
 }
